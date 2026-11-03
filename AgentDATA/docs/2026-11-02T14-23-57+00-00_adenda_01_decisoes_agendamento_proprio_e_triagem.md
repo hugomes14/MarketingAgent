@@ -211,6 +211,18 @@ Factos de suporte em `Knowledge/2026-11-03T09-59-51…infra_tailscale_r2_ollama_
 | D12 | **A marca existe e nunca teve marketing.** O sistema serve de caso de estudo: o agente ajuda a "recriar/revitalizar" a empresa e a definir uma estratégia de longo prazo | Decidido. Aumenta o âmbito (ver abaixo) |
 | D13 | Disposição de portas (Funnel 443, painel `serve` 8443) e conclusões sobre App Review aceites | Aceite. A resposta "okay documenta" cumpre-se no registo `Knowledge/…meta_app_review_access_levels.md` |
 
+### Decisões de 2026-11-03 (terceira ronda)
+
+| # | Decisão | Estado |
+| --- | --- | --- |
+| D14 | Orçamento de LLM de **20 USD por mês**, com aviso a 50 % e 80 % e corte das tarefas não críticas ao limite | Decidido |
+| D15 | Disco do Pi: **HDD de 2,5" e 1 TB** | Decidido |
+| D16 | O **construtor de identidade de marca** é funcionalidade do produto, não só trabalho manual | Decidido. W1 passa a funcionalidade, ver Anexo C |
+| D17 | Spam só sugerido; email de heartbeat como única exceção ao "só painel" | Confirmado |
+| D18 | Comercialização futura é uma **opção**, não um objetivo. Decisões baratas que a mantêm aberta no [Anexo C](2026-11-03T10-43-44+00-00_anexo_c_mercado_certificacoes_e_conceito_comercial.md) | Aceite como direção |
+
+**Correção de custos:** o Tailscale Personal é para uso não comercial. Para a empresa, o custo esperado é o do plano Standard, 8 USD por utilizador por mês **[V preço; S restrição]**, se a tailnet da empresa ainda não tiver plano. Falta confirmar o plano atual e se o Funnel está incluído.
+
 ### Hardware disponível [V: captura de ecrã do LM Studio]
 
 Portátil com Intel Core Ultra 9 275HX, 31,4 GB de RAM e NVIDIA RTX 5080 Laptop com 15,9 GB de VRAM. Cabe um modelo local de gama média (na ordem de 14–24 mil milhões de parâmetros, quantizado) **[I]**. É um portátil, não um servidor 24 h, por isso fica como opção futura para triagem com dados sensíveis, via `base_url` compatível com OpenAI. Não é caminho crítico.
