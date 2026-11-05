@@ -266,7 +266,7 @@ Detalhe e justificação no [Anexo D](2026-11-05T18-58-45+00-00_anexo_d_arquitet
 | D22 | O **Diretor planeia com datas**; o Gestor executa. O plano semanal e cada publicação precisam da aprovação do responsável |
 | D23 | Triagem é papel separado em pipeline fixo. Revisor com modelo e rubrica distintos, no mesmo fornecedor |
 | D24 | Cada edição do responsável é guardada como exemplo de feedback; sem treino de modelos |
-| D25 | Ordem: núcleo de criação primeiro; Diretor manual até lá |
+| D25 | ~~Ordem: núcleo de criação primeiro~~. **Revista em 2026-11-05:** Diretor em modo `interview` primeiro, depois o núcleo de criação |
 | D26 | Ao atingir os 20 USD, continuam só a classificação da Triagem e o Publicador |
 | D27 | Fornecedor e modelo por papel são **configuração**, não decisão: o responsável pode trocar de fornecedor para testar |
 | D28 | O **Diretor extrai a informação da marca em conversa com o responsável** (modo `interview` no painel), em vez de a pedirmos agora |

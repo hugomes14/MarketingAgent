@@ -29,7 +29,7 @@ O responsável quer uma equipa de agentes com papéis distintos (gestor de redes
 | Orquestração | **Fluxo fixo em código**, com um Pesquisador isolado sob o Diretor |
 | Aprendizagem | Cada edição ou rejeição é guardada como exemplo; sem treino de modelos |
 | Aprovações | O **plano semanal** e **cada publicação** precisam da aprovação do responsável |
-| Ordem de construção | Núcleo de criação primeiro; Diretor feito manualmente até lá |
+| Ordem de construção | **Diretor em modo `interview` primeiro** (motor, painel de conversa e Diretor produzem o perfil de marca); depois o núcleo de criação sobre um perfil real. Substitui a decisão anterior "núcleo de criação primeiro" |
 | Abordagem do motor | **A: motor próprio fino** com perfis por papel |
 | Limite global de custo | 20 USD por mês; ao atingi-lo continuam só a classificação da Triagem e o Publicador |
 | Fornecedor e modelo por papel | **Configuráveis e não decididos.** O responsável pode querer trocar de fornecedor para testar. O motor mapeia cada papel a uma classe de modelo por configuração, e a comparação A/B pode também comparar fornecedores |
@@ -178,7 +178,7 @@ Estrutura proposta (a fixar no plano; nomes em snake_case, Python): um pacote `h
 
 ## Impacto
 
-- **Roadmap [I]:** o motor comum e as avaliações por papel somam 1 a 2 semanas. Fase 2: núcleo de criação, depois Gestor operacional, depois Diretor automático. Fase 3: Triagem. Fase 4: Analista. Até ao Diretor automático, a estratégia faz-se em sessões manuais (Adenda 01, D12).
+- **Roadmap [I]:** o motor comum e as avaliações por papel somam 1 a 2 semanas, e o painel de conversa com o modo `interview` mais cerca de 1 semana. Ordem: Fase 1 (núcleo e integração) inclui o motor e o painel de conversa; Fase 2: Diretor (entrevista, perfil de marca, estratégia, plano semanal), depois núcleo de criação, depois Gestor operacional; Fase 3: Triagem; Fase 4: Analista. A faixa de estratégia manual da Adenda 01 (D12) deixa de ser necessária, porque o Diretor faz a entrevista no próprio produto.
 - **Custo:** estável em cerca de 9 a 11 USD por mês, a somar ao arranque da estratégia.
 - **Documentos:** os Anexos A e B têm de refletir as tabelas e os papéis acima quando o plano de implementação for escrito.
 - **Comercial:** a venda não é foco. A divisão em papéis só mantém essa porta aberta (papéis configuráveis por marca, Anexo C), sem trabalho extra agora.
@@ -202,7 +202,7 @@ Estrutura proposta (a fixar no plano; nomes em snake_case, Python): um pacote `h
 3. ~~Informação da marca~~: **passou a capacidade do Diretor** (modo `interview`).
 4. Plano Tailscale da empresa e se inclui o Funnel. Em aberto; só o responsável o pode ver; fecha-se na Fase 0.
 5. ~~Titularidade do código~~: **fora de foco** enquanto a venda não for objetivo.
-6. Ordem de construção: o Diretor em modo `interview` produz o perfil de marca de que os criadores dependem. Em aberto (ver conversa de 2026-11-05).
+6. ~~Ordem de construção~~: **resolvida** (Diretor em modo `interview` primeiro).
 
 ## Referencias
 
