@@ -158,7 +158,7 @@ Cada decisão mantém o identificador original para rastreio. As decisões D32 a
 | D6 | O responsável **responde na app nativa**, com ligação direta a partir da ficha | condicionada | Confirmação simples de "respondido" no painel; ligação validada em cada dispositivo, com alternativa |
 | D12 | Marca sem marketing formal: recriar e revitalizar a empresa com estratégia de longo prazo | revista (Q13) | O Diretor questiona o posicionamento e propõe melhorias na oferta, preservando factos e decisões em vigor |
 | D16 | Construtor de identidade e estratégia é funcionalidade do produto | condicionada | Separar factos, escolhas de comunicação e hipóteses de mercado; validar utilidade antes de interface extensa |
-| D18, D29 | Venda futura é **opção** e está fora de foco | mantida | D29: esclarecer já a **autorização mínima** da empresa para usar dados, contas e ativos, e quem controla contas, código e chaves |
+| D18, D29 | Venda futura é **opção** e está fora de foco | mantida | D29: **a empresa autoriza** o uso dos seus dados, contas e ativos (confirmado pelo responsável, 2026-11-05). Falta registar quem controla contas, código e chaves |
 
 ### 3.2 Infraestrutura
 
@@ -211,10 +211,11 @@ Cada decisão mantém o identificador original para rastreio. As decisões D32 a
 | D46 | Interface: **oficina 3D principal**, avatares circulares numa coluna lateral, painel de trabalho por agente; os avatares dão acesso a trabalho real, revisão e validação | Q19 |
 | D47 | A versão essencial da interface 3D integra o **primeiro lançamento**; detalhe gráfico e animações avançadas evoluem depois; existe sempre alternativa funcional sem 3D | Q20 |
 | D48 | **Interagir não é conversar**: o painel abre por defeito entregas, pendências, observações e ações de revisão; a entrevista do Diretor é a função de conversa específica | Q19, Q20 |
+| D49 | **RPO de 1 h e RTO de 24 h** (secção 5.6) | Pendência 4, delegada ao agente |
 
 ### 3.5 Em aberto de propósito
 
-Plano Tailscale da empresa; destinatário e serviço do email de aviso; fornecedor de imagem e preço por imagem; fornecedor de LLM inicial por papel; RPO e RTO aceitáveis (secção 5.6). Ver a secção 14.
+Fornecedor de imagem e preço por imagem; fornecedor de LLM inicial por papel; enquadramento do plano Tailscale gratuito (secção 9.3). Ver a secção 14.
 
 ---
 
@@ -385,8 +386,8 @@ Ambas atrás da interface `MediaStore`.
 
 **Backups e recuperação.**
 
-- **RPO e RTO** (perda máxima e tempo de recuperação aceitáveis): o responsável define-os antes de dados reais **[pendência]**.
-- `pg_dump` cifrado com a frequência que o RPO exigir; retenção 7 diários, 4 semanais e 6 mensais.
+- **RPO de 1 hora e RTO de 24 horas** (D49, proposta do agente aceite por delegação do responsável). O RPO é a perda máxima de dados aceitável; o RTO é o tempo máximo para voltar a operar. Justificação: a BD é pequena e um dump horário é barato no Pi; uma só pessoa recupera em até um dia, e as publicações cuja janela expirar entretanto ficam `missed` (D40). Rever se o volume ou a criticidade mudarem.
+- `pg_dump` cifrado **de hora a hora** para um destino externo ao Pi; retenção 24 horários, 7 diários, 4 semanais e 6 mensais.
 - O backup cobre **BD, media, configuração e chave de cifra dos tokens**; sem a chave, o restauro fica incompleto.
 - **Ensaio de restauro** antes de dados reais e depois trimestral.
 - **Depois de um restauro:** publicação pausada (kill switch global); reaplica-se o registo de eliminações RGPD; reconciliam-se publicações e eventos externos; só então se reativam os envios. Assim, restaurar a fila não reintroduz tarefas que já tiveram efeito.
@@ -751,7 +752,7 @@ Não se fixa nova duração sem decompor o trabalho. Cada plano, quando for escr
 | --- | --- | --- |
 | **Despesa de IA (texto)** | Mensal | Referência de **20 USD** (D14); valor real por medição (8.2) |
 | **Despesa de IA (imagem)** | Mensal | Dentro da referência; preço por imagem **por verificar**; geração, repetições e revisão visual medidas |
-| Tailscale | Mensal | Custo **incremental** a confirmar no plano da empresa (Standard 8 USD por utilizador **[V, S12]** se for preciso) |
+| Tailscale | Mensal | 0 USD no plano **gratuito (Personal, até 6 utilizadores)** que a tailnet usa. O Personal é para uso **não comercial** **[V, S12]**: confirmar se o uso pela empresa é admissível; senão, Standard a 8 USD por utilizador, com 1 utilizador |
 | Funnel | — | Disponível em todos os planos, em beta **[V, S10]** |
 | Email (heartbeat e avisos) | Mensal | 0 € num plano gratuito **[I]**; serviço por escolher |
 | Media e backups externos | Mensal | 0 a 5 € **[I]** |
@@ -789,7 +790,7 @@ A precisão de cêntimos nos tokens não resolve o investimento de semanas. A de
 | R17 | Custo multiplicado por vários agentes | Média | Médio | Comparação cedo com percurso simples (8.3) |
 | R18 | Dependência do Funnel (beta, banda) | Média | Médio | Plano B Cloudflare Tunnel; recetor separado |
 | R19 | App Review necessário com app só na tailnet | Baixa–Média | Alto | Fase 0 decide |
-| R20 | Licença Tailscale Personal | Média | Baixo | Confirmar o plano da empresa |
+| R20 | A tailnet usa o plano gratuito (Personal), destinado a uso não comercial | Média | Baixo–Médio | Confirmar o enquadramento com a Tailscale; alternativa Standard, 8 USD por mês para 1 utilizador |
 | R21 | Fadiga do aprovador único | Média | Médio | Revisão em lote, Revisor filtra primeiro, minutos medidos |
 
 **Riscos novos (revisão crítica)**
@@ -815,11 +816,11 @@ A precisão de cêntimos nos tokens não resolve o investimento de semanas. A de
 **Do responsável (por prioridade)**
 
 1. **Rever esta v2.**
-2. **Autorização mínima da empresa** (D29): uso de dados, contas e ativos; quem controla contas, código e chaves.
-3. **Plano Tailscale** da tailnet e custo incremental.
-4. **RPO e RTO** aceitáveis (5.6).
-5. Destinatário do email (heartbeat e, na E4, avisos urgentes); horário de atendimento e prazo de resposta a leads, a definir antes da E4.
-6. Criar as **contas de teste** da Meta.
+2. ~~Autorização mínima da empresa~~: **autorizada** (2026-11-05). Falta registar quem controla contas, código e chaves.
+3. **Plano Tailscale:** a tailnet usa o plano gratuito (até 6 utilizadores). Por resolver: esse plano é para uso não comercial; confirmar se o uso pela empresa é admissível ou passar a Standard.
+4. ~~RPO e RTO~~: **1 h e 24 h** (D49, secção 5.6).
+5. ~~Destinatário do email~~: **definido** e guardado em `AgentDATA/secrets/alert_email_to`, fora do Git (`ALERT_EMAIL_TO_FILE`). Horário de atendimento e prazo de resposta a leads definem-se antes da E4.
+6. Criar as **contas de teste** da Meta: no arranque do Plano 0, por decisão do responsável.
 
 **Fase 0 (por provar, matriz 4.6)**
 
