@@ -1,40 +1,45 @@
 # Contexto de execucao
 
-- Timestamp: `2026-11-05T21:10:57+00:00` (reescrito; criado em `2026-11-02T12:25:40+00:00`)
+- Timestamp: `2026-11-05T22:21:14+00:00` (reescrito; criado em `2026-11-02T12:25:40+00:00`)
 - Autor: `agent`
 - Escopo: Estado atual do projeto Marketing AI Manager. A fonte de verdade e o plano mestre v2; este registo so aponta para ele e para o que falta.
 
 ## Estado observado
 
-- Repositorio Git local (ramo `main`), sem remoto. Contem `resumo_marketing_ai_manager.md`, `AGENTS.md`, `README.md` (ainda seed) e `AgentDATA/`. **Nao existe codigo.**
-- Fonte de verdade: **`AgentDATA/docs/2026-11-05T21-10-57+00-00_plano_mestre_marketing_ai_manager.md`** (v2), que incorpora a revisao critica e as decisoes Q1 a Q20 (D32 a D48), com os anexos A a F no mesmo ficheiro. A seccao inicial diz que partes sao normativas.
-- Documento de apoio ativo: `AgentDATA/docs/revisao_critica_marketing_ai_manager_2026-11-05.md` (achados F01 a F17, rondas Q1 a Q20, avaliacao do repositorio 3D de referencia, fontes S1 a S17).
-- Plano mestre v1 e documentos anteriores arquivados em `AgentDATA/docs/arquivo/` (nao sao fonte de verdade).
+- Repositorio Git local, sem remoto. `main` contem so documentacao (plano mestre v2, revisao critica, Plano 01 v2).
+- **Tarefa 1 do Plano 01 implementada, ainda nao integrada em `main`.** Esta no ramo `agent/2026-11-05T21-40-00_plano01_tarefa1` (commits `bc55ba4`, `0f50a22`, `be714e2`).
+  - Contem: projeto Python 3.12 com `uv`, `config.py` (`Settings`, `RoleRoute`), `clock.py`, `secrets.py`, `compose.test.yaml`, `.env.example`, e a seccao "Desenvolvimento" do README.
+  - Validacao no ultimo commit: 30 testes, `ruff` e `mypy` strict limpos.
+  - Teve revisao da tarefa, re-revisao e revisao final do ramo, todas fechadas.
+  - `compose.test.yaml` so foi validado como YAML: nao ha Docker nesta maquina.
+- Fonte de verdade: `AgentDATA/docs/2026-11-05T21-10-57+00-00_plano_mestre_marketing_ai_manager.md` (v2); plano de implementacao: `AgentDATA/docs/2026-11-05T21-28-57+00-00_plano_01_v2_nucleo_diretor_estrategia.md` (Tarefas 2 a 15 por fazer).
+- Documento de apoio ativo: `AgentDATA/docs/revisao_critica_marketing_ai_manager_2026-11-05.md`. Versoes anteriores em `AgentDATA/docs/arquivo/`.
 - Skills recomendadas registadas como `desejada` em `AgentDATA/skills/`; nada instalado.
 
 ## Decisoes
 
-Ver a seccao 3 do plano mestre v2. Resumo:
-
-- **Primeira entrega:** Diretor (entrevista, diagnostico critico, estrategia aprovada antes do primeiro plano); criacao de texto e imagem (layout e geracao por IA); Revisor; sessao semanal de aprovacao com reserva; publicacao Facebook e Instagram com recuperacao automatica dentro da janela autorizada; oficina 3D essencial com avatares e painel de entregas, mais alternativa 2D.
-- **Triagem:** entra depois do primeiro lancamento; ate la, atendimento na caixa nativa.
-- **Orcamento:** 20 USD/mes como referencia (sem corte automatico), com controlo por chamada.
-- **Avisos:** email minimo sem dados pessoais para urgencias.
-- **Papeis:** um papel sem beneficio medido sai do percurso habitual.
-- **CrewAI:** adiado.
-- **Venda:** fora de foco.
+- Plano mestre v2, seccao 3 (D1 a D49): primeira entrega com diagnostico e estrategia, criacao de texto e imagem, sessao semanal, publicacao com recuperacao automatica e oficina 3D essencial; triagem depois; 20 USD/mes como referencia sem corte; email minimo para urgencias; RPO 1 h e RTO 24 h; CrewAI adiado; venda fora de foco.
+- Tarefa 1: `Settings.database_url` e obrigatorio (sem valor por omissao, para nunca apontar a aplicacao a base de testes); `.env` so leva campos de `Settings`; segredos so por ficheiro (`*_FILE`, em `AgentDATA/secrets/`).
 
 ## Arquivos relacionados
 
 - `AgentDATA/docs/2026-11-05T21-10-57+00-00_plano_mestre_marketing_ai_manager.md`
+- `AgentDATA/docs/2026-11-05T21-28-57+00-00_plano_01_v2_nucleo_diretor_estrategia.md`
 - `AgentDATA/docs/revisao_critica_marketing_ai_manager_2026-11-05.md`
-- `AgentDATA/Knowledge/` (7 registos; onde discordarem da seccao 15 do plano, vale o plano)
+- `AgentDATA/Knowledge/2026-11-05T22-21-14+00-00_uv_hardlink_acesso_negado.md`
+- `AgentDATA/Knowledge/` (7 registos anteriores; onde discordarem da seccao 15 do plano, vale o plano)
 - `AgentDATA/skills/skills_index.md` e `skill_*.md`
 
 ## Proxima acao sugerida
 
-1. O responsavel reve o plano mestre v2.
-2. Reescrever o Plano 01 aplicando o Anexo E, seccao E.0, e escolher o metodo de execucao.
-3. Em paralelo, Plano 0 (operacional): Pi na tailnet, Docker e Postgres, contas de teste da Meta, matriz de prova da Fase 0 (seccao 4.6), ensaio de restauro.
-4. Pendencias do responsavel: autorizacao minima da empresa (D29), plano Tailscale, RPO/RTO, destinatario do email.
-5. Reescrever o `README.md` quando o Plano 1 for executado.
+1. Decidir como integrar o ramo da Tarefa 1 (merge, PR ou manter).
+2. Antes da Tarefa 2: instalar Docker Desktop ou Postgres 17 na maquina de desenvolvimento.
+3. Notas a levar para as tarefas seguintes (resultado das revisoes da Tarefa 1):
+   - Despachos que instalem pacotes levam `UV_LINK_MODE=copy` (ver o registo de conhecimento acima).
+   - Tarefa 2: os testes e `migrations/env.py` definem `DATABASE_URL` explicitamente, a partir de `TEST_DATABASE_URL`; `.env.example` aponta `DATABASE_URL` a base de testes, o que torna dev e teste a mesma base, a decidir quando existir uma base de desenvolvimento.
+   - Tarefa 4: acrescentar `types-PyYAML` as dependencias de desenvolvimento (o `mypy` strict falha ao importar `yaml`).
+   - Tarefa 9: `-m "not live"` nas opcoes do pytest por omissao; o `skipif` le `os.environ`, porque o `.env` nao o preenche.
+   - Tarefa 10: valores em branco em `OPENAI_API_KEY_FILE`, `ANTHROPIC_API_KEY_FILE` e `OPENAI_BASE_URL` devem virar `None`, para a mensagem de chave em falta nomear a variavel.
+   - Tarefas 14 e 15: erros de validacao tratados com `exc.errors(include_input=False)`; acrescentar `PANEL_CSRF_SECRET_FILE` a `Settings`; no arranque, apanhar `SettingsError` e `ValidationError`; resolver `.env` e ficheiros de chave a partir de um diretorio de trabalho conhecido.
+4. Pendencias do responsavel: plano Tailscale gratuito (Personal, uso nao comercial) por confirmar; destinatario do email ja guardado em `AgentDATA/secrets/alert_email_to`.
+5. Reescrever o `README.md` por completo quando o Plano 1 estiver executado.
