@@ -1,5 +1,6 @@
 import json
 from decimal import Decimal
+from typing import Any
 
 import pytest
 from pydantic import ValidationError
@@ -38,3 +39,44 @@ def test_unknown_provider_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_get_settings_returns_settings() -> None:
     assert isinstance(get_settings(), Settings)
+
+
+ROUTE_OK: dict[str, Any] = {"provider": "fake", "model_id": "fake-1", "capabilities": ["text"]}
+
+
+def _first_error_loc(
+    monkeypatch: pytest.MonkeyPatch, name: str, value: str
+) -> tuple[int | str, ...]:
+    monkeypatch.setenv(name, value)
+    with pytest.raises(ValidationError) as excinfo:
+        Settings(_env_file=None)  # type: ignore[call-arg]
+    return excinfo.value.errors()[0]["loc"]
+
+
+@pytest.mark.parametrize("value", ["0", "-5"])
+def test_budget_reference_must_be_positive(monkeypatch: pytest.MonkeyPatch, value: str) -> None:
+    loc = _first_error_loc(monkeypatch, "MONTHLY_BUDGET_REFERENCE_USD", value)
+    assert loc == ("monthly_budget_reference_usd",)
+
+
+def test_max_message_chars_must_be_positive(monkeypatch: pytest.MonkeyPatch) -> None:
+    assert _first_error_loc(monkeypatch, "MAX_MESSAGE_CHARS", "0") == ("max_message_chars",)
+
+
+@pytest.mark.parametrize("value", ["[]", "[0]", "[101]", "[100,50,-1]"])
+def test_warn_percents_must_be_1_to_100_and_non_empty(
+    monkeypatch: pytest.MonkeyPatch, value: str
+) -> None:
+    assert _first_error_loc(monkeypatch, "BUDGET_WARN_PERCENTS", value)[0] == "budget_warn_percents"
+
+
+def test_empty_model_id_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    routes = {"diretor": {**ROUTE_OK, "model_id": ""}}
+    loc = _first_error_loc(monkeypatch, "ROLE_ROUTES", json.dumps(routes))
+    assert loc == ("role_routes", "diretor", "model_id")
+
+
+def test_route_with_extra_key_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    routes = {"diretor": {**ROUTE_OK, "temperature": 0.2}}
+    loc = _first_error_loc(monkeypatch, "ROLE_ROUTES", json.dumps(routes))
+    assert loc == ("role_routes", "diretor", "temperature")

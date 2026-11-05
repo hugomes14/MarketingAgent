@@ -7,9 +7,9 @@ services:
       POSTGRES_PASSWORD: marketing_agent
       POSTGRES_DB: marketing_agent_test
     ports:
-      - "5433:5432"
+      - "127.0.0.1:5433:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U marketing_agent -d marketing_agent_test"]
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U marketing_agent -d marketing_agent_test"]
       interval: 2s
       timeout: 3s
       retries: 15
