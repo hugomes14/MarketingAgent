@@ -23,11 +23,15 @@ def read_secret_file(path: Path) -> str:
 
     Raises:
         SecretFileError: se o ficheiro nao for legivel, nao for UTF-8, ficar vazio apos o
-            strip ou tiver mais de uma linha. A mensagem nomeia o caminho, nunca o conteudo.
+            strip ou tiver quebras de linha ou caracteres de controlo. A mensagem nomeia o
+            caminho, nunca o conteudo.
     """
     secret = _read_text(path).strip()
     if not secret:
         raise SecretFileError(f"ficheiro de segredo vazio: {path}")
-    if "\n" in secret or "\r" in secret:
-        raise SecretFileError(f"ficheiro de segredo com mais de uma linha: {path}")
+    # isprintable() cobre quebras de linha, NUL e U+FEFF residual (BOM duplo, UTF-16 sem BOM).
+    if not secret.isprintable():
+        raise SecretFileError(
+            f"ficheiro de segredo com quebras de linha ou caracteres de controlo: {path}"
+        )
     return secret

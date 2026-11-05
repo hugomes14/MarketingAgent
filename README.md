@@ -69,3 +69,5 @@ uv run ruff check
 uv run mypy src
 uv run pytest
 ```
+
+O `.env` contem apenas campos de `Settings`; uma chave desconhecida (por exemplo `ANTHROPIC_API_KEY` ou `TEST_DATABASE_URL`) faz o arranque falhar, sem repetir o valor na mensagem. Exportar `TEST_DATABASE_URL` na shell, nunca no `.env`. `DATABASE_URL` e obrigatorio e nao tem valor por omissao.

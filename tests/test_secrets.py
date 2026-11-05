@@ -52,3 +52,28 @@ def test_multiline_value_rejected(tmp_path: Path) -> None:
         read_secret_file(secret)
     assert str(secret) in str(excinfo.value)
     assert "sk-a" not in str(excinfo.value)
+
+
+def _assert_rejected_without_content(path: Path) -> None:
+    with pytest.raises(SecretFileError) as excinfo:
+        read_secret_file(path)
+    assert str(path) in str(excinfo.value)
+    assert "sk-abc" not in str(excinfo.value)
+
+
+def test_nul_byte_rejected(tmp_path: Path) -> None:
+    secret = tmp_path / "nulbyte.txt"
+    secret.write_bytes(b"sk-abc\x00def")
+    _assert_rejected_without_content(secret)
+
+
+def test_utf16le_without_bom_rejected(tmp_path: Path) -> None:
+    secret = tmp_path / "utf16le.txt"
+    secret.write_bytes("sk-abc".encode("utf-16-le"))
+    _assert_rejected_without_content(secret)
+
+
+def test_doubled_bom_rejected(tmp_path: Path) -> None:
+    secret = tmp_path / "doublebom.txt"
+    secret.write_bytes(b"\xef\xbb\xbf\xef\xbb\xbfsk-abc")
+    _assert_rejected_without_content(secret)

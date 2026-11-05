@@ -9,10 +9,6 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 Capability = Literal["text", "image_input", "json_schema"]
 
-DEFAULT_DATABASE_URL = (
-    "postgresql+psycopg://marketing_agent:marketing_agent@127.0.0.1:5433/marketing_agent_test"
-)
-
 # Limiares de aviso do orcamento: nao vazio, cada um entre 1 e 100 por cento.
 WarnPercents = Annotated[tuple[Annotated[int, Field(ge=1, le=100)], ...], Field(min_length=1)]
 
@@ -34,9 +30,14 @@ class Settings(BaseSettings):
     `panel_trusted_proxy`) sao lidos do ambiente como JSON.
     """
 
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
+    # hide_input_in_errors: com extra="forbid", uma chave desconhecida no .env (ex.: chave de API)
+    # seria repetida na mensagem de erro; o erro continua a ser levantado, sem o valor.
+    model_config = SettingsConfigDict(
+        env_file=".env", env_file_encoding="utf-8", hide_input_in_errors=True
+    )
 
-    database_url: str = DEFAULT_DATABASE_URL
+    # Obrigatorio e sem default: nunca apontar por omissao para a base de teste descartavel.
+    database_url: str = Field(repr=False)
     monthly_budget_reference_usd: Decimal = Field(default=Decimal("20"), gt=0)
     budget_warn_percents: WarnPercents = (50, 80, 100)
     role_routes: dict[str, RoleRoute] = {}

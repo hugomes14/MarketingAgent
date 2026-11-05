@@ -1,11 +1,20 @@
 import json
 from decimal import Decimal
+from pathlib import Path
 from typing import Any
 
 import pytest
 from pydantic import ValidationError
 
 from marketing_agent.config import Settings, get_settings
+
+TEST_DATABASE_URL = "postgresql+psycopg://u:p@127.0.0.1:5433/db"
+
+
+@pytest.fixture(autouse=True)
+def database_url_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """DATABASE_URL e obrigatorio: os testes que constroem Settings definem-no."""
+    monkeypatch.setenv("DATABASE_URL", TEST_DATABASE_URL)
 
 
 def test_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -80,3 +89,40 @@ def test_route_with_extra_key_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
     routes = {"diretor": {**ROUTE_OK, "temperature": 0.2}}
     loc = _first_error_loc(monkeypatch, "ROLE_ROUTES", json.dumps(routes))
     assert loc == ("role_routes", "diretor", "temperature")
+
+
+def test_database_url_is_required(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    with pytest.raises(ValidationError) as excinfo:
+        Settings(_env_file=None)  # type: ignore[call-arg]
+    assert excinfo.value.errors()[0]["loc"] == ("database_url",)
+
+
+def test_repr_hides_database_url() -> None:
+    settings = Settings(  # type: ignore[call-arg]
+        _env_file=None, database_url="postgresql://u:SECRETPW@h/db"
+    )
+    assert "SECRETPW" not in repr(settings)
+    assert "SECRETPW" not in str(settings)
+
+
+def _write_env(tmp_path: Path, extra_line: str) -> Path:
+    env_file = tmp_path / ".env"
+    env_file.write_text(f"DATABASE_URL={TEST_DATABASE_URL}\n{extra_line}\n", encoding="utf-8")
+    return env_file
+
+
+def test_unknown_env_key_error_hides_value(tmp_path: Path) -> None:
+    env_file = _write_env(tmp_path, "ANTHROPIC_API_KEY=sk-ant-api03-SECRETVALUE0123456789")
+    with pytest.raises(ValidationError) as excinfo:
+        Settings(_env_file=env_file)  # type: ignore[call-arg]
+    assert "SECRETVALUE" not in str(excinfo.value)
+    assert "SECRETVALUE" not in repr(excinfo.value)
+    assert "input_value" not in str(excinfo.value)
+
+
+def test_unknown_env_url_error_hides_password(tmp_path: Path) -> None:
+    env_file = _write_env(tmp_path, "TEST_DATABASE_URL=postgresql://u:pw-SECRET@h/db")
+    with pytest.raises(ValidationError) as excinfo:
+        Settings(_env_file=env_file)  # type: ignore[call-arg]
+    assert "pw-SECRET" not in str(excinfo.value)
