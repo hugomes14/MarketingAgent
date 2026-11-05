@@ -254,6 +254,21 @@ Antes, o relatório assumia um perfil de marca já existente (W1) e fazia da KB 
 6. **A estratégia pode começar já, sem esperar pela infraestrutura.** É sobretudo texto e pesquisa. Proponho uma **faixa paralela de estratégia** durante a Fase 0, feita em sessões como esta e gravada em `AgentDATA/docs/`. Depois o sistema ingere esse perfil como KB inicial.
 7. **Esforço:** soma-se na ordem de 1 a 2 semanas ao roadmap, em grande parte sobreposto à Fase 0 **[I]**.
 
+## Decisões de 2026-11-05 (equipa multiagente)
+
+Detalhe e justificação no [Anexo D](2026-11-05T18-58-45+00-00_anexo_d_arquitetura_multiagente.md).
+
+| # | Decisão |
+| --- | --- |
+| D19 | O agente único passa a **equipa de papéis**: Diretor, Pesquisador, Gestor de Redes Sociais, Copywriter, Designer Visual, Revisor, Triagem; o Publicador é código, não agente. Analista na Fase 4 |
+| D20 | Motivo: **qualidade por especialização**, medida por **comparação cega A/B** (verificação periódica) e taxa de edição (contínua) |
+| D21 | Motor próprio fino com **perfil por papel** e três tipos de ciclo; fluxo entre papéis fixo em código, com Pesquisador isolado sob o Diretor |
+| D22 | O **Diretor planeia com datas**; o Gestor executa. O plano semanal e cada publicação precisam da aprovação do responsável |
+| D23 | Triagem é papel separado em pipeline fixo. Revisor com modelo e rubrica distintos, no mesmo fornecedor |
+| D24 | Cada edição do responsável é guardada como exemplo de feedback; sem treino de modelos |
+| D25 | Ordem: núcleo de criação primeiro; Diretor manual até lá |
+| D26 | Ao atingir os 20 USD, continuam só a classificação da Triagem e o Publicador |
+
 ## Roadmap revisto [I]
 
 Esforço para uma pessoa a tempo inteiro, como no relatório. Não inclui prazos de App Review.
