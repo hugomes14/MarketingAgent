@@ -34,6 +34,7 @@ O responsável quer uma equipa de agentes com papéis distintos (gestor de redes
 | Limite global de custo | 20 USD por mês; ao atingi-lo continuam só a classificação da Triagem e o Publicador |
 | Fornecedor e modelo por papel | **Configuráveis e não decididos.** O responsável pode querer trocar de fornecedor para testar. O motor mapeia cada papel a uma classe de modelo por configuração, e a comparação A/B pode também comparar fornecedores |
 | Informação da marca | **O Diretor extrai-a em conversa com o responsável** (modo de entrevista no painel); não se pede antecipadamente |
+| Imagens | **Ambas as vias**: composição por modelos de layout com fotos reais (por defeito) e geração por IA como ferramenta opcional do Designer, com as regras da secção 1.1 |
 | Venda do produto | Fora de foco. Mantêm-se só decisões baratas que não fecham a porta (`brand_id` nas tabelas, interfaces abstratas) |
 
 ### Porquê esta forma [V]
@@ -53,7 +54,7 @@ O responsável quer uma equipa de agentes com papéis distintos (gestor de redes
 | **Pesquisador** | Pesquisa limitada | Pesquisa e leitura na web; gravar nota com fonte | Ler dados privados da marca; escrever em qualquer outro sítio |
 | **Gestor de Redes Sociais** | Código, com LLM nas exceções | Ler calendário e estado dos posts; propor novo horário; lembrar aprovações | Escrever texto de publicações; publicar |
 | **Copywriter** | Uma chamada com esquema e validação | Ler voz da marca, KB e exemplos aprovados e rejeitados; validar limites de texto | Web; Meta; calendário |
-| **Designer Visual** | Uma chamada com esquema e validação | Ler ativos da marca; compor imagens com modelos em código; validar formato (JPEG); escrever texto alternativo | Meta; calendário |
+| **Designer Visual** | Uma chamada com esquema e validação | Ler ativos da marca; compor imagens com modelos de layout em código; gerar imagem por IA (opcional, com teto de custo); validar formato (JPEG); escrever texto alternativo | Meta; calendário |
 | **Revisor** | Uma chamada com rubrica | Ler rascunho, perfil e KB; verificar alegações; devolver aprovar, rever ou rejeitar | Editar o rascunho |
 | **Triagem** | Pipeline fixo (classificar, extrair lead, propor) | Ler mensagem, histórico do contacto e KB; escrever a ficha | Calendário; web; enviar mensagens |
 | **Publicador** (código, não é agente) | Determinístico | Única peça com escrita na Meta; só publica com `approved_content_hash` válido | — |
@@ -66,6 +67,14 @@ Classes de modelo [I]: Diretor (estratégia trimestral) em modelo forte; Diretor
 2. Texto não confiável (web, DMs, comentários) é tratado como dado, nunca como instrução, e só entra em papéis sem poder: Pesquisador e Triagem.
 3. Entre Revisor e criadores há no máximo **2 voltas**. À terceira, o rascunho vai para o responsável com as notas do Revisor.
 4. O Analista de métricas só entra na Fase 4.
+
+### 1.1 Regras de imagem (Designer Visual)
+
+1. **Por defeito, modelo de layout com fotografia real da marca.** A geração por IA só é usada quando o brief pede uma ilustração, um fundo ou um ambiente, ou quando não há fotografia adequada.
+2. **Nunca gerar por IA imagens que mostrem os produtos, as instalações ou as pessoas reais da marca.** Gerar essas imagens pode enganar o público sobre o que a marca vende **[I]**; o que é real vem de fotografia real.
+3. Cada `rascunho_visual` regista a origem (`layout` ou `gerada`). Quando é `gerada`, o Publicador ativa o parâmetro `is_ai_generated` do Instagram **[V, Knowledge sobre publicação no Instagram]**.
+4. A geração por IA consome do mesmo orçamento de 20 USD, com um teto próprio dentro do núcleo de criação (por defeito, cerca de 3 USD por mês **[I]**) e pára ao atingi-lo. O preço por imagem do fornecedor **não foi verificado**.
+5. O Revisor tem de ver a imagem, o que exige um modelo com visão **[I]**. Isto entra na escolha de modelo por papel.
 
 ### 2. Especificação de um papel e tipos de ciclo
 
@@ -198,7 +207,7 @@ Estrutura proposta (a fixar no plano; nomes em snake_case, Python): um pacote `h
 ## Pendências
 
 1. ~~Fornecedor e modelo por papel~~: **resolvido como configuração**; não bloqueia nada e pode mudar para testes.
-2. Ferramenta de imagem: composição por modelos de layout, geração por IA, ou ambas (pergunta 13 do relatório). Em aberto.
+2. ~~Ferramenta de imagem~~: **resolvida** (ambas as vias, regras na secção 1.1). Falta só o preço por imagem do fornecedor.
 3. ~~Informação da marca~~: **passou a capacidade do Diretor** (modo `interview`).
 4. Plano Tailscale da empresa e se inclui o Funnel. Em aberto; só o responsável o pode ver; fecha-se na Fase 0.
 5. ~~Titularidade do código~~: **fora de foco** enquanto a venda não for objetivo.
