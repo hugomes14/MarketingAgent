@@ -46,3 +46,26 @@ Use `AgentDATA/mcp/mcp_server_registry_template.md` para registrar MCP servers d
 Use `AgentDATA/tools/tool_registry_template.md` para registrar CLI tools disponiveis ou desejadas.
 
 Os indices `AgentDATA/skills/skills_index.md`, `AgentDATA/mcp/mcp_servers_index.md` e `AgentDATA/tools/tools_index.md` devem ser atualizados pelos projetos derivados quando novas capacidades forem adicionadas.
+
+## Desenvolvimento
+
+Pre-requisitos:
+
+- Python 3.12 e [uv](https://docs.astral.sh/uv/).
+- Docker, ou um Postgres 17 proprio, para os testes que usam base de dados.
+
+Postgres de teste (porta 5433, base `marketing_agent_test`):
+
+```bash
+docker compose -f compose.test.yaml up -d
+```
+
+Configuracao local: copiar `.env.example` para `.env` (o `.env` nao e versionado).
+
+Validacao:
+
+```bash
+uv run ruff check
+uv run mypy src
+uv run pytest
+```
