@@ -18,7 +18,7 @@
 Este plano entrega software testável por si: uma entrevista de marca de ponta a ponta com LLM falso, orçamento e auditoria. **Não** inclui, e cada um terá o seu plano:
 
 - Plano 0 (operacional, sem TDD): Pi na tailnet, Funnel, contas de teste da Meta, spike da Fase 0.
-- Plano 2: registo de ferramentas com lista fechada por papel, ciclos `structured` e `research`, Copywriter, Designer, Revisor.
+- Plano 2: registo de ferramentas com lista fechada por papel, ciclos `structured` e `research`, Copywriter, Designer, Revisor. **Em aberto no Plano 2:** implementar o ciclo `research` à mão ou com CrewAI, decidido por um teste curto e com prazo (custo por tarefa, qualidade das fontes e conclusões avaliada às cegas, tempo, rasto das chamadas). O contrato `Loop` (Tarefa 8) permite trocar a implementação sem refazer o resto.
 - Plano 3: Gestor, Publicador, scheduler, cliente Meta. Plano 4: Triagem. Plano 5: Analista.
 - Docker, Compose e Postgres em execução (esta máquina não tem Docker nem Postgres: os testes usam SQLite; a validação em Postgres entra no plano de infraestrutura).
 

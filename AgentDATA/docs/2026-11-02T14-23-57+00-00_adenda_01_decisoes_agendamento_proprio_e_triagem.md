@@ -271,6 +271,7 @@ Detalhe e justificação no [Anexo D](2026-11-05T18-58-45+00-00_anexo_d_arquitet
 | D27 | Fornecedor e modelo por papel são **configuração**, não decisão: o responsável pode trocar de fornecedor para testar |
 | D28 | O **Diretor extrai a informação da marca em conversa com o responsável** (modo `interview` no painel), em vez de a pedirmos agora |
 | D29 | A venda do produto está **fora de foco**; só se mantêm decisões baratas que não fecham a porta |
+| D31 | **CrewAI fica em aberto no Plano 2** para o ciclo `research`; não entra no Plano 1. A decisão sai de um teste comparativo com prazo |
 | D30 | Imagens: **ambas as vias** (layout com fotos reais por defeito, geração por IA opcional com teto de custo). Nunca gerar por IA produtos, instalações ou pessoas reais da marca |
 
 ## Roadmap revisto [I]

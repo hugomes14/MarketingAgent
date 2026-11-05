@@ -212,6 +212,7 @@ Estrutura proposta (a fixar no plano; nomes em snake_case, Python): um pacote `h
 4. Plano Tailscale da empresa e se inclui o Funnel. Em aberto; só o responsável o pode ver; fecha-se na Fase 0.
 5. ~~Titularidade do código~~: **fora de foco** enquanto a venda não for objetivo.
 6. ~~Ordem de construção~~: **resolvida** (Diretor em modo `interview` primeiro).
+7. **CrewAI no ciclo `research`**: em aberto de propósito. Decide-se no Plano 2 com um teste comparativo entre implementação própria e CrewAI. O CrewAI exige Python < 3.14 **[V, PyPI]** e não foi verificado quanto a ganchos de orçamento por chamada.
 
 ## Referencias
 
