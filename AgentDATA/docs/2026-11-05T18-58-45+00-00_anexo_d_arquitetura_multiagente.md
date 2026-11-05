@@ -32,6 +32,9 @@ O responsável quer uma equipa de agentes com papéis distintos (gestor de redes
 | Ordem de construção | Núcleo de criação primeiro; Diretor feito manualmente até lá |
 | Abordagem do motor | **A: motor próprio fino** com perfis por papel |
 | Limite global de custo | 20 USD por mês; ao atingi-lo continuam só a classificação da Triagem e o Publicador |
+| Fornecedor e modelo por papel | **Configuráveis e não decididos.** O responsável pode querer trocar de fornecedor para testar. O motor mapeia cada papel a uma classe de modelo por configuração, e a comparação A/B pode também comparar fornecedores |
+| Informação da marca | **O Diretor extrai-a em conversa com o responsável** (modo de entrevista no painel); não se pede antecipadamente |
+| Venda do produto | Fora de foco. Mantêm-se só decisões baratas que não fecham a porta (`brand_id` nas tabelas, interfaces abstratas) |
 
 ### Porquê esta forma [V]
 
@@ -46,7 +49,7 @@ O responsável quer uma equipa de agentes com papéis distintos (gestor de redes
 
 | Papel | Ciclo | Ferramentas | Não pode |
 | --- | --- | --- | --- |
-| **Diretor** | Pesquisa com checkpoints | Ler perfil da marca e KB; ler métricas; pedir pesquisa ao Pesquisador; escrever rascunho de estratégia e de plano semanal | Publicar; falar com a Meta; ler mensagens de clientes |
+| **Diretor** | Entrevista e pesquisa com checkpoints | Conversar com o responsável no painel (entrevista); ler perfil da marca e KB; ler métricas; pedir pesquisa ao Pesquisador; escrever rascunho de perfil de marca, de estratégia e de plano semanal | Publicar; falar com a Meta; ler mensagens de clientes |
 | **Pesquisador** | Pesquisa limitada | Pesquisa e leitura na web; gravar nota com fonte | Ler dados privados da marca; escrever em qualquer outro sítio |
 | **Gestor de Redes Sociais** | Código, com LLM nas exceções | Ler calendário e estado dos posts; propor novo horário; lembrar aprovações | Escrever texto de publicações; publicar |
 | **Copywriter** | Uma chamada com esquema e validação | Ler voz da marca, KB e exemplos aprovados e rejeitados; validar limites de texto | Web; Meta; calendário |
@@ -71,7 +74,7 @@ Cada papel é uma **especificação versionada** (`AgentSpec`):
 | Campo | Conteúdo |
 | --- | --- |
 | `role` e `version` | Identificador e versão do conjunto prompt, ferramentas e esquema |
-| `loop_type` | `research`, `structured` ou `pipeline` |
+| `loop_type` | `interview`, `research`, `structured` ou `pipeline` |
 | `model_tier` | Classe de modelo; o motor mapeia para o fornecedor configurado |
 | `prompt` | Ficheiro versionado |
 | `tools` | Lista fechada de ferramentas permitidas |
@@ -83,8 +86,9 @@ Cada papel é uma **especificação versionada** (`AgentSpec`):
 | `validators` | Verificações em código antes de entregar |
 | `eval_set` | Conjunto fixo de briefs para regressão |
 
-**Três tipos de ciclo bastam:**
+**Quatro tipos de ciclo bastam:**
 
+- `interview`: diálogo de várias sessões com o responsável no painel, com estado gravado. O Diretor mantém um **mapa de lacunas** do perfil de marca (o que já sabe, o que falta, o que é suposição), faz **uma pergunta de cada vez**, resume o que percebeu e só grava o perfil depois de o responsável confirmar. Usado pelo Diretor em W1 e sempre que o plano exigir informação que falta.
 - `research`: várias chamadas de ferramentas com checkpoints gravados em base de dados; exige fontes citadas; compacta o contexto. Usado por Diretor e Pesquisador.
 - `structured`: uma chamada com esquema de saída, validação e até 2 repetições com a mensagem de erro. Usado por Copywriter, Designer e Revisor.
 - `pipeline`: passos fixos em código, cada um uma chamada estruturada. Usado pela Triagem.
@@ -177,7 +181,8 @@ Estrutura proposta (a fixar no plano; nomes em snake_case, Python): um pacote `h
 - **Roadmap [I]:** o motor comum e as avaliações por papel somam 1 a 2 semanas. Fase 2: núcleo de criação, depois Gestor operacional, depois Diretor automático. Fase 3: Triagem. Fase 4: Analista. Até ao Diretor automático, a estratégia faz-se em sessões manuais (Adenda 01, D12).
 - **Custo:** estável em cerca de 9 a 11 USD por mês, a somar ao arranque da estratégia.
 - **Documentos:** os Anexos A e B têm de refletir as tabelas e os papéis acima quando o plano de implementação for escrito.
-- **Comercial:** a "equipa de marketing" passa a ser o produto: papéis que um cliente pode ativar e configurar por marca (Anexo C).
+- **Comercial:** a venda não é foco. A divisão em papéis só mantém essa porta aberta (papéis configuráveis por marca, Anexo C), sem trabalho extra agora.
+- **Interface:** o modo `interview` exige no painel uma conversa com o Diretor, com sessões gravadas e retomáveis.
 
 ## Riscos
 
@@ -192,11 +197,12 @@ Estrutura proposta (a fixar no plano; nomes em snake_case, Python): um pacote `h
 
 ## Pendências
 
-1. Fornecedor (OpenAI ou Claude) e modelo concreto por papel.
-2. Ferramenta de imagem: geração por IA ou só composição com modelos (pergunta 13 do relatório).
-3. Informação da marca para arrancar a estratégia (o que vende, a quem, idioma, objetivo).
-4. Plano Tailscale da empresa e se inclui o Funnel.
-5. Titularidade do código se o produto vier a ser vendido.
+1. ~~Fornecedor e modelo por papel~~: **resolvido como configuração**; não bloqueia nada e pode mudar para testes.
+2. Ferramenta de imagem: composição por modelos de layout, geração por IA, ou ambas (pergunta 13 do relatório). Em aberto.
+3. ~~Informação da marca~~: **passou a capacidade do Diretor** (modo `interview`).
+4. Plano Tailscale da empresa e se inclui o Funnel. Em aberto; só o responsável o pode ver; fecha-se na Fase 0.
+5. ~~Titularidade do código~~: **fora de foco** enquanto a venda não for objetivo.
+6. Ordem de construção: o Diretor em modo `interview` produz o perfil de marca de que os criadores dependem. Em aberto (ver conversa de 2026-11-05).
 
 ## Referencias
 

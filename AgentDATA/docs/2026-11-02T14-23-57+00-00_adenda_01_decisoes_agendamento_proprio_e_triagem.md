@@ -268,6 +268,9 @@ Detalhe e justificação no [Anexo D](2026-11-05T18-58-45+00-00_anexo_d_arquitet
 | D24 | Cada edição do responsável é guardada como exemplo de feedback; sem treino de modelos |
 | D25 | Ordem: núcleo de criação primeiro; Diretor manual até lá |
 | D26 | Ao atingir os 20 USD, continuam só a classificação da Triagem e o Publicador |
+| D27 | Fornecedor e modelo por papel são **configuração**, não decisão: o responsável pode trocar de fornecedor para testar |
+| D28 | O **Diretor extrai a informação da marca em conversa com o responsável** (modo `interview` no painel), em vez de a pedirmos agora |
+| D29 | A venda do produto está **fora de foco**; só se mantêm decisões baratas que não fecham a porta |
 
 ## Roadmap revisto [I]
 
