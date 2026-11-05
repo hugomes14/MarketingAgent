@@ -724,7 +724,7 @@ Cada etapa só avança com a prova anterior. **Não é uma estimativa garantida.
 | Plano | Âmbito | Etapa | Estado |
 | --- | --- | --- | --- |
 | **0** | Operação: Pi na tailnet, Docker e Postgres, contas de teste Meta, spike e matriz da Fase 0, ensaio de backup e restauro (runbook, sem TDD) | B | Por escrever |
-| **1** | Núcleo: esqueleto, dados, artefactos com versão ativa, custo com reservas, motor, LLM com rota por papel, Diretor em entrevista, **diagnóstico e estratégia**, painel base com proteções | A, C | Escrito na v1 (Anexo E); **reescrever com E.0 antes de executar** |
+| **1** | Núcleo: esqueleto, dados, artefactos com versão ativa, custo com reservas, motor, LLM com rota por papel, Diretor em entrevista, **diagnóstico e estratégia**, painel base com proteções | A, C | **Reescrito (v2):** `AgentDATA/docs/2026-11-05T21-28-57+00-00_plano_01_v2_nucleo_diretor_estrategia.md`; à espera de revisão e de método de execução |
 | **2** | Criação: plano semanal derivado da estratégia, experiências, Copywriter, Designer (layout e geração por IA), Revisor com visão, comparação simples vs. especializado, feedback | C | Por escrever |
 | **3** | Publicação: Gestor, scheduler, Publicador, cliente Meta, operação e tentativas, estado por canal, reserva, sessão semanal, reconciliação de publicações, tokens, heartbeat | D | Por escrever |
 | **4** | Interface: oficina 3D essencial, avatares, painel de entregas, revisão em lote, alternativa 2D, desempenho e acessibilidade | D | Por escrever |
@@ -831,7 +831,7 @@ A precisão de cêntimos nos tokens não resolve o investimento de semanas. A de
 
 **Planos seguintes**
 
-11. **Reescrever o Plano 01** com E.0 e escolher o método de execução (decisão posterior à revisão da v2).
+11. ~~Reescrever o Plano 01~~: **feito** (`2026-11-05T21-28-57+00-00_plano_01_v2_nucleo_diretor_estrategia.md`). Falta rever e escolher o método de execução. Pré-requisito: Docker ou Postgres 17 na máquina de desenvolvimento.
 12. Fornecedor de LLM inicial por papel e fornecedor de imagem com preço por imagem; disponibilidade do GPT-5.4 nano antes de o adotar.
 13. Medição de percursos completos (8.2) e comparação simples vs. especializado (8.3).
 14. Mapa de operações RGPD e validação jurídica do art. 50.º do AI Act para conteúdo publicado.
