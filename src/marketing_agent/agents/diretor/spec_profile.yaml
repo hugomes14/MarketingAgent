@@ -1,0 +1,21 @@
+# Spec do Diretor ao gerar o perfil de marca a partir da entrevista guardada.
+# Valores monetarios SEMPRE como texto entre aspas (o carregador recusa numeros).
+role: diretor
+name: profile
+version: 1
+loop_type: structured
+prompt_file: prompt_profile.md
+output_schema: PerfilMarca
+required_capabilities: [text, json_schema]
+tools: []
+reads: []
+writes: [perfil_marca]
+validators: []
+limits:
+  max_steps: 4
+  max_tokens: 60000
+  max_cost_usd: "0.50"
+  max_duration_s: 120
+max_output_tokens: 4000
+budget_share_hint: "0.10"
+escalation: Sem saida valida ou limite atingido, o pedido de perfil falha e o responsavel pode repeti-lo.
