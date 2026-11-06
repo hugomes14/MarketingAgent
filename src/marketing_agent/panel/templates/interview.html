@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% import "_macros.html" as ui %}
+{% block title %}Entrevista{% endblock %}
+{% block content %}
+<h1>Entrevista {{ ui.state_badge(view.state) }}</h1>
+
+<section class="cartao">
+  <h2>Conversa</h2>
+  <div id="turnos">
+    {% for turn in view.turns %}
+    {% with role=turn.role, content=turn.content %}{% include "_turn.html" %}{% endwith %}
+    {% endfor %}
+  </div>
+</section>
+
+{% with session_id=view.session_id %}
+{% include "_answer_form.html" %}
+{% endwith %}
+
+{% with gap_map=view.gap_map %}{% include "_gap_map.html" %}{% endwith %}
+
+<section class="cartao">
+  <h2>Corrigir um tópico</h2>
+  <p class="nota">O que escrever aqui fica como confirmado por si e o Diretor não o volta a alterar.</p>
+  <form method="post" action="/entrevista/{{ view.session_id }}/topico"
+        hx-post="/entrevista/{{ view.session_id }}/topico" hx-target="#mapa" hx-swap="outerHTML"
+        hx-disabled-elt="find button">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label for="topico">Tópico</label>
+    <select id="topico" name="topico" required>
+      {% for topic in topics %}<option value="{{ topic }}">{{ topic|topic_label }}</option>{% endfor %}
+    </select>
+    <label for="correcao">O que é verdade</label>
+    <textarea id="correcao" name="text" rows="2" maxlength="{{ max_chars }}" required></textarea>
+    <button type="submit">Guardar correção</button>
+  </form>
+</section>
+
+<section class="cartao">
+  <h2>Pedir o perfil</h2>
+  <p class="nota">Gera um perfil da marca para o rever. Nada fica ativo até o confirmar.</p>
+  {{ ui.post_button("/entrevista/" ~ view.session_id ~ "/perfil", csrf_token, "Pedir perfil") }}
+</section>
+{% endblock %}

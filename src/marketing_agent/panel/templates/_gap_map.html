@@ -1,0 +1,12 @@
+<section id="mapa" class="cartao"{% if oob %} hx-swap-oob="true"{% endif %}>
+  <h2>Mapa de lacunas</h2>
+  <ul class="lacunas">
+    {% for item in gap_map %}
+    <li class="lacuna lacuna-{{ item.status }}">
+      <strong>{{ item.topic|topic_label }}</strong>
+      <span class="etiqueta">{{ item.status|gap_status }}</span>
+      {% if item.note %}<span class="nota">{{ item.note }}</span>{% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+</section>

@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% import "_macros.html" as ui %}
+{% block title %}Estratégia{% endblock %}
+{% block content %}
+{% set s = view.estrategia %}
+{% set is_submitted = view.record.state.value == "submitted" %}
+<h1>Estratégia {{ ui.state_badge(view.record.state.value) }}</h1>
+
+{% if is_submitted %}
+<p class="aviso importante" role="alert"><strong>Nada fica ativo até a aprovar:</strong> tem de aceitar ou recusar cada proposta de oferta e só depois aprovar.</p>
+{% endif %}
+
+<section class="cartao">
+  <h2>Posicionamento</h2>
+  <p>{{ s.posicionamento }}</p>
+  <p><span class="etiqueta">{{ "Hipótese — ainda não decidido" if s.posicionamento_estado == "hipotese" else "Decidido" }}</span></p>
+</section>
+
+<section class="cartao">
+  <h2>Objetivos</h2>
+  <ul>
+    {% for goal in s.objetivos %}
+    <li><strong>{{ goal.descricao }}</strong> — indicador: {{ goal.indicador }}{% if goal.alvo %}, alvo: {{ goal.alvo }}{% endif %}</li>
+    {% endfor %}
+  </ul>
+  <h2>Pilares</h2>
+  <ul>{% for pillar in s.pilares %}<li>{{ pillar }}</li>{% endfor %}</ul>
+</section>
+
+<section class="cartao">
+  <h2>Experiências a testar</h2>
+  <ul>
+    {% for test in s.experiencias %}
+    <li>{{ test.hipotese }} — métrica: {{ test.metrica }}, prazo: {{ test.prazo_dias }} dias</li>
+    {% endfor %}
+  </ul>
+  <h2>Indicadores mínimos</h2>
+  <ul>{% for item in s.indicadores_minimos %}<li>{{ item }}</li>{% endfor %}</ul>
+</section>
+
+{% macro proposals(items, decisions, with_choice) %}
+  {% for proposal in items %}
+  {% set index = loop.index0 %}
+  <fieldset class="proposta">
+    <legend>Proposta {{ loop.index }}: {{ proposal.proposta }}</legend>
+    <p>{{ proposal.justificacao }}</p>
+    {% if with_choice %}
+    <label><input type="radio" name="decisao_{{ index }}" value="aceitar" required> Aceitar</label>
+    <label><input type="radio" name="decisao_{{ index }}" value="recusar" required> Recusar</label>
+    {% elif index in decisions %}
+    <p><span class="etiqueta">{{ "Aceite" if decisions[index] else "Recusada" }}</span></p>
+    {% else %}
+    <p><span class="etiqueta">Sem decisão</span></p>
+    {% endif %}
+  </fieldset>
+  {% endfor %}
+{% endmacro %}
+
+{% if is_submitted %}
+<form method="post" action="/estrategia/{{ view.record.id }}/aprovar" class="cartao decisao">
+  <h2>Propostas de oferta — decida cada uma</h2>
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  {{ proposals(s.propostas_oferta, view.decisions, true) }}
+  <button type="submit">Aprovar estratégia com estas decisões</button>
+</form>
+<section class="cartao decisao">
+  <h2>Rejeitar</h2>
+  {{ ui.reject_form("/estrategia/" ~ view.record.id ~ "/rejeitar", csrf_token) }}
+</section>
+{% else %}
+<section class="cartao">
+  <h2>Propostas de oferta</h2>
+  {{ proposals(s.propostas_oferta, view.decisions, false) }}
+</section>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,9 @@
+<form id="form-resposta" class="cartao" method="post" action="/entrevista/{{ session_id }}/resposta"
+      hx-post="/entrevista/{{ session_id }}/resposta" hx-target="#turnos" hx-swap="beforeend"
+      hx-headers='{{ {"Idempotency-Key": idempotency_key}|tojson }}'
+      hx-disabled-elt="find button"{% if oob %} hx-swap-oob="true"{% endif %}>
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <label for="resposta">A sua resposta</label>
+  <textarea id="resposta" name="text" rows="4" maxlength="{{ max_chars }}" required>{{ text }}</textarea>
+  <button type="submit">Enviar resposta</button>
+</form>
