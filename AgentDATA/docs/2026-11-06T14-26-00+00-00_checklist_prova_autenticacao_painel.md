@@ -13,6 +13,8 @@
 - [ ] Registar o IP (ou a CIDR da rede Docker) com que o painel ve o `tailscaled`
       (`request.client.host`) e coloca-lo em `PANEL_TRUSTED_PROXY`.
 - [ ] `PANEL_ALLOWED_LOGINS` com o login do dono; confirmar que nao esta vazio.
+- [ ] `PANEL_ALLOWED_HOSTS` com o hostname real do `tailscale serve` (sem porta, ex.:
+      `painel.<tailnet>.ts.net`) alem de `127.0.0.1`/`localhost`; sem ele o dono recebe 400.
 
 ## Servidor ASGI
 
@@ -38,6 +40,8 @@ Requisito: uvicorn arrancado com `proxy_headers=False` (`--no-proxy-headers`) e
 | 6 | Pelo Serve, com utilizador da tailnet fora de `PANEL_ALLOWED_LOGINS` | 403 "Acesso negado." |
 | 7 | Pelo Serve, cliente envia `Tailscale-User-Login` forjado no pedido | Serve substitui/remove; vale a identidade real |
 | 8 | Com `PANEL_ALLOWED_LOGINS=[]` | 403 para todos, incluindo o dono |
+| 9 | Pelo Serve, com o hostname real da tailnet em `PANEL_ALLOWED_HOSTS` | 200 (o hostname real tem de estar na lista) |
+| 10 | Direto ao painel (peer confiavel) com `Host: evil.example` e login valido | 400 "Pedido recusado." (DNS rebinding) |
 
 ## Registo
 

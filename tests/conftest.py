@@ -8,12 +8,15 @@ from pathlib import Path
 import pytest
 from alembic import command
 from alembic.config import Config
+from panel_fixtures import make_panel
 from sqlalchemy import Engine, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from marketing_agent.clock import FixedClock
 from marketing_agent.db.base import make_engine, make_session_factory
 from marketing_agent.db.models import Brand
+
+__all__ = ["make_panel"]  # fixture partilhada pelos testes do painel e dos ponta a ponta
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 

@@ -26,7 +26,7 @@
 ## Comandos
 
 ```bash
-docker exec marketingagent-postgres-1 psql -U marketing_agent -d postgres -c "CREATE DATABASE marketing_smoke"
+docker exec marketing_agent_test-postgres-1 psql -U marketing_agent -d postgres -c "CREATE DATABASE marketing_smoke"
 MODEL=qwen2.5:14b uv run python scripts/smoke_ollama.py
 ```
 

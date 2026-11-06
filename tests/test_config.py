@@ -148,3 +148,45 @@ def test_non_blank_optional_secret_settings_unchanged(monkeypatch: pytest.Monkey
     assert settings.anthropic_api_key_file == Path("/run/a.key")
     assert settings.openai_api_key_file == Path("/run/o.key")
     assert settings.openai_base_url == "http://127.0.0.1:11434/v1"
+
+
+def test_panel_csrf_secret_file_defaults_to_unset(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("PANEL_CSRF_SECRET_FILE", raising=False)
+    assert Settings(_env_file=None).panel_csrf_secret_file is None  # type: ignore[call-arg]
+
+
+@pytest.mark.parametrize("raw", ["", "   "])
+def test_blank_panel_csrf_secret_file_means_unset(
+    monkeypatch: pytest.MonkeyPatch, raw: str
+) -> None:
+    monkeypatch.setenv("PANEL_CSRF_SECRET_FILE", raw)
+    assert Settings(_env_file=None).panel_csrf_secret_file is None  # type: ignore[call-arg]
+
+
+def test_panel_csrf_secret_file_is_a_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PANEL_CSRF_SECRET_FILE", "AgentDATA/secrets/panel_csrf_secret")
+    settings = Settings(_env_file=None)  # type: ignore[call-arg]
+    assert settings.panel_csrf_secret_file == Path("AgentDATA/secrets/panel_csrf_secret")
+
+
+@pytest.mark.parametrize("name", [".env.example", ".env.local.example"])
+def test_example_env_files_are_valid_settings(name: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("DATABASE_URL")
+    path = Path(__file__).resolve().parents[1] / name
+    settings = Settings(_env_file=path)  # type: ignore[call-arg]
+    assert settings.panel_csrf_secret_file == Path("AgentDATA/secrets/panel_csrf_secret")
+    assert "diretor" in settings.role_routes
+
+
+def test_local_example_uses_ollama_route_and_local_prices(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("DATABASE_URL")
+    path = Path(__file__).resolve().parents[1] / ".env.local.example"
+    settings = Settings(_env_file=path)  # type: ignore[call-arg]
+    route = settings.role_routes["diretor"]
+    assert (route.provider, route.model_id) == ("openai", "qwen2.5:14b")
+    assert settings.openai_base_url == "http://127.0.0.1:11434/v1"
+    assert settings.model_prices_path == Path("config/model_prices.local.yaml")
+    assert settings.panel_allowed_logins == ["dono@local"]
+    assert ":5434/" in settings.database_url
