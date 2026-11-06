@@ -4,7 +4,7 @@
 
 - Timestamp: `2026-11-05T21:28:57+00:00`
 - Autor: `agent`
-- Estado de execução: **Tarefa 1 concluída; Tarefas 2 a 15 por fazer.**
+- Estado de execução: **Tarefas 1 e 2 concluídas; Tarefas 3 a 15 por fazer.**
 - Substitui: Anexo E.1 do plano mestre (Plano 01 v1), com as correções do Anexo E, secção E.0
 
 **Goal:** Construir o esqueleto Python, o núcleo comum dos agentes e o primeiro percurso do Diretor, que termina com perfil de marca, diagnóstico e estratégia aprovados no painel.

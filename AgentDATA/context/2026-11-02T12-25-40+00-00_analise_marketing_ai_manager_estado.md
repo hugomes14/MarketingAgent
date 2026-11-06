@@ -9,13 +9,15 @@
 - **Tarefa 1 do Plano 01 concluida e integrada em `main`** (commits `2cf36ff`, `87aa100`, `a9b5563`). Remoto `origin` = `git@github.com:hugomes14/MarketingAgent.git` (SSH); `main` sincronizado com `origin/main`.
   - Contem: projeto Python 3.12 com `uv`, `config.py` (`Settings`, `RoleRoute`), `clock.py`, `secrets.py`, `compose.test.yaml`, `.env.example`, e a seccao "Desenvolvimento" do README.
   - Teve revisao da tarefa, re-revisao e revisao final do ramo, todas fechadas.
+- **Tarefa 2 do Plano 01 implementada** no ramo `agent/2026-11-06_plano01_tarefa2` (commit `0b64250`), ainda nao integrada em `main`: pacote `db` (`base.py`, `models.py` com 15 tabelas), `alembic.ini`, `migrations/` (migracao `0001` escrita a mao, com o trigger `artifact_payload_immutable`), `tests/conftest.py` e `tests/db/`. 40 testes passam; `ruff` e `mypy src` limpos; o roundtrip `downgrade base` + `upgrade head` funciona. Falta a revisao final do ramo.
+- **Push bloqueado:** a chave SSH deste ambiente esta marcada como so de leitura no GitHub (`git push` falha com "key ... marked as read only"). Os commits ficam locais (`main` esta 1 commit a frente de `origin/main`) ate o responsavel dar escrita a chave ou configurar outra.
 - **Ambiente de execucao mudou.** A Tarefa 1 foi feita em Windows 11 (`uv 0.13.6`). Desde `2026-11-06` o agente corre em WSL2 Ubuntu 24.04, utilizador `marketing-agent`, projeto em `~/MarketingAgent`.
   - Ferramentas: `uv 0.13.7`, Python 3.12.3 do sistema, Docker 29.1.3, Docker Compose 2.40.3.
   - `.venv` criado neste ambiente (Linux). `uv sync --frozen` para um venv novo funciona sem `UV_LINK_MODE=copy` (ver o registo de conhecimento do `uv`).
   - Validacao em `2026-11-06`: `pytest` 30 passados; `ruff check` e `ruff format --check` limpos; `mypy src` limpo. `mypy src tests` da 9 erros ja conhecidos (8 `unused-ignore` em `tests/test_config.py` e falta de `types-PyYAML`), que estao nos achados adiados abaixo.
   - Postgres de teste: o contentor `marketingagent-postgres-1` (`postgres:17`, 17.11) esta ativo e saudavel em `127.0.0.1:5433`. Fica assim desbloqueada a Tarefa 2.
   - Nao ha `.env` local. Em `AgentDATA/secrets/` so existe `alert_email_to`, sem chaves de API, que so serao precisas nas Tarefas 9 e 10.
-- Fonte de verdade: `AgentDATA/docs/2026-11-05T21-10-57+00-00_plano_mestre_marketing_ai_manager.md` (v2); plano de implementacao: `AgentDATA/docs/2026-11-05T21-28-57+00-00_plano_01_v2_nucleo_diretor_estrategia.md` (Tarefas 2 a 15 por fazer).
+- Fonte de verdade: `AgentDATA/docs/2026-11-05T21-10-57+00-00_plano_mestre_marketing_ai_manager.md` (v2); plano de implementacao: `AgentDATA/docs/2026-11-05T21-28-57+00-00_plano_01_v2_nucleo_diretor_estrategia.md` (Tarefas 3 a 15 por fazer).
 - Documento de apoio ativo: `AgentDATA/docs/revisao_critica_marketing_ai_manager_2026-11-05.md`. Versoes anteriores em `AgentDATA/docs/arquivo/`.
 - Skills recomendadas registadas como `desejada` em `AgentDATA/skills/`; nada instalado.
 
@@ -55,7 +57,7 @@ Resultado das revisoes; nenhum bloqueia a Tarefa 2. Quem os trata:
 
 ## Proxima acao sugerida
 
-1. Tarefa 2 do Plano 01 (base de dados e migracao inicial). `TEST_DATABASE_URL=postgresql+psycopg://marketing_agent:marketing_agent@127.0.0.1:5433/marketing_agent_test`.
+1. Tarefa 3 do Plano 01. Antes, resolver o push (chave com escrita) e decidir como integrar o ramo da Tarefa 2. Testes com BD: `TEST_DATABASE_URL=postgresql+psycopg://marketing_agent:marketing_agent@127.0.0.1:5433/marketing_agent_test`.
 2. Notas a levar para as tarefas seguintes (resultado das revisoes da Tarefa 1):
    - Em Windows, despachos que instalem pacotes levam `UV_LINK_MODE=copy`. Em WSL2 nao e preciso.
    - Tarefa 2: os testes e `migrations/env.py` definem `DATABASE_URL` explicitamente, a partir de `TEST_DATABASE_URL`; `.env.example` aponta `DATABASE_URL` a base de testes, o que torna dev e teste a mesma base, a decidir quando existir uma base de desenvolvimento.
