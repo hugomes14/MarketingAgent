@@ -10,7 +10,8 @@
   - Contem: projeto Python 3.12 com `uv`, `config.py` (`Settings`, `RoleRoute`), `clock.py`, `secrets.py`, `compose.test.yaml`, `.env.example`, e a seccao "Desenvolvimento" do README.
   - Teve revisao da tarefa, re-revisao e revisao final do ramo, todas fechadas.
 - **Tarefa 2 do Plano 01 implementada** no ramo `agent/2026-11-06_plano01_tarefa2` (commit `0b64250`), ainda nao integrada em `main`: pacote `db` (`base.py`, `models.py` com 15 tabelas), `alembic.ini`, `migrations/` (migracao `0001` escrita a mao, com o trigger `artifact_payload_immutable`), `tests/conftest.py` e `tests/db/`. 40 testes passam; `ruff` e `mypy src` limpos; o roundtrip `downgrade base` + `upgrade head` funciona. Falta a revisao final do ramo.
-- **Tarefa 10 do Plano 01 implementada** no ramo `agent/2026-11-06_plano01_tarefa10` (`f96cf5a`): `llm/openai_adapter.py`, `llm/factory.py`, `llm/transport_errors.py` e testes. 243 testes passam. Live so contra o Ollama local (emulador). As Tarefas 1 a 9 ja estao em `main` (PRs #1 a #7).
+- **Tarefa 11 do Plano 01 implementada** no ramo `agent/2026-11-06_plano01_tarefa11` (`f826d05`, `63beefa`): `agents/diretor/`, `interview/` e testes. 301 testes passam. As Tarefas 1 a 10 ja estao em `main` (PRs #1 a #8).
+- (historico) **Tarefa 10 do Plano 01 implementada** no ramo `agent/2026-11-06_plano01_tarefa10` (`f96cf5a`): `llm/openai_adapter.py`, `llm/factory.py`, `llm/transport_errors.py` e testes. 243 testes passam. Live so contra o Ollama local (emulador). As Tarefas 1 a 9 ja estao em `main` (PRs #1 a #7).
 - (historico) **Tarefa 9 do Plano 01 implementada** no ramo `agent/2026-11-06_plano01_tarefa9` (`0030973`): `llm/anthropic_adapter.py` e `tests/llm/`. 165 testes passam. Live corrido so contra um Ollama local (emulador), nao contra a Anthropic. As Tarefas 1 a 8 ja estao em `main` (PRs #1 a #6).
 - (historico) **Tarefa 8 do Plano 01 implementada** no ramo `agent/2026-11-06_plano01_tarefa8` (`b730222`, `c537302`): `harness/engine.py` e `tests/harness/test_engine.py`. 114 testes passam. As Tarefas 1 a 7 ja estao em `main` (PRs #1 a #5).
 - (historico) **Tarefa 7 do Plano 01 implementada** no ramo `agent/2026-11-06_plano01_tarefa7` (`3d6e29c`): `llm/` (tipos, `FakeLlmClient`, cenarios, `LlmRouter`) e `tests/llm/`. 87 testes passam. As Tarefas 1 a 6 ja estao em `main` (PRs #1 a #4).
@@ -26,7 +27,7 @@
   - Validacao em `2026-11-06`: `pytest` 30 passados; `ruff check` e `ruff format --check` limpos; `mypy src` limpo. `mypy src tests` da 9 erros ja conhecidos (8 `unused-ignore` em `tests/test_config.py` e falta de `types-PyYAML`), que estao nos achados adiados abaixo.
   - Postgres de teste: o contentor `marketingagent-postgres-1` (`postgres:17`, 17.11) esta ativo e saudavel em `127.0.0.1:5433`. Fica assim desbloqueada a Tarefa 2.
   - Nao ha `.env` local. Em `AgentDATA/secrets/` so existe `alert_email_to`, sem chaves de API, que so serao precisas nas Tarefas 9 e 10.
-- Fonte de verdade: `AgentDATA/docs/2026-11-05T21-10-57+00-00_plano_mestre_marketing_ai_manager.md` (v2); plano de implementacao: `AgentDATA/docs/2026-11-05T21-28-57+00-00_plano_01_v2_nucleo_diretor_estrategia.md` (Tarefas 11 a 15 por fazer).
+- Fonte de verdade: `AgentDATA/docs/2026-11-05T21-10-57+00-00_plano_mestre_marketing_ai_manager.md` (v2); plano de implementacao: `AgentDATA/docs/2026-11-05T21-28-57+00-00_plano_01_v2_nucleo_diretor_estrategia.md` (Tarefas 12 a 15 por fazer).
 - Documento de apoio ativo: `AgentDATA/docs/revisao_critica_marketing_ai_manager_2026-11-05.md`. Versoes anteriores em `AgentDATA/docs/arquivo/`.
 - Skills recomendadas registadas como `desejada` em `AgentDATA/skills/`; nada instalado.
 
@@ -66,7 +67,7 @@ Resultado das revisoes; nenhum bloqueia a Tarefa 2. Quem os trata:
 
 ## Proxima acao sugerida
 
-1. Tarefa 11 do Plano 01 (Diretor em entrevista), depois do merge do PR da Tarefa 10. Na Tarefa 11: acrescentar `test_scenarios_produce_valid_shapes` e usar `GAP_TOPICS` nos cenarios. Pendente: validar os adaptadores Anthropic e OpenAI com chaves reais. O Ollama local (`http://127.0.0.1:11434/v1`, modelo `qwen2.5:14b`) serve para o teste live. Pendente: validar o adaptador Anthropic com a chave real. Na Tarefa 11, acrescentar `test_scenarios_produce_valid_shapes` e trocar a constante privada de topicos por `GAP_TOPICS`. O `gh` ja esta instalado e autenticado. Testes com BD: `TEST_DATABASE_URL=postgresql+psycopg://marketing_agent:marketing_agent@127.0.0.1:5433/marketing_agent_test`.
+1. Tarefa 12 do Plano 01 (diagnostico e estrategia), depois do merge do PR da Tarefa 11. A Tarefa 14 (painel) tem de gerar uma chave de idempotencia NOVA por cada tentativa de resposta (uma submissao `failed` repete sempre o mesmo resultado). Pendente: validar os adaptadores Anthropic e OpenAI com chaves reais.
 2. Notas a levar para as tarefas seguintes (resultado das revisoes da Tarefa 1):
    - Em Windows, despachos que instalem pacotes levam `UV_LINK_MODE=copy`. Em WSL2 nao e preciso.
    - Tarefa 2: os testes e `migrations/env.py` definem `DATABASE_URL` explicitamente, a partir de `TEST_DATABASE_URL`; `.env.example` aponta `DATABASE_URL` a base de testes, o que torna dev e teste a mesma base, a decidir quando existir uma base de desenvolvimento.
