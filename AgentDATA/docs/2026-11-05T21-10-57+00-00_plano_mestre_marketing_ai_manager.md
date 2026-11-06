@@ -724,7 +724,7 @@ Cada etapa só avança com a prova anterior. **Não é uma estimativa garantida.
 | Plano | Âmbito | Etapa | Estado |
 | --- | --- | --- | --- |
 | **0** | Operação: Pi na tailnet, Docker e Postgres, contas de teste Meta, spike e matriz da Fase 0, ensaio de backup e restauro (runbook, sem TDD) | B | Por escrever |
-| **1** | Núcleo: esqueleto, dados, artefactos com versão ativa, custo com reservas, motor, LLM com rota por papel, Diretor em entrevista, **diagnóstico e estratégia**, painel base com proteções | A, C | **Reescrito (v2):** `AgentDATA/docs/2026-11-05T21-28-57+00-00_plano_01_v2_nucleo_diretor_estrategia.md`; à espera de revisão e de método de execução |
+| **1** | Núcleo: esqueleto, dados, artefactos com versão ativa, custo com reservas, motor, LLM com rota por papel, Diretor em entrevista, **diagnóstico e estratégia**, painel base com proteções | A, C | **Reescrito (v2):** `AgentDATA/docs/2026-11-05T21-28-57+00-00_plano_01_v2_nucleo_diretor_estrategia.md`; **em execução:** Tarefa 1 concluída, Tarefas 2 a 15 por fazer (estado no próprio plano) |
 | **2** | Criação: plano semanal derivado da estratégia, experiências, Copywriter, Designer (layout e geração por IA), Revisor com visão, comparação simples vs. especializado, feedback | C | Por escrever |
 | **3** | Publicação: Gestor, scheduler, Publicador, cliente Meta, operação e tentativas, estado por canal, reserva, sessão semanal, reconciliação de publicações, tokens, heartbeat | D | Por escrever |
 | **4** | Interface: oficina 3D essencial, avatares, painel de entregas, revisão em lote, alternativa 2D, desempenho e acessibilidade | D | Por escrever |

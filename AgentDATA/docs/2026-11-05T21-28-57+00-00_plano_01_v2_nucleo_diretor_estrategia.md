@@ -4,6 +4,7 @@
 
 - Timestamp: `2026-11-05T21:28:57+00:00`
 - Autor: `agent`
+- Estado de execução: **Tarefa 1 concluída; Tarefas 2 a 15 por fazer.**
 - Substitui: Anexo E.1 do plano mestre (Plano 01 v1), com as correções do Anexo E, secção E.0
 
 **Goal:** Construir o esqueleto Python, o núcleo comum dos agentes e o primeiro percurso do Diretor, que termina com perfil de marca, diagnóstico e estratégia aprovados no painel.
@@ -77,6 +78,8 @@
 
 ### Task 1: Esqueleto, configuração, relógio e segredos
 
+> **Estado: concluída em 2026-11-05** (commits `2cf36ff`, `87aa100`, `a9b5563`). 30 testes, `ruff` e `mypy` strict limpos; revisão da tarefa e revisão final do ramo fechadas.
+
 **Files:**
 - Create: `pyproject.toml`, `.python-version`, `.env.example`, `compose.test.yaml`, `src/marketing_agent/__init__.py`, `src/marketing_agent/config.py`, `src/marketing_agent/clock.py`, `src/marketing_agent/secrets.py`, `tests/test_config.py`, `tests/test_clock.py`, `tests/test_secrets.py`
 - Modify: `README.md` (secção "Desenvolvimento": pré-requisitos, Postgres de teste, comandos de validação)
@@ -105,7 +108,7 @@
   - `Clock` (Protocol) com `now() -> datetime` (sempre com fuso UTC); `SystemClock`; `FixedClock(at: datetime)` com `advance(delta: timedelta) -> None`.
   - `read_secret_file(path: Path) -> str`.
 
-- [ ] **Step 1: Escrever os testes que falham.**
+- [x] **Step 1: Escrever os testes que falham.**
   - `test_config.py::test_defaults`: `monthly_budget_reference_usd == Decimal("20")` e `budget_warn_percents == (50, 80, 100)`.
   - `test_config.py::test_role_routes_from_json`: com `ROLE_ROUTES='{"diretor":{"provider":"fake","model_id":"fake-1","capabilities":["text","json_schema"]}}'`, a rota `diretor` tem `provider == "fake"`.
   - `test_config.py::test_unknown_provider_rejected`: um `ROLE_ROUTES` com `"provider":"x"` levanta `ValidationError`.
@@ -113,15 +116,26 @@
   - `test_secrets.py::test_reads_and_strips`.
   - `test_secrets.py::test_missing_file_error_names_path`: a mensagem contém o caminho.
   - `test_secrets.py::test_empty_file_rejected`.
-- [ ] **Step 2: Correr e ver falhar.** `uv run pytest tests/test_config.py tests/test_clock.py tests/test_secrets.py -v` → falha por módulo inexistente.
-- [ ] **Step 3: Criar o projeto e implementar.**
+- [x] **Step 2: Correr e ver falhar.** `uv run pytest tests/test_config.py tests/test_clock.py tests/test_secrets.py -v` → falha por módulo inexistente.
+- [x] **Step 3: Criar o projeto e implementar.**
   - Projeto: `uv init --package`, `uv python pin 3.12`; `uv add` das dependências da Tech Stack; `uv add --dev pytest ruff mypy httpx`.
   - Ferramentas: ruff com linha 100; mypy `strict`; marcador pytest `live`.
   - `compose.test.yaml`: serviço `postgres:17` na porta 5433, base `marketing_agent_test`.
   - `.env.example`: todos os nomes de A.8 usados neste plano, com valores fictícios.
   - Commitar `uv.lock`.
-- [ ] **Step 4: Correr a validação global.** Tudo passa.
-- [ ] **Step 5: Commit.** `feat: esqueleto, configuracao, relogio e segredos`.
+- [x] **Step 4: Correr a validação global.** Tudo passa.
+- [x] **Step 5: Commit.** `feat: esqueleto, configuracao, relogio e segredos`.
+
+**Notas de execução (desvios e decisões a levar para as tarefas seguintes):**
+
+- `Settings.database_url` é **obrigatório**, sem valor por omissão e oculto no `repr`: os testes e `migrations/env.py` (Tarefa 2) definem `DATABASE_URL` a partir de `TEST_DATABASE_URL`.
+- O `.env` só leva campos de `Settings` (chaves desconhecidas são rejeitadas, sem mostrar o valor); `TEST_DATABASE_URL` exporta-se no shell.
+- `RoleRoute` rejeita chaves extra e `model_id` vazio; orçamento e `max_message_chars` têm de ser > 0; percentagens de aviso entre 1 e 100. `role_routes` e `panel_allowed_logins` vazios por omissão.
+- `read_secret_file` lê `utf-8-sig`, rejeita ficheiros não UTF-8, vazios ou com caracteres não imprimíveis (NUL, BOM duplicado, UTF-16 sem BOM), sem nunca mostrar o conteúdo; erro `SecretFileError`.
+- `compose.test.yaml` publica o Postgres só em `127.0.0.1:5433`; só foi validado como YAML (sem Docker na máquina de desenvolvimento).
+- Comandos que instalam pacotes levam `UV_LINK_MODE=copy` neste ambiente (ver `AgentDATA/Knowledge/2026-11-05T22-21-14+00-00_uv_hardlink_acesso_negado.md`).
+- Tarefa 4: acrescentar `types-PyYAML` às dependências de desenvolvimento. Tarefa 9: `-m "not live"` por omissão. Tarefa 10: valores em branco viram `None`. Tarefas 14 e 15: `exc.errors(include_input=False)`, `PANEL_CSRF_SECRET_FILE` em `Settings` e apanhar `SettingsError` e `ValidationError`.
+- Achados menores adiados: ver `AgentDATA/context/2026-11-02T12-25-40+00-00_analise_marketing_ai_manager_estado.md`.
 
 ### Task 2: Base de dados e migração inicial (Postgres)
 
