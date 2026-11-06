@@ -4,7 +4,7 @@
 
 - Timestamp: `2026-11-05T21:28:57+00:00`
 - Autor: `agent`
-- Estado de execução: **Tarefas 1 a 11 concluídas; Tarefas 12 a 15 por fazer.**
+- Estado de execução: **Tarefas 1 a 12 concluídas; Tarefas 13 a 15 por fazer.**
 - Substitui: Anexo E.1 do plano mestre (Plano 01 v1), com as correções do Anexo E, secção E.0
 
 **Goal:** Construir o esqueleto Python, o núcleo comum dos agentes e o primeiro percurso do Diretor, que termina com perfil de marca, diagnóstico e estratégia aprovados no painel.
@@ -674,7 +674,7 @@
 - **`active_strategy`:** devolve **só** as propostas aceites. É esta a vista que os planos seguintes consomem (D41, D42).
 - **Specs:** `spec_diagnostico.yaml` e `spec_estrategia.yaml` têm `role: diretor`, `loop_type: structured`, `writes` com o tipo respetivo, `limits.max_cost_usd: "2.00"` e `max_output_tokens: 6000`.
 
-- [ ] **Step 1: Escrever os testes que falham.** Usam o cenário `diagnosis_and_strategy()`.
+- [x] **Step 1: Escrever os testes que falham.** Usam o cenário `diagnosis_and_strategy()`.
   - `test_fact_without_evidence_rejected_by_validator`.
   - `test_experiment_prazo_bounds`.
   - `test_diagnosis_requires_active_profile`.
@@ -683,10 +683,20 @@
   - `test_active_strategy_contains_only_accepted_proposals` (Foco 3).
   - `test_new_strategy_draft_keeps_previous_active`.
   - `test_decisions_audited_with_actor`.
-- [ ] **Step 2: Correr e ver falhar.** `uv run pytest tests/strategy -v`.
-- [ ] **Step 3: Implementar** dois `Loop` estruturados de uma chamada cada; o contexto vem do perfil ativo e do diagnóstico ativo serializados.
-- [ ] **Step 4: Correr a validação global.**
-- [ ] **Step 5: Commit.** `feat: diagnostico e estrategia do diretor com decisoes por proposta`.
+- [x] **Step 2: Correr e ver falhar.** `uv run pytest tests/strategy -v`.
+- [x] **Step 3: Implementar** dois `Loop` estruturados de uma chamada cada; o contexto vem do perfil ativo e do diagnóstico ativo serializados.
+- [x] **Step 4: Correr a validação global.**
+- [x] **Step 5: Commit.** `feat: diagnostico e estrategia do diretor com decisoes por proposta`.
+
+**Notas de execução (Tarefa 12):**
+
+- Concluída no ramo `agent/2026-11-06_plano01_tarefa12` (commit `eded71e`), em modo subagente: implementação e revisão da tarefa (com modelo mais capaz) aprovada sem correções. 341 testes passam; `ruff` e `mypy src` limpos.
+- **Garantia central:** uma proposta de oferta só entra na vista ativa através de uma linha `StrategyDecision` com `accepted=True`, escrita **na mesma transação** que a aprovação da estratégia. `approve_strategy` exige decisões para exatamente os índices `0..n-1` (falta ou excesso de índice dá `IncompleteDecisions`) e não deixa linhas se a aprovação falhar. `active_strategy` devolve só as propostas aceites, por ordem de índice, e falha para o lado seguro: uma estratégia sem decisões (por exemplo ativada pelo `approve_and_activate` genérico) não mostra nenhuma.
+- `ArtifactStore.approve_and_activate_in(session, ...)` é novo (o corpo antigo de `approve_and_activate`, que agora o chama dentro da sua transação); comportamento e testes da Tarefa 3 inalterados.
+- `propose_diagnosis` e `propose_strategy` exigem o artefacto ativo anterior (`MissingPrerequisite`), recusam se já existe uma proposta desse tipo em `submitted` (`PendingProposal`) ou se há um pedido em curso (`ProposalInProgress`, marcador em `system_flag` com corte `max_duration_s`, libertado num `finally` condicional ao valor), e terminam com `store.submit(actor="diretor")`. A verificação "já submetido" corre depois de reclamar o marcador (fecha uma corrida); por isso um segundo chamador pode receber `ProposalInProgress` em vez de `PendingProposal`.
+- **Para a Tarefa 14 (painel):** `RunResult.output` traz o `ArtifactRecord` tal como foi criado (estado `draft`) enquanto a base já o tem em `submitted` — **o painel deve reler o estado da base**. Aprovação e rejeição são ações explícitas (`approve_*`, `reject_*`).
+- Specs: `spec_diagnostico.yaml` e `spec_estrategia.yaml` (limites decididos pelo controlador: 4 passos, 80000 tokens, 240 s, `max_cost_usd "2.00"`, 6000 tokens de saída). Os validadores `diagnostico_factos_com_evidencia` e `estrategia_experiencias_completas` registam-se em `harness/validators.py` (inversão de camada leve, sem ciclo).
+- Achados menores adiados: corte do marcador sem margem (uma execução viva pode ser tomada, com segunda chamada paga até 2 USD; cada artefacto exige aprovação explícita); um rascunho fica se `store.submit` falhar; `parent_id` lido antes do marcador; faltam testes de duas aprovações concorrentes com decisões diferentes e de estratégia legada; o validador aceita um `facto` com origem `suposto` (**decisão do responsável**: uma suposição pode passar por facto); `tests/strategy/__init__.py` é o único marcador de pacote (usar `--import-mode=importlib` ou `__init__.py` em todas as pastas de testes, em commit próprio); `strategy/service.py` (301 linhas) devia extrair o marcador de proposta para um módulo partilhável com a entrevista.
 
 ### Task 13: Autenticação do painel por proxy confiável
 
