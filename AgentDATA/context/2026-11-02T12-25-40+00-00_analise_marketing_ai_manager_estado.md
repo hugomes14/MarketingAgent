@@ -30,6 +30,26 @@
 - `AgentDATA/Knowledge/` (7 registos anteriores; onde discordarem da seccao 15 do plano, vale o plano)
 - `AgentDATA/skills/skills_index.md` e `skill_*.md`
 
+## Achados menores adiados da Tarefa 1
+
+Resultado das revisoes; nenhum bloqueia a Tarefa 2. Quem os trata:
+
+- Tarefa 9: a marca `live` nao e excluida por omissao (`-m "not live"`).
+- Tarefa 10: valor em branco em `OPENAI_API_KEY_FILE`, `ANTHROPIC_API_KEY_FILE` e `OPENAI_BASE_URL` vira `Path('.')` ou `''` em vez de `None`.
+- Tarefa 15: `SecretFileError` nao indica o motivo do sistema operativo nem resolve caminhos relativos; JSON invalido numa variavel composta levanta `SettingsError`.
+- Sem dono (corrigir quando se tocar nos ficheiros):
+  - `# type: ignore[call-arg]` inuteis e `ROUTE_OK: dict[str, Any]` em `tests/test_config.py`;
+  - a constante de teste `TEST_DATABASE_URL` tem o nome da variavel de shell da Tarefa 2;
+  - o caso `TEST_DATABASE_URL` so afirma sobre `str(exc)`;
+  - testes pouco afiados: falta fuso nao UTC no `FixedClock`, o erro nao e ligado ao campo `provider`, um teste le o `.env` real, falta paridade `.env.example` e `Settings`;
+  - percentagens de aviso aceitam `[true]`, `"50"`, `50.0` e repetidas, e um item invalido gera tambem um erro `too_short` enganador;
+  - `model_id` so com espacos, nome de papel vazio e `capabilities` vazio sao aceites;
+  - o `from None` esconde a excecao, mas ela continua em `__context__`;
+  - comentario em `config.py` diz `extra="forbid"` mas e o valor por omissao da biblioteca;
+  - a mensagem de `secrets.py` diz "caracteres de controlo" tambem para BOM e espacos de largura zero;
+  - `.env.example` nao avisa que o python-dotenv altera caminhos Windows entre aspas duplas;
+  - README sem `docker compose up -d --wait` nem nota sobre `UV_LINK_MODE=copy`.
+
 ## Proxima acao sugerida
 
 1. Decidir como integrar o ramo da Tarefa 1 (merge, PR ou manter).
