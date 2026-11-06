@@ -4,7 +4,7 @@
 
 - Timestamp: `2026-11-05T21:28:57+00:00`
 - Autor: `agent`
-- Estado de execução: **Tarefas 1 a 4 concluídas; Tarefas 5 a 15 por fazer.**
+- Estado de execução: **Tarefas 1 a 5 concluídas; Tarefas 6 a 15 por fazer.**
 - Substitui: Anexo E.1 do plano mestre (Plano 01 v1), com as correções do Anexo E, secção E.0
 
 **Goal:** Construir o esqueleto Python, o núcleo comum dos agentes e o primeiro percurso do Diretor, que termina com perfil de marca, diagnóstico e estratégia aprovados no painel.
@@ -300,7 +300,7 @@
 - **`settle`:** cria um `cost_entry` com `kind="measured"` e fecha a reserva. Repetir o acerto devolve o mesmo valor, sem segunda linha.
 - **`status`:** calcula sobre o mês civil UTC de `clock.now()`. `projected_usd` é uma projeção linear pelo dia do mês. `warn_percent` é o maior limiar atingido, contando as reservas pendentes.
 
-- [ ] **Step 1: Escrever os testes que falham.**
+- [x] **Step 1: Escrever os testes que falham.**
   - `test_reserve_then_settle_records_measured_entry`.
   - `test_settle_twice_single_entry`.
   - `test_concurrent_reservations_respect_run_limit`: duas threads reservam 0,6 USD cada com um limite de execução de 1,0 USD; uma passa e a outra levanta `RunCostLimitExceeded`.
@@ -308,10 +308,18 @@
   - `test_warn_percents_count_pending_reservations`: 9 USD lançados mais 1 USD reservado dão `warn_percent == 50`.
   - `test_month_boundary_utc` (Foco 5): um lançamento a `2026-10-31T23:59:59Z` não conta em novembro.
   - `test_recover_stale_marks_unknown_and_counts_in_status`.
-- [ ] **Step 2: Correr e ver falhar.**
-- [ ] **Step 3: Implementar.** Reserva = `compute_cost_usd(price, Usage(input_tokens_estimate, max_output_tokens))`. O lock na linha da execução substitui o *advisory lock* por marca previsto em E.0, porque com D26 só os limites de execução bloqueiam.
-- [ ] **Step 4: Correr a validação global.**
-- [ ] **Step 5: Commit.** `feat: reservas de custo por chamada e estado do mes`.
+- [x] **Step 2: Correr e ver falhar.**
+- [x] **Step 3: Implementar.** Reserva = `compute_cost_usd(price, Usage(input_tokens_estimate, max_output_tokens))`. O lock na linha da execução substitui o *advisory lock* por marca previsto em E.0, porque com D26 só os limites de execução bloqueiam.
+- [x] **Step 4: Correr a validação global.**
+- [x] **Step 5: Commit.** `feat: reservas de custo por chamada e estado do mes`.
+
+**Notas de execução (Tarefa 5):**
+
+- Concluída no ramo `agent/2026-11-06_plano01_tarefa5` (commits `c32535e` e `080ea1e`), em modo subagente: implementação, revisão da tarefa e uma ronda de correção com re-revisão limpa. 69 testes passam; `ruff` e `mypy src` limpos.
+- Decisões: `settle` usa o preço mais recente do `PriceBook` (não há leitura por versão) e grava a `price_version` realmente usada; `over_reference` é estrito (`>`); `warn_percent` é o maior limiar atingido (comparação em `Decimal`, sem divisão); `projected_usd = total × dias_do_mês / dia_do_mês`; a reserva conta no mês por `created_at` e o lançamento por `at`. Só reservas `open` e `unknown_outcome` contam no estado; uma reserva acertada já está em `cost_entry`.
+- Estados: `settle` aceita `open` e `unknown_outcome`, repetir devolve o mesmo valor e `released` dá `ValueError`; `release` e `mark_unknown` só partem de `open` e são idempotentes.
+- Correção da ronda 1: `reserve` e `settle` devolviam valores sem arredondar enquanto a BD guarda 6 casas (o 1.º e o 2.º `settle` davam valores diferentes). Há agora um só ponto de arredondamento: reserva com `ROUND_CEILING`, custo acertado com `ROUND_HALF_UP`.
+- Achados menores adiados: `LookupError` simples para execução em falta (falta `RunNotFound`); `status()` faz 3 `SELECT` em `READ COMMITTED`; faltam testes de Dez→Jan, `release`/`mark_unknown`/`ValueError`, `settle` concorrente, fronteira exata de 50 % (o teste usa 1,1 USD em vez de 1 USD) e `provider_request_id` duplicado; `controller.py` tem 286 linhas; nomes `CENT_MILLI` e `_money` pouco claros.
 
 ### Task 6: `AgentSpec` e permissões aplicadas
 
