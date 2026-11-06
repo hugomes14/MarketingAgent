@@ -4,7 +4,7 @@
 
 - Timestamp: `2026-11-05T21:28:57+00:00`
 - Autor: `agent`
-- Estado de execução: **Tarefas 1 e 2 concluídas; Tarefas 3 a 15 por fazer.**
+- Estado de execução: **Tarefas 1 a 3 concluídas; Tarefas 4 a 15 por fazer.**
 - Substitui: Anexo E.1 do plano mestre (Plano 01 v1), com as correções do Anexo E, secção E.0
 
 **Goal:** Construir o esqueleto Python, o núcleo comum dos agentes e o primeiro percurso do Diretor, que termina com perfil de marca, diagnóstico e estratégia aprovados no painel.
@@ -212,7 +212,7 @@
 - **Transições permitidas:** `draft→submitted`, `submitted→approved`, `submitted→rejected`, `draft→withdrawn` e `submitted→withdrawn`.
 - **`approve_and_activate`:** uma transação. Aprova o artefacto, faz *upsert* de `artifact_head` guardando `previous_artifact_id` e, se o tipo for `perfil_marca`, atualiza a projeção `brand_profile`. Cada transição escreve um `AuditLog` com o `actor`.
 
-- [ ] **Step 1: Escrever os testes que falham.**
+- [x] **Step 1: Escrever os testes que falham.**
   - `test_create_is_draft`.
   - `test_new_draft_does_not_change_active`: com o perfil v1 ativo, criar e submeter o v2 deixa `active(...)` igual a v1.
   - `test_rejected_draft_keeps_active`: rejeitar o v2 deixa v1 ativo.
@@ -221,10 +221,17 @@
   - `test_illegal_transition_raises`: `draft→approved` levanta `InvalidTransition`.
   - `test_transitions_write_audit_with_actor`.
   - `test_payload_preserved_in_storage`: depois de várias transições, o `payload` lido por SQL bruto é igual ao original.
-- [ ] **Step 2: Correr e ver falhar.** `uv run pytest tests/artifacts -v`.
-- [ ] **Step 3: Implementar.** Transições num mapa constante; `SELECT … FOR UPDATE` na linha do artefacto na transição.
-- [ ] **Step 4: Correr a validação global.**
-- [ ] **Step 5: Commit.** `feat: artefactos imutaveis com versao ativa separada`.
+- [x] **Step 2: Correr e ver falhar.** `uv run pytest tests/artifacts -v`.
+- [x] **Step 3: Implementar.** Transições num mapa constante; `SELECT … FOR UPDATE` na linha do artefacto na transição.
+- [x] **Step 4: Correr a validação global.**
+- [x] **Step 5: Commit.** `feat: artefactos imutaveis com versao ativa separada`.
+
+**Notas de execução (Tarefa 3):**
+
+- Concluída no ramo `agent/2026-11-06_plano01_tarefa2` (commits `00fc9e9` e `c019b34`), em modo subagente: implementador, revisão da tarefa e uma ronda de correção com re-revisão limpa. 51 testes passam; `ruff` e `mypy src` limpos.
+- Decisões: `brand_profile.data` recebe a cópia do payload do `perfil_marca` aprovado; `approve_and_activate` não restringe o tipo do artefacto.
+- Correção da ronda 1: o `previous_artifact_id` vem do `ON CONFLICT DO UPDATE` (linha existente), porque sem linha de `artifact_head` não há o que bloquear na primeira ativação.
+- Achados menores adiados: sem teste de ativação com `scope` diferente de `brand` além do de `week:...`; o teste de corrida é probabilístico (barreira só alinha o início, sem timeout); argumentos por omissão a sombrear `scope` nesse teste.
 
 ### Task 4: Preços versionados
 
