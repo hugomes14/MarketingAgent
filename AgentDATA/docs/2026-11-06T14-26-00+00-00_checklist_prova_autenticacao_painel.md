@@ -14,6 +14,18 @@
       (`request.client.host`) e coloca-lo em `PANEL_TRUSTED_PROXY`.
 - [ ] `PANEL_ALLOWED_LOGINS` com o login do dono; confirmar que nao esta vazio.
 
+## Servidor ASGI
+
+Requisito: uvicorn arrancado com `proxy_headers=False` (`--no-proxy-headers`) e
+`FORWARDED_ALLOW_IPS` nao definido no ambiente do contentor. Com a reescrita ativa,
+`request.client` vem de `X-Forwarded-For` e a verificacao de origem deixa de valer
+(`test_PROXY_HEADERS_MIDDLEWARE_BREAKS_THE_PEER_CHECK`). O lancador (Tarefa 15) tem de impor isto.
+
+- [ ] Confirmar a linha de comando do uvicorn e `env | grep FORWARDED` vazio no contentor.
+- [ ] Peer direto (nao confiavel) com `X-Forwarded-For: <IP do proxy>` e login forjado -> 403.
+- [ ] Se o proxy partilha o namespace de rede (peer `127.0.0.1` em `PANEL_TRUSTED_PROXY`), o dono
+      pelo Serve continua autenticado (200), sem o uvicorn trocar o peer pelo IP da tailnet.
+
 ## Provas e resultado esperado
 
 | # | Pedido | Esperado |

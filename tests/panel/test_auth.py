@@ -5,6 +5,8 @@ import pytest
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.testclient import TestClient
 from starlette.requests import Request
+from starlette.types import ASGIApp
+from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from marketing_agent.config import Settings
 from marketing_agent.panel.auth import TailscaleUser, require_tailscale_user
@@ -38,7 +40,7 @@ def build_app(settings: Settings | None = None) -> FastAPI:
     return app
 
 
-def client_for(app: FastAPI, peer: str = TRUSTED_PEER) -> TestClient:
+def client_for(app: ASGIApp, peer: str = TRUSTED_PEER) -> TestClient:
     return TestClient(app, client=(peer, 5000), raise_server_exceptions=False)
 
 
@@ -270,3 +272,41 @@ def test_missing_app_settings_is_runtime_error() -> None:
     request = raw_request(app, [], (TRUSTED_PEER, 1))
     with pytest.raises(RuntimeError, match="settings"):
         require_tailscale_user(request)
+
+
+@pytest.mark.parametrize("entry", ["0.0.0.0/0", "::/0"])
+def test_match_all_proxy_entry_raises_value_error(entry: str) -> None:
+    app = build_app(build_settings(proxies=[TRUSTED_PEER, entry]))
+    request = raw_request(app, [(b"tailscale-user-login", LOGIN.encode())], (TRUSTED_PEER, 1))
+    with pytest.raises(ValueError, match=entry):
+        require_tailscale_user(request)
+    response = client_for(app).get("/whoami", headers={"Tailscale-User-Login": LOGIN})
+    assert response.status_code == 500
+
+
+@pytest.mark.parametrize("entry", ["0.0.0.0/1", "10.0.0.0/8"])
+def test_wide_but_not_match_all_proxy_entry_is_accepted(entry: str) -> None:
+    app = build_app(build_settings(proxies=[entry]))
+    peer = "10.1.2.3"
+    response = client_for(app, peer).get("/whoami", headers={"Tailscale-User-Login": LOGIN})
+    assert response.status_code == 200
+
+
+SPOOFING_HEADERS = {"Tailscale-User-Login": LOGIN, "X-Forwarded-For": TRUSTED_PEER}
+
+
+def test_PROXY_HEADERS_MIDDLEWARE_BREAKS_THE_PEER_CHECK() -> None:
+    """Documenta a armadilha: com a reescrita de proxy do uvicorn ativa, o peer e forjavel.
+
+    O ProxyHeadersMiddleware substitui `request.client` pelo `X-Forwarded-For`, e um peer
+    nao confiavel passa a parecer o proxy. Por isso o lancador do painel tem de correr o
+    uvicorn com `proxy_headers=False` e sem `FORWARDED_ALLOW_IPS`.
+    """
+    wrapped: ASGIApp = ProxyHeadersMiddleware(build_app(), trusted_hosts="*")  # type: ignore[arg-type,assignment]
+    response = client_for(wrapped, UNTRUSTED_PEER).get("/whoami", headers=SPOOFING_HEADERS)
+    assert response.status_code == 200
+
+
+def test_same_spoof_without_proxy_headers_middleware_is_403() -> None:
+    response = client_for(build_app(), UNTRUSTED_PEER).get("/whoami", headers=SPOOFING_HEADERS)
+    assert response.status_code == 403

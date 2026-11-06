@@ -7,6 +7,12 @@ logins. `X-Forwarded-*`, `Forwarded` e `X-Real-IP` nunca sao lidos: qualquer cli
 
 Todas as negacoes 403 devolvem o mesmo texto, para a resposta nao servir de oraculo sobre a
 lista de logins, os proxies confiaveis ou a validade do cabecalho.
+
+Requisito do servidor ASGI: a seguranca desta dependencia exige que o servidor corra com a
+reescrita de cabecalhos de proxy DESLIGADA (uvicorn `proxy_headers=False`, ou seja
+`--no-proxy-headers`, e `FORWARDED_ALLOW_IPS` nao definido). Caso contrario, o `request.client`
+pode ser substituido pelo valor de `X-Forwarded-For` e um peer nao confiavel passa a parecer o
+proxy. O lancador do painel (Tarefa 15) tem de impor isto.
 """
 
 import ipaddress
@@ -74,9 +80,13 @@ def _parse_networks(entries: tuple[str, ...]) -> tuple[IpNetwork, ...]:
     networks: list[IpNetwork] = []
     for entry in entries:
         try:
-            networks.append(ipaddress.ip_network(entry.strip(), strict=False))
+            network = ipaddress.ip_network(entry.strip(), strict=False)
         except ValueError as error:
             raise ValueError(f"PANEL_TRUSTED_PROXY invalido: {entry!r}") from error
+        if network.prefixlen == 0:
+            # 0.0.0.0/0 e ::/0 confiam em todos os peers e desligam a verificacao de origem.
+            raise ValueError(f"PANEL_TRUSTED_PROXY demasiado largo (confia em todos): {entry!r}")
+        networks.append(network)
     return tuple(networks)
 
 
