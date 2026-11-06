@@ -10,7 +10,8 @@
   - Contem: projeto Python 3.12 com `uv`, `config.py` (`Settings`, `RoleRoute`), `clock.py`, `secrets.py`, `compose.test.yaml`, `.env.example`, e a seccao "Desenvolvimento" do README.
   - Teve revisao da tarefa, re-revisao e revisao final do ramo, todas fechadas.
 - **Tarefa 2 do Plano 01 implementada** no ramo `agent/2026-11-06_plano01_tarefa2` (commit `0b64250`), ainda nao integrada em `main`: pacote `db` (`base.py`, `models.py` com 15 tabelas), `alembic.ini`, `migrations/` (migracao `0001` escrita a mao, com o trigger `artifact_payload_immutable`), `tests/conftest.py` e `tests/db/`. 40 testes passam; `ruff` e `mypy src` limpos; o roundtrip `downgrade base` + `upgrade head` funciona. Falta a revisao final do ramo.
-- **Tarefa 3 do Plano 01 implementada** no mesmo ramo (`00fc9e9`, `c019b34`): `artifacts/store.py` (`ArtifactStore`, transicoes, versao ativa com `previous_artifact_id` atomico) e `tests/artifacts/`. 51 testes passam. Falta a revisao final do ramo (Tarefas 2 e 3).
+- **Tarefa 4 do Plano 01 implementada** no ramo `agent/2026-11-06_plano01_tarefa4` (`0520953`, `07abde4`): `budget/pricing.py`, `config/model_prices.yaml`, `tests/budget/`. 61 testes passam. As Tarefas 1 a 3 ja estao em `main` (PR #1).
+- (historico) **Tarefa 3 do Plano 01 implementada** no mesmo ramo (`00fc9e9`, `c019b34`): `artifacts/store.py` (`ArtifactStore`, transicoes, versao ativa com `previous_artifact_id` atomico) e `tests/artifacts/`. 51 testes passam. Falta a revisao final do ramo (Tarefas 2 e 3).
 - **Push:** o bloqueio de chave so de leitura ficou resolvido em `2026-11-06`; `main` e o ramo estao no GitHub (PR por abrir: `gh` nao esta instalado).
 - (historico) **Push bloqueado:** a chave SSH deste ambiente esta marcada como so de leitura no GitHub (`git push` falha com "key ... marked as read only"). Os commits ficam locais (`main` esta 1 commit a frente de `origin/main`) ate o responsavel dar escrita a chave ou configurar outra.
 - **Ambiente de execucao mudou.** A Tarefa 1 foi feita em Windows 11 (`uv 0.13.6`). Desde `2026-11-06` o agente corre em WSL2 Ubuntu 24.04, utilizador `marketing-agent`, projeto em `~/MarketingAgent`.
@@ -19,7 +20,7 @@
   - Validacao em `2026-11-06`: `pytest` 30 passados; `ruff check` e `ruff format --check` limpos; `mypy src` limpo. `mypy src tests` da 9 erros ja conhecidos (8 `unused-ignore` em `tests/test_config.py` e falta de `types-PyYAML`), que estao nos achados adiados abaixo.
   - Postgres de teste: o contentor `marketingagent-postgres-1` (`postgres:17`, 17.11) esta ativo e saudavel em `127.0.0.1:5433`. Fica assim desbloqueada a Tarefa 2.
   - Nao ha `.env` local. Em `AgentDATA/secrets/` so existe `alert_email_to`, sem chaves de API, que so serao precisas nas Tarefas 9 e 10.
-- Fonte de verdade: `AgentDATA/docs/2026-11-05T21-10-57+00-00_plano_mestre_marketing_ai_manager.md` (v2); plano de implementacao: `AgentDATA/docs/2026-11-05T21-28-57+00-00_plano_01_v2_nucleo_diretor_estrategia.md` (Tarefas 4 a 15 por fazer).
+- Fonte de verdade: `AgentDATA/docs/2026-11-05T21-10-57+00-00_plano_mestre_marketing_ai_manager.md` (v2); plano de implementacao: `AgentDATA/docs/2026-11-05T21-28-57+00-00_plano_01_v2_nucleo_diretor_estrategia.md` (Tarefas 5 a 15 por fazer).
 - Documento de apoio ativo: `AgentDATA/docs/revisao_critica_marketing_ai_manager_2026-11-05.md`. Versoes anteriores em `AgentDATA/docs/arquivo/`.
 - Skills recomendadas registadas como `desejada` em `AgentDATA/skills/`; nada instalado.
 
@@ -59,7 +60,7 @@ Resultado das revisoes; nenhum bloqueia a Tarefa 2. Quem os trata:
 
 ## Proxima acao sugerida
 
-1. Tarefa 4 do Plano 01. Antes, abrir o PR (ou fazer merge) do ramo das Tarefas 2 e 3. Testes com BD: `TEST_DATABASE_URL=postgresql+psycopg://marketing_agent:marketing_agent@127.0.0.1:5433/marketing_agent_test`.
+1. Tarefa 5 do Plano 01 (reservas de custo), depois do merge do PR da Tarefa 4. O `gh` ja esta instalado e autenticado. Testes com BD: `TEST_DATABASE_URL=postgresql+psycopg://marketing_agent:marketing_agent@127.0.0.1:5433/marketing_agent_test`.
 2. Notas a levar para as tarefas seguintes (resultado das revisoes da Tarefa 1):
    - Em Windows, despachos que instalem pacotes levam `UV_LINK_MODE=copy`. Em WSL2 nao e preciso.
    - Tarefa 2: os testes e `migrations/env.py` definem `DATABASE_URL` explicitamente, a partir de `TEST_DATABASE_URL`; `.env.example` aponta `DATABASE_URL` a base de testes, o que torna dev e teste a mesma base, a decidir quando existir uma base de desenvolvimento.

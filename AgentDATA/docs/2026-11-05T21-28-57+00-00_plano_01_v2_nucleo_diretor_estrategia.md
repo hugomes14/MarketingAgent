@@ -4,7 +4,7 @@
 
 - Timestamp: `2026-11-05T21:28:57+00:00`
 - Autor: `agent`
-- Estado de execução: **Tarefas 1 a 3 concluídas; Tarefas 4 a 15 por fazer.**
+- Estado de execução: **Tarefas 1 a 4 concluídas; Tarefas 5 a 15 por fazer.**
 - Substitui: Anexo E.1 do plano mestre (Plano 01 v1), com as correções do Anexo E, secção E.0
 
 **Goal:** Construir o esqueleto Python, o núcleo comum dos agentes e o primeiro percurso do Diretor, que termina com perfil de marca, diagnóstico e estratégia aprovados no painel.
@@ -252,7 +252,7 @@
   - O escalão do Haiku 5.5 acima de 100 mil tokens copia-se da página oficial [S2] no momento da implementação. **Não se inventa.**
   - O GPT-5.4 nano **fica fora** até ser confirmada a disponibilidade.
 
-- [ ] **Step 1: Escrever os testes que falham.**
+- [x] **Step 1: Escrever os testes que falham.**
   - `test_cost_exact`: `PriceTier(0, Decimal("2"), Decimal("10"))` com 6000 tokens de entrada e 1500 de saída dá `Decimal("0.027")`.
   - `test_tier_selected_by_prompt_size`: escalões sintéticos `(0, 1, 5)` e `(100000, 2, 10)`; 150000 tokens de entrada usam o segundo.
   - `test_reasoning_not_double_counted`: `Usage(1000, 500, reasoning_tokens=400)` custa o mesmo que `Usage(1000, 500)`.
@@ -260,10 +260,18 @@
   - `test_sync_is_idempotent`: duas sincronizações dão uma linha por versão.
   - `test_unknown_price_raises`.
   - `test_repo_price_file_loads`: o ficheiro real carrega e contém `fake-1`.
-- [ ] **Step 2: Correr e ver falhar.**
-- [ ] **Step 3: Implementar** com aritmética `Decimal`, sem `float`, e `yaml.safe_load`.
-- [ ] **Step 4: Correr a validação global.**
-- [ ] **Step 5: Commit.** `feat: precos versionados com escaloes`.
+- [x] **Step 2: Correr e ver falhar.**
+- [x] **Step 3: Implementar** com aritmética `Decimal`, sem `float`, e `yaml.safe_load`.
+- [x] **Step 4: Correr a validação global.**
+- [x] **Step 5: Commit.** `feat: precos versionados com escaloes`.
+
+**Notas de execução (Tarefa 4):**
+
+- Concluída no ramo `agent/2026-11-06_plano01_tarefa4` (commits `0520953` e `07abde4`), em modo subagente: implementação, revisão da tarefa e uma ronda de correção com re-revisão limpa. 61 testes passam; `ruff` e `mypy src` limpos. `types-PyYAML` entrou nas dependências de desenvolvimento.
+- Escalão do Haiku 5.5 acima de 100 mil tokens copiado da página oficial de preços (consultada em 2026-11-06): 0,50 / 2,50 USD por milhão, aplicado ao pedido inteiro quando o prompt (cache incluída) passa de 100000; por isso `min_prompt_tokens = 100001`. GPT-5.4 nano fica fora.
+- No YAML os valores monetários são strings entre aspas (o carregador rejeita números, para nunca haver `float`). `model_price` guarda o 1.º escalão nas colunas e todos em `conditions["tiers"]`. Uma versão de preço é imutável: `sync_model_prices` com a mesma chave e valores diferentes levanta `ValueError`.
+- `ModelPrice(provider, model_id, price_version, tiers, valid_from=None)`: `valid_from` é opcional e final para manter a assinatura de quatro campos que as Tarefas 5, 7 e 8 usam; `sync_model_prices` exige-o.
+- Achados menores adiados: `pricing.py` (~220 linhas) mistura domínio, carregador e repositório; `_parse_money` aceita `NaN`/`Infinity`; faltam asserts da fronteira 100000/100001 e dos valores reais; chave `provider/model_id/price_version` duplicada em `sync_model_prices`.
 
 ### Task 5: Reservas de custo, acerto e estado do mês
 
