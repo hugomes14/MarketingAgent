@@ -4,7 +4,7 @@
 
 - Timestamp: `2026-11-05T21:28:57+00:00`
 - Autor: `agent`
-- Estado de execução: **Tarefas 1 a 5 concluídas; Tarefas 6 a 15 por fazer.**
+- Estado de execução: **Tarefas 1 a 6 concluídas; Tarefas 7 a 15 por fazer.**
 - Substitui: Anexo E.1 do plano mestre (Plano 01 v1), com as correções do Anexo E, secção E.0
 
 **Goal:** Construir o esqueleto Python, o núcleo comum dos agentes e o primeiro percurso do Diretor, que termina com perfil de marca, diagnóstico e estratégia aprovados no painel.
@@ -360,7 +360,7 @@
   - `assert_can_write(spec: AgentSpec, type: ArtifactType) -> None`, que levanta `PermissionDenied`.
   - `VALIDATORS: Mapping[str, Callable[[BaseModel], list[str]]]`, com os validadores registados nas Tarefas 11 e 12.
 
-- [ ] **Step 1: Escrever os testes que falham.**
+- [x] **Step 1: Escrever os testes que falham.**
   - `test_load_valid_spec`.
   - `test_prompt_outside_dir_rejected`: `prompt_file: ../x.md`.
   - `test_unknown_schema_rejected`.
@@ -368,10 +368,16 @@
   - `test_tools_not_allowed_in_plan_01`.
   - `test_assert_can_write_denies_unlisted_type`.
   - `test_limits_must_be_positive`.
-- [ ] **Step 2: Correr e ver falhar.**
-- [ ] **Step 3: Implementar.** `yaml.safe_load`; o erro de carregamento cita o caminho do ficheiro.
-- [ ] **Step 4: Correr a validação global.**
-- [ ] **Step 5: Commit.** `feat: especificacao de papel com permissoes aplicadas`.
+- [x] **Step 2: Correr e ver falhar.**
+- [x] **Step 3: Implementar.** `yaml.safe_load`; o erro de carregamento cita o caminho do ficheiro.
+- [x] **Step 4: Correr a validação global.**
+- [x] **Step 5: Commit.** `feat: especificacao de papel com permissoes aplicadas`.
+
+**Notas de execução (Tarefa 6):**
+
+- Concluída no ramo `agent/2026-11-06_plano01_tarefa6` (commit `ed38f53`), em modo subagente: implementação e revisão da tarefa aprovada sem correções. 76 testes passam; `ruff` e `mypy src` limpos.
+- Decisões: `VALIDATORS` é um `dict` vazio em `harness/validators.py`, a preencher nas Tarefas 11 e 12 (os testes usam `monkeypatch.setitem`); todos os erros de carregamento levantam `SpecLoadError(ValueError)` com o caminho do ficheiro e a causa encadeada; `prompt_file` é relativo à pasta do spec e a contenção usa `Path.is_relative_to` depois de `resolve()`; valores monetários são strings entre aspas no YAML.
+- Achados menores adiados: o teste de `load_prompt` passa por ficheiro em falta e não pela contenção; `# noqa: A002` inútil em `spec.py`; algumas mensagens ecoam valores de entrada; faltam testes de symlink, pasta irmã com o mesmo prefixo, limites 0 e 1 de `budget_share_hint` e capacidade inválida; o modo lax do Pydantic aceita `true` ou `"5"` em campos inteiros (ponderar `strict`).
 
 ### Task 7: Contrato LLM, cliente falso com cenários e router
 
