@@ -16,7 +16,11 @@ def apply_security_headers(headers: MutableHeaders) -> None:
     """
     headers["Content-Security-Policy"] = CONTENT_SECURITY_POLICY
     headers["X-Content-Type-Options"] = "nosniff"
-    headers["Referrer-Policy"] = "no-referrer"
+    # NAO `no-referrer`: com essa politica o browser envia `Origin: null` em qualquer POST que
+    # nao seja CORS (um formulario HTML simples), e o CSRF recusa `Origin: null`. Com
+    # `same-origin` os POST do proprio painel levam a Origin real e os cross-site continuam a
+    # enviar `null` (recusados). Nenhum token vai em URLs, por isso nada vaza no Referer.
+    headers["Referrer-Policy"] = "same-origin"
     if headers.get("content-type", "").startswith("text/html"):
         headers["Cache-Control"] = "no-store"
 

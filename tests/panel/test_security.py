@@ -72,7 +72,7 @@ def test_security_headers_on_html(make_panel: MakePanel) -> None:
     rig = make_panel([])
     response = rig.get("/")
     assert response.headers["X-Content-Type-Options"] == "nosniff"
-    assert response.headers["Referrer-Policy"] == "no-referrer"
+    assert response.headers["Referrer-Policy"] == "same-origin"
     assert response.headers["Cache-Control"] == "no-store"
     assert response.headers["content-type"].startswith("text/html")
     assert "no-store" not in rig.get("/static/panel.css").headers.get("Cache-Control", "")
@@ -193,6 +193,7 @@ def test_unhandled_error_is_generic_and_keeps_headers(
     assert response.status_code == 500
     assert "segredo interno" not in response.text
     assert response.headers["Content-Security-Policy"] == CSP
+    assert response.headers["Referrer-Policy"] == "same-origin"
 
 
 def test_every_gap_topic_has_a_portuguese_label() -> None:
@@ -207,3 +208,80 @@ def test_templates_never_mark_content_safe() -> None:
         assert not re.search(r"\|\s*safe\b|Markup|autoescape\s+false|\{%\s*raw", text), (
             template.name
         )
+
+
+def test_referrer_policy_is_same_origin_on_html_and_error_responses(make_panel: MakePanel) -> None:
+    # `no-referrer` faria o browser enviar `Origin: null` nos formularios simples (ver security.py).
+    rig = make_panel([])
+    responses = [
+        rig.get("/"),
+        rig.get(f"/entrevista/{uuid.uuid4()}"),  # pagina de erro 404
+        rig.client.get("/"),  # 401 JSON
+        rig.post("/entrevista", with_token=False),  # 403
+        rig.get("/static/panel.css"),
+    ]
+    for response in responses:
+        assert response.headers["Referrer-Policy"] == "same-origin", response.status_code
+
+
+BROWSER_FORM_HEADERS = {"Origin": "http://testserver", "Sec-Fetch-Site": "same-origin"}
+
+
+def browser_post(rig: PanelRig, path: str, data: dict[str, str] | None = None) -> int:
+    return rig.post(path, data, BROWSER_FORM_HEADERS).status_code
+
+
+def test_plain_form_posts_with_browser_headers_succeed(make_panel: MakePanel) -> None:
+    rig = make_panel([*fake_scenarios.interview_full(3), *fake_scenarios.diagnosis_and_strategy()])
+    profile_id = rig.confirm_profile()
+    assert (
+        browser_post(rig, f"/perfil/{profile_id}/rejeitar") == 409
+    )  # ja confirmado: chegou ao servico
+    diagnosis_id = rig.post_id("/diagnostico")
+    assert browser_post(rig, f"/diagnostico/{diagnosis_id}/aprovar") == 303
+    strategy_id = rig.post_id("/estrategia")
+    approval = {"decisao_0": "aceitar", "decisao_1": "recusar"}
+    assert browser_post(rig, f"/estrategia/{strategy_id}/aprovar", approval) == 303
+
+
+def test_plain_form_new_interview_with_browser_headers(make_panel: MakePanel) -> None:
+    rig = make_panel(fake_scenarios.interview_full(1))
+    assert browser_post(rig, "/entrevista") == 303
+
+
+def test_plain_form_profile_confirm_with_browser_headers(make_panel: MakePanel) -> None:
+    rig = make_panel(fake_scenarios.interview_full(1))
+    session_id = rig.start_session()
+    rig.answer(session_id, "Resposta.", "k0")
+    profile_id = rig.post_id(f"/entrevista/{session_id}/perfil")
+    assert browser_post(rig, f"/perfil/{profile_id}/confirmar") == 303
+
+
+@pytest.mark.parametrize("path", ["/entrevista", "/diagnostico", "/perfil/x/confirmar"])
+def test_opaque_origin_null_is_still_refused(make_panel: MakePanel, path: str) -> None:
+    rig = make_panel([])
+    response = rig.post(path, headers={"Origin": "null", "Sec-Fetch-Site": "cross-site"})
+    assert response.status_code == 403
+    assert rig.post(path, headers={"Origin": "null"}).status_code == 403
+
+
+def test_panel_js_is_served_with_js_type_and_security_headers(make_panel: MakePanel) -> None:
+    rig = make_panel([])
+    response = rig.get("/static/panel.js")
+    assert response.status_code == 200
+    assert "javascript" in response.headers["content-type"]
+    assert response.headers["Content-Security-Policy"] == CSP
+    assert response.headers["X-Content-Type-Options"] == "nosniff"
+    assert "submitted" in response.text and "pageshow" in response.text
+
+
+def test_pages_with_plain_post_forms_load_panel_js_after_htmx(pages: dict[str, str]) -> None:
+    plain_form = re.compile(r"<form\b(?![^>]*\bhx-post=)[^>]*method=\"post\"")
+    checked = 0
+    for name, html in pages.items():
+        if plain_form.search(html):
+            checked += 1
+            tag = '<script src="/static/panel.js" defer></script>'
+            assert tag in html, name
+            assert html.index("/static/htmx.min.js") < html.index(tag), name
+    assert checked >= 5
