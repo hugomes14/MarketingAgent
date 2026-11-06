@@ -4,7 +4,7 @@
 
 - Timestamp: `2026-11-05T21:28:57+00:00`
 - Autor: `agent`
-- Estado de execução: **Tarefas 1 a 14 concluídas; Tarefa 15 por fazer.**
+- Estado de execução: **Tarefas 1 a 15 concluídas (plano executado); falta a revisão final do ramo e a passagem manual no browser.**
 - Substitui: Anexo E.1 do plano mestre (Plano 01 v1), com as correções do Anexo E, secção E.0
 
 **Goal:** Construir o esqueleto Python, o núcleo comum dos agentes e o primeiro percurso do Diretor, que termina com perfil de marca, diagnóstico e estratégia aprovados no painel.
@@ -819,7 +819,7 @@
 
 - **Arranque:** `uv run uvicorn --factory marketing_agent.panel.main:create_app_from_env --host 127.0.0.1 --port 8000`. O arranque corre `recover_stale` com `older_than` igual ao maior `max_duration_s` dos specs.
 
-- [ ] **Step 1: Escrever os testes que falham.**
+- [x] **Step 1: Escrever os testes que falham.**
   - `test_cli.py`:
     - `test_create_brand_idempotent`;
     - `test_sync_prices_loads_repo_file`;
@@ -833,16 +833,26 @@
     - verificar a reserva `open` e a submissão `reserved`;
     - correr `recover_stale` e verificar a reserva `unknown_outcome`, contada em `status().unknown_usd`;
     - repetir a submissão com a mesma chave e verificar que devolve `in_progress`/`needs_human` **sem** novo pedido ao LLM.
-- [ ] **Step 2: Correr e ver falhar.**
-- [ ] **Step 3: Implementar** só o necessário para passar. Atualizar o `README.md` (pré-requisitos, `compose.test.yaml`, variáveis `*_FILE`, comando de arranque e nota de que o acesso é por `tailscale serve`) e o registo de contexto.
-- [ ] **Step 4: Validação completa.**
+- [x] **Step 2: Correr e ver falhar.**
+- [x] **Step 3: Implementar** só o necessário para passar. Atualizar o `README.md` (pré-requisitos, `compose.test.yaml`, variáveis `*_FILE`, comando de arranque e nota de que o acesso é por `tailscale serve`) e o registo de contexto.
+- [x] **Step 4: Validação completa.**
   1. Correr a validação global.
   2. Arrancar o painel com uma rota `fake`.
   3. Pedir `GET /` com `curl -H "Tailscale-User-Login: teste@exemplo"` a partir de 127.0.0.1 e esperar 200.
   4. Repetir o pedido sem o cabeçalho e esperar 401.
-- [ ] **Step 5: Commit.** `feat: bootstrap, comandos de operacao e testes ponta a ponta`.
+- [x] **Step 5: Commit.** `feat: bootstrap, comandos de operacao e testes ponta a ponta`.
 
 ---
+
+**Notas de execução (Tarefa 15):**
+
+- Concluída no ramo `agent/2026-11-06_plano01_tarefa15` (commits `290fab7` e `6bfb11f`), em modo subagente: implementação, revisão da tarefa (modelo mais capaz, em modo de atacante) e uma ronda de correção com re-revisão limpa. 652 testes passam; `ruff` e `mypy src` limpos.
+- **Arranque:** `create_app_from_env()` (alvo do Uvicorn `--factory`): segredo CSRF de `PANEL_CSRF_SECRET_FILE` (mínimo de 32 caracteres), marca única (zero ou várias dão erro claro), rota `fake` recusada, `recover_stale` ao arrancar com a janela derivada dos specs (240 s). Comando `marketing-agent` com `create-brand`, `sync-prices`, `recover-reservations`, `migrate`, `serve` e `dev-proxy`.
+- **`serve`** arranca o Uvicorn com `proxy_headers=False` (fixo), sem `FORWARDED_ALLOW_IPS` (recusa arrancar se existir), em loopback por omissão; há testes sobre a configuração (a restrição da Tarefa 13).
+- **Execução local** (decisão do responsável: a primeira entrega corre neste PC, com o Ollama como fornecedor de teste; o Pi fica para o Plano 0; o 3D para o Plano 4): `compose.dev.yaml` (Postgres 17 com volume, porta 5434), `.env.local.example`, `config/model_prices.local.yaml` (modelos locais a custo 0) e `dev-proxy` (só desenvolvimento, só loopback: injeta `Tailscale-User-Login`, remove cabeçalhos de identidade do cliente e recalcula o `Content-Length`).
+- **Correções da ronda 1:** (1) **DNS rebinding**: o painel não verificava o `Host`; um site malicioso podia agir como dono através do proxy ou do `serve`. Passou a haver `PANEL_ALLOWED_HOSTS` (por omissão `127.0.0.1` e `localhost`) verificado por um middleware em todos os pedidos antes da autenticação. **Em produção o dono tem de acrescentar o nome do `tailscale serve` a esta lista.** (2) `create-brand` com outro nome criava uma segunda marca e impedia o painel de arrancar; agora recusa (instalação de marca única) e serializa a criação com um bloqueio consultivo. (3) Enquadramento do `dev-proxy` contra contrabando de pedidos. (4) Os dois ficheiros `compose` tinham o mesmo nome de projeto e o mesmo serviço `postgres`, e cada `up` removia o contentor do outro: passaram a ter `name:` próprio (ver `AgentDATA/Knowledge/*docker_compose_projeto_partilhado*`).
+- Os testes de recuperação após morte do processo cobrem a reserva `open` (simulada pelo estado da base) e o `SystemExit` no cliente (a reserva fica `unknown_outcome`, como desde a Tarefa 8), e a repetição da mesma chave não faz novo pedido ao LLM.
+- Achados menores adiados: o `dev-proxy` não confirma que leu o corpo completo e imprime traceback em timeouts do cliente; `Expect: 100-continue` é reencaminhado; normalização de hosts de loopback (`"127.0.0.1 "`, `[::1]`); `--older-than-minutes` enorme sai com o código 1; o teste do excesso de referência não afirma o limite por execução; o comando "equivalente direto" do README está incompleto; `scripts/smoke_ollama.py` duplica a montagem do arranque; testes com `-W error` falham de forma intermitente em `tests/panel/test_main.py` por um `ResourceWarning` do psycopg (já acontecia antes).
 
 ## Auto-revisão
 
