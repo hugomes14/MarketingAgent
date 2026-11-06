@@ -1,0 +1,15 @@
+{
+  "id": "msg_01MultiText",
+  "type": "message",
+  "role": "assistant",
+  "model": "claude-sonnet-5-5",
+  "content": [
+    {"type": "thinking", "thinking": "raciocinio interno que nao deve aparecer", "signature": "sig"},
+    {"type": "text", "text": "Primeira parte. "},
+    {"type": "text", "text": "Segunda parte."}
+  ],
+  "stop_reason": "end_turn",
+  "stop_sequence": null,
+  "stop_details": null,
+  "usage": {"input_tokens": 100, "output_tokens": 40, "output_tokens_details": {"thinking_tokens": 25}}
+}
