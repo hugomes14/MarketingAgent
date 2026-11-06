@@ -1,0 +1,40 @@
+# Precos por milhao de tokens, em USD. Valores monetarios SEMPRE como texto (aspas):
+# o carregador recusa numeros para evitar float. Uma price_version e imutavel: para
+# mudar um preco, acrescentar uma entrada nova com outra price_version.
+# Fonte: plano mestre secao 8.2, consultada em 2026-11-05.
+# GPT-5.4 nano fica de fora ate a disponibilidade ser confirmada.
+models:
+  - provider: anthropic
+    model_id: claude-haiku-5-5
+    price_version: "2026-11-05"
+    valid_from: "2026-11-05T00:00:00+00:00"
+    tiers:
+      - {min_prompt_tokens: 0, input_per_million: "0.10", output_per_million: "0.50"}
+      # Acima de 100000 tokens de prompt (todos os de entrada, incl. cache) a taxa vale para
+      # o pedido inteiro. Fonte: https://platform.claude.com/docs/en/about-claude/pricing,
+      # consultada em 2026-11-06.
+      - {min_prompt_tokens: 100001, input_per_million: "0.50", output_per_million: "2.50"}
+  - provider: anthropic
+    model_id: claude-sonnet-5-5
+    price_version: "2026-11-05"
+    valid_from: "2026-11-05T00:00:00+00:00"
+    tiers:
+      - {min_prompt_tokens: 0, input_per_million: "2", output_per_million: "10"}
+  - provider: anthropic
+    model_id: claude-opus-5-5
+    price_version: "2026-11-05"
+    valid_from: "2026-11-05T00:00:00+00:00"
+    tiers:
+      - {min_prompt_tokens: 0, input_per_million: "4", output_per_million: "20"}
+  - provider: openai
+    model_id: gpt-5.4-mini
+    price_version: "2026-11-05"
+    valid_from: "2026-11-05T00:00:00+00:00"
+    tiers:
+      - {min_prompt_tokens: 0, input_per_million: "0.75", output_per_million: "4.50"}
+  - provider: fake
+    model_id: fake-1
+    price_version: "2026-11-05"
+    valid_from: "2026-11-05T00:00:00+00:00"
+    tiers:
+      - {min_prompt_tokens: 0, input_per_million: "0", output_per_million: "0"}
