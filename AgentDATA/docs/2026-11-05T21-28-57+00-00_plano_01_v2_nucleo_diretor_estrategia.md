@@ -4,7 +4,7 @@
 
 - Timestamp: `2026-11-05T21:28:57+00:00`
 - Autor: `agent`
-- Estado de execução: **Tarefas 1 a 7 concluídas; Tarefas 8 a 15 por fazer.**
+- Estado de execução: **Tarefas 1 a 8 concluídas; Tarefas 9 a 15 por fazer.**
 - Substitui: Anexo E.1 do plano mestre (Plano 01 v1), com as correções do Anexo E, secção E.0
 
 **Goal:** Construir o esqueleto Python, o núcleo comum dos agentes e o primeiro percurso do Diretor, que termina com perfil de marca, diagnóstico e estratégia aprovados no painel.
@@ -464,7 +464,7 @@
 
   `run` fecha o `agent_run` com o estado final em `finally`.
 
-- [ ] **Step 1: Escrever os testes que falham.** Todos usam `FakeLlmClient` e `FakeLlmClient` + `FixedClock`.
+- [x] **Step 1: Escrever os testes que falham.** Todos usam `FakeLlmClient` e `FakeLlmClient` + `FixedClock`.
   - `test_success_records_run_step_reservation_and_entry`.
   - `test_invalid_three_times_needs_human`: 3 chamadas, 3 lançamentos, e a terceira leva o erro no pedido.
   - `test_invalid_then_valid_succeeds`.
@@ -476,10 +476,18 @@
   - `test_max_steps_blocks`.
   - `test_duration_limit_uses_clock`: o `FixedClock` avança para além de `max_duration_s` e a execução fica `blocked_limit`.
   - `test_create_artifact_outside_writes_denied`: `failed` com `PermissionDenied` na mensagem.
-- [ ] **Step 2: Correr e ver falhar.**
-- [ ] **Step 3: Implementar.** Extrair `_attempt(...)`, `_classify(...)` e `_retry_policy(...)`, cada um com até 25 linhas.
-- [ ] **Step 4: Correr a validação global.**
-- [ ] **Step 5: Commit.** `feat: motor com reserva por chamada, limites e erros classificados`.
+- [x] **Step 2: Correr e ver falhar.**
+- [x] **Step 3: Implementar.** Extrair `_attempt(...)`, `_classify(...)` e `_retry_policy(...)`, cada um com até 25 linhas.
+- [x] **Step 4: Correr a validação global.**
+- [x] **Step 5: Commit.** `feat: motor com reserva por chamada, limites e erros classificados`.
+
+**Notas de execução (Tarefa 8):**
+
+- Concluída no ramo `agent/2026-11-06_plano01_tarefa8` (commits `b730222` e `c537302`), em modo subagente: implementação, revisão da tarefa e uma ronda de correção com re-revisão limpa. 114 testes passam; `ruff` e `mypy src` limpos.
+- Decisões: limites cumulativos por execução (cada tentativa conta um passo; tokens acertados; duração pelo `Clock`; custo pelo `BudgetController`); `input_tokens_estimate = ceil(caracteres / 3)`; a tentativa seguinte a uma saída inválida acrescenta a resposta anterior e o erro de validação como mensagens; exceções inesperadas fecham o run como `failed` com `"<Classe>: <texto>"`.
+- Correção da ronda 1: qualquer exceção entre a reserva e o acerto (erro inesperado do cliente, falha do `settle`, `KeyboardInterrupt`) marca a reserva como `unknown_outcome`, fecha o passo e re-levanta a exceção original (libertar seria errado: a chamada pode ter sido faturada); um validador que rebenta fecha o passo como `invalid_output`.
+- **Para as tarefas seguintes:** quando a rota não resolve, `RunResult` vem `failed` com `run_id=""` e sem linha em `agent_run` (documentado no `RunResult`); se o painel precisar de rasto, abrir a linha antes de resolver a rota. Os adaptadores (Tarefas 9 e 10) devem tratar o caso de texto vazio da resposta anterior (os fornecedores rejeitam blocos vazios).
+- Achados menores adiados: a estimativa de tokens ignora `json_schema` e `ImagePart`; `release`/`mark_unknown` nos handlers de rede e de resultado desconhecido não estão protegidos; `_close_run` no `finally` pode mascarar a exceção original; `logger.exception` pode incluir texto de erros do Loop; `engine.py` (~415 linhas) mistura persistência de passos, política de retry e `AgentEngine`.
 
 ### Task 9: Adaptador Anthropic
 
