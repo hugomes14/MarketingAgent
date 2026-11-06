@@ -126,3 +126,25 @@ def test_unknown_env_url_error_hides_password(tmp_path: Path) -> None:
     with pytest.raises(ValidationError) as excinfo:
         Settings(_env_file=env_file)  # type: ignore[call-arg]
     assert "pw-SECRET" not in str(excinfo.value)
+
+
+@pytest.mark.parametrize(
+    "name", ["ANTHROPIC_API_KEY_FILE", "OPENAI_API_KEY_FILE", "OPENAI_BASE_URL"]
+)
+@pytest.mark.parametrize("blank", ["", "   "])
+def test_blank_optional_secret_settings_become_none(
+    monkeypatch: pytest.MonkeyPatch, name: str, blank: str
+) -> None:
+    monkeypatch.setenv(name, blank)
+    settings = Settings(_env_file=None)  # type: ignore[call-arg]
+    assert getattr(settings, name.lower()) is None
+
+
+def test_non_blank_optional_secret_settings_unchanged(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ANTHROPIC_API_KEY_FILE", "/run/a.key")
+    monkeypatch.setenv("OPENAI_API_KEY_FILE", "/run/o.key")
+    monkeypatch.setenv("OPENAI_BASE_URL", "http://127.0.0.1:11434/v1")
+    settings = Settings(_env_file=None)  # type: ignore[call-arg]
+    assert settings.anthropic_api_key_file == Path("/run/a.key")
+    assert settings.openai_api_key_file == Path("/run/o.key")
+    assert settings.openai_base_url == "http://127.0.0.1:11434/v1"

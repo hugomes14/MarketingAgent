@@ -11,18 +11,16 @@ from pathlib import Path
 from typing import Literal, cast
 
 import anthropic
-import httpx2
 from anthropic.types import ImageBlockParam, MessageParam, OutputConfigParam, TextBlockParam
 
 from marketing_agent.budget.pricing import Usage
 from marketing_agent.config import Capability
+from marketing_agent.llm.transport_errors import classify_connection_cause, classify_http_status
 from marketing_agent.llm.types import (
     ContentPart,
     ImagePart,
-    LlmNetworkError,
     LlmRequest,
     LlmResponse,
-    LlmUnknownOutcome,
     Message,
     StopReason,
 )
@@ -37,10 +35,6 @@ _STOP_REASONS = {
     "max_tokens": StopReason.max_tokens,
     "refusal": StopReason.refusal,
 }
-# Rejeitados antes de qualquer processamento: nada foi gerado nem faturado.
-_REJECTED_STATUSES = frozenset({429, 503, 529})
-# Falhas em que o pedido nunca saiu: a ligacao nao chegou a ser estabelecida.
-_NEVER_SENT_CAUSES = (httpx2.ConnectError, httpx2.ConnectTimeout, httpx2.PoolTimeout)
 
 
 def _require_str(raw: Mapping[str, object], field: str) -> str:
@@ -114,12 +108,9 @@ def classify_transport_error(exc: Exception) -> type[Exception] | None:
     """
     if isinstance(exc, anthropic.APIConnectionError):
         # APITimeoutError e subclasse: a causa (httpx2) separa a fase de ligacao da de leitura.
-        is_never_sent = isinstance(exc.__cause__, _NEVER_SENT_CAUSES)
-        return LlmNetworkError if is_never_sent else LlmUnknownOutcome
+        return classify_connection_cause(exc.__cause__)
     if isinstance(exc, anthropic.APIStatusError):
-        if exc.status_code in _REJECTED_STATUSES:
-            return LlmNetworkError
-        return LlmUnknownOutcome if exc.status_code >= 500 else None
+        return classify_http_status(exc.status_code)
     return None
 
 
