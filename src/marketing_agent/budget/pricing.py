@@ -41,8 +41,9 @@ class ModelPrice:
     provider: str
     model_id: str
     price_version: str
-    valid_from: datetime
     tiers: tuple[PriceTier, ...]
+    # Opcional para quem so calcula custo; obrigatorio para gravar (sync_model_prices).
+    valid_from: datetime | None = None
 
     def __post_init__(self) -> None:
         key = f"{self.provider}/{self.model_id}/{self.price_version}"
@@ -119,8 +120,8 @@ def _parse_model(raw: object, path: Path, index: int) -> ModelPrice:
         cast(str, fields["provider"]),
         cast(str, fields["model_id"]),
         cast(str, fields["price_version"]),
-        valid_from,
         tuple(_parse_tier(t, where) for t in tiers),
+        valid_from=valid_from,
     )
 
 
@@ -158,9 +159,12 @@ def _tiers_from_json(raw: object) -> tuple[PriceTier, ...]:
 
 def _to_model_price(row: ModelPriceRow) -> ModelPrice:
     return ModelPrice(
-        row.provider, row.model_id, row.price_version, row.valid_from,
+        row.provider,
+        row.model_id,
+        row.price_version,
         _tiers_from_json(row.conditions["tiers"]),
-    )  # fmt: skip
+        valid_from=row.valid_from,
+    )
 
 
 def _find_row(session: Session, price: ModelPrice) -> ModelPriceRow | None:
@@ -177,22 +181,25 @@ def sync_model_prices(session_factory: sessionmaker[Session], prices: Sequence[M
     """Grava precos novos numa transacao; repetir igual e no-op, valores diferentes falham."""
     with session_factory.begin() as session:
         for price in prices:
+            if price.valid_from is None:
+                key = f"{price.provider}/{price.model_id}/{price.price_version}"
+                raise ValueError(f"preco {key} sem valid_from nao pode ser gravado")
             existing = _find_row(session, price)
             if existing is None:
-                session.add(_to_row(price))
+                session.add(_to_row(price, price.valid_from))
             elif _to_model_price(existing) != price:
                 key = f"{price.provider}/{price.model_id}/{price.price_version}"
                 raise ValueError(f"preco {key} ja existe com valores diferentes (versao imutavel)")
 
 
-def _to_row(price: ModelPrice) -> ModelPriceRow:
+def _to_row(price: ModelPrice, valid_from: datetime) -> ModelPriceRow:
     first = price.tiers[0]
     return ModelPriceRow(
         id=new_id(),
         provider=price.provider,
         model_id=price.model_id,
         price_version=price.price_version,
-        valid_from=price.valid_from,
+        valid_from=valid_from,
         input_per_million=first.input_per_million,
         output_per_million=first.output_per_million,
         conditions={"tiers": _tiers_as_json(price)},

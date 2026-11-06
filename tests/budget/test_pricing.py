@@ -26,7 +26,7 @@ VALID_FROM = datetime(2026, 11, 5, tzinfo=UTC)
 
 
 def make_price(*tiers: PriceTier, version: str = "2026-11-05") -> ModelPrice:
-    return ModelPrice("fake", "m1", version, VALID_FROM, tiers)
+    return ModelPrice("fake", "m1", version, tiers, valid_from=VALID_FROM)
 
 
 def test_cost_exact() -> None:
@@ -76,7 +76,7 @@ def test_price_book_returns_latest_with_all_tiers(session_factory: Factory) -> N
         PriceTier(0, Decimal("2"), Decimal("4")),
         PriceTier(100001, Decimal("5"), Decimal("8")),
     )
-    new = ModelPrice("fake", "m1", "2026-11-05", datetime(2026, 11, 5, tzinfo=UTC), new_tiers)
+    new = ModelPrice("fake", "m1", "2026-11-05", new_tiers, valid_from=VALID_FROM)
     sync_model_prices(session_factory, [new, old])
     assert PriceBook(session_factory).get("fake", "m1") == new
 
@@ -97,3 +97,10 @@ def test_loader_rejects_numeric_prices(tmp_path: Path) -> None:
     )
     with pytest.raises(ValueError, match=r"p\.yaml.*x/y"):
         load_model_prices(path)
+
+
+def test_positional_construction_without_valid_from(session_factory: Factory) -> None:
+    price = ModelPrice("p", "m", "v", (PriceTier(0, Decimal("1"), Decimal("2")),))
+    assert price.valid_from is None
+    with pytest.raises(ValueError, match="p/m/v"):
+        sync_model_prices(session_factory, [price])
