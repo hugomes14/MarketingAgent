@@ -1,0 +1,131 @@
+/* Aspeto do painel. Ficheiro local: a CSP so permite estilos de 'self' (sem <style> nem style=). */
+:root {
+  --fundo: #f5f6f8;
+  --cartao: #ffffff;
+  --texto: #1d2330;
+  --suave: #5b6475;
+  --linha: #dde1e8;
+  --acento: #1d4ed8;
+  --acento-texto: #ffffff;
+  --perigo: #b42318;
+  --aviso: #92400e;
+  --aviso-fundo: #fef3c7;
+  --info-fundo: #e0ecff;
+  --erro-fundo: #fee4e2;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--fundo);
+  color: var(--texto);
+  font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+.topo {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+  padding: 0.75rem 1.5rem;
+  background: var(--cartao);
+  border-bottom: 1px solid var(--linha);
+}
+.topo .marca { font-weight: 700; color: var(--texto); text-decoration: none; }
+.topo nav { flex: 1; }
+.topo .utilizador { color: var(--suave); font-size: 0.9rem; }
+
+main { max-width: 60rem; margin: 0 auto; padding: 1.5rem 1rem 4rem; }
+h1 { font-size: 1.6rem; margin: 0 0 1rem; }
+h2 { font-size: 1.1rem; margin: 0 0 0.5rem; }
+h3 { font-size: 0.9rem; margin: 0 0 0.25rem; color: var(--suave); }
+a { color: var(--acento); }
+
+.cartao {
+  background: var(--cartao);
+  border: 1px solid var(--linha);
+  border-radius: 0.5rem;
+  padding: 1rem 1.25rem;
+  margin: 0 0 1rem;
+}
+.decisao { border-color: var(--acento); }
+.grelha { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr)); }
+.grelha .cartao { margin: 0; }
+
+.valores { display: flex; flex-wrap: wrap; gap: 1.5rem; margin: 0; }
+.valores dt { color: var(--suave); font-size: 0.85rem; }
+.valores dd { margin: 0; font-size: 1.25rem; font-variant-numeric: tabular-nums; }
+
+.detalhes dt { font-weight: 600; margin-top: 0.75rem; }
+.detalhes dd { margin: 0; }
+
+.nota { color: var(--suave); font-size: 0.9rem; }
+.texto { white-space: pre-wrap; overflow-wrap: anywhere; margin: 0; }
+
+.turno { padding: 0.5rem 0.75rem; margin: 0 0 0.5rem; border-left: 4px solid var(--linha); }
+.turno-user { border-left-color: var(--acento); background: #f3f6ff; }
+.turno-director { border-left-color: #0f766e; background: #f0faf8; }
+
+.lacunas { list-style: none; margin: 0; padding: 0; }
+.lacuna { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: baseline; padding: 0.35rem 0; border-bottom: 1px solid var(--linha); }
+.lacuna-confirmado strong { color: #0f766e; }
+.lacuna-desconhecido strong { color: var(--suave); }
+
+.etiqueta {
+  display: inline-block;
+  padding: 0 0.5rem;
+  border-radius: 999px;
+  background: var(--fundo);
+  border: 1px solid var(--linha);
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--suave);
+}
+.etiqueta-approved { background: #dcfce7; color: #166534; }
+.etiqueta-rejected { background: var(--erro-fundo); color: var(--perigo); }
+.etiqueta-submitted { background: var(--aviso-fundo); color: var(--aviso); }
+
+.aviso { margin: 0 0 0.75rem; padding: 0.6rem 0.9rem; border-radius: 0.4rem; background: var(--info-fundo); }
+.aviso.atencao { background: var(--aviso-fundo); color: var(--aviso); }
+.aviso.erro { background: var(--erro-fundo); color: var(--perigo); }
+.aviso.importante { background: var(--aviso-fundo); color: var(--aviso); border: 2px solid var(--aviso); font-size: 1.05rem; }
+
+form { margin: 0; }
+form.em-linha { display: inline-block; margin: 0.25rem 0.5rem 0.25rem 0; }
+label { display: block; font-weight: 600; margin: 0.5rem 0 0.25rem; }
+fieldset label { display: inline-block; font-weight: 400; margin-right: 1.5rem; }
+textarea, select, input[type="text"] {
+  width: 100%;
+  padding: 0.5rem;
+  border: 1px solid var(--linha);
+  border-radius: 0.4rem;
+  font: inherit;
+  background: #fff;
+}
+textarea { resize: vertical; }
+fieldset.proposta { border: 1px solid var(--linha); border-radius: 0.4rem; margin: 0 0 0.75rem; }
+.rejeitar { margin-top: 1rem; }
+
+button {
+  margin-top: 0.75rem;
+  padding: 0.5rem 1rem;
+  border: 0;
+  border-radius: 0.4rem;
+  background: var(--acento);
+  color: var(--acento-texto);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+button.perigo { background: var(--perigo); }
+button:disabled, button[disabled] { opacity: 0.5; cursor: not-allowed; }
+form.htmx-request button { opacity: 0.6; }
+
+.estado:empty { display: none; }
+ul { padding-left: 1.25rem; }
+.entrevistas { list-style: none; padding: 0; }
+.entrevistas li { padding: 0.35rem 0; border-bottom: 1px solid var(--linha); }
+
+/* O HTMX nao injeta estilos (includeIndicatorStyles desligado): o indicador define-se aqui. */
+.htmx-indicator { opacity: 0; }
+.htmx-request .htmx-indicator, .htmx-request.htmx-indicator { opacity: 1; }

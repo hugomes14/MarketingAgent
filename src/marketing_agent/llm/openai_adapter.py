@@ -8,6 +8,7 @@ de transporte e partilhada (`transport_errors`). O SDK e criado sem repeticoes a
 import base64
 from collections.abc import Mapping
 from pathlib import Path
+from typing import Literal
 
 import openai
 from openai.types.chat import (
@@ -157,6 +158,15 @@ def _to_sdk_message(message: Message) -> ChatCompletionMessageParam:
     return {"role": "assistant", "content": [_to_text_part(part) for part in message.content]}
 
 
+def _to_system_message(
+    system: str, role: Literal["developer", "system"]
+) -> ChatCompletionMessageParam:
+    # Dois ramos explicitos: o tipo da mensagem depende do papel (TypedDict discriminado).
+    if role == "system":
+        return {"role": "system", "content": system}
+    return {"role": "developer", "content": system}
+
+
 def _response_format(request: LlmRequest) -> ResponseFormatJSONSchema | openai.Omit:
     if request.json_schema is None:
         return openai.omit
@@ -178,13 +188,17 @@ class OpenAiClient:
         base_url: str | None = None,
         timeout_s: float = 120.0,
         sdk_client: openai.OpenAI | None = None,
+        system_role: Literal["developer", "system"] = "developer",
     ) -> None:
         """Le a chave de `api_key_file` ja na construcao (nunca aparece em erros ou logs).
 
         `base_url` aponta para um servidor compativel com a API (ex.: emulador local); `None` usa
         o endereco oficial. `sdk_client` existe so para os testes injetarem um SDK falso.
+        `system_role` e o papel da mensagem do prompt de sistema: `developer` na API oficial,
+        `system` em servidores compativeis (Ollama, LM Studio), que ignoram `developer`.
         """
         self.capabilities = capabilities
+        self._system_role = system_role
         key = read_secret_file(api_key_file)
         self._sdk = sdk_client or _build_sdk(key, timeout_s, base_url)
 
@@ -195,9 +209,10 @@ class OpenAiClient:
         """
         # Sem sampling (temperature/top_p): os modelos de raciocinio rejeitam-nos. O limite e
         # `max_completion_tokens` (`max_tokens` esta obsoleto e e rejeitado por esses modelos).
-        # O prompt de sistema vai como `developer`: o SDK indica-o em vez de `system` desde o o1.
+        # O prompt de sistema vai como `developer` na API oficial (o SDK indica-o em vez de
+        # `system` desde o o1); os servidores compativeis exigem `system` (ver `system_role`).
         messages: list[ChatCompletionMessageParam] = [
-            {"role": "developer", "content": request.system},
+            _to_system_message(request.system, self._system_role),
             *(_to_sdk_message(message) for message in request.messages),
         ]
         try:

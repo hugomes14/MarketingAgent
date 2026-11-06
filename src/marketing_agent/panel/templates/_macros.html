@@ -1,0 +1,21 @@
+{# Pecas de formulario partilhadas. O token CSRF vai sempre num campo escondido. #}
+{% macro csrf_field(token) %}<input type="hidden" name="csrf_token" value="{{ token }}">{% endmacro %}
+
+{% macro post_button(url, token, label, disabled=false) %}
+<form method="post" action="{{ url }}" class="em-linha">
+  {{ csrf_field(token) }}
+  <button type="submit"{% if disabled %} disabled{% endif %}>{{ label }}</button>
+</form>
+{% endmacro %}
+
+{% macro reject_form(url, token) %}
+<form method="post" action="{{ url }}" class="rejeitar">
+  {{ csrf_field(token) }}
+  <label>Motivo (opcional)
+    <input type="text" name="motivo" maxlength="500" autocomplete="off">
+  </label>
+  <button type="submit" class="perigo">Rejeitar</button>
+</form>
+{% endmacro %}
+
+{% macro state_badge(state) %}<span class="etiqueta etiqueta-{{ state }}">{{ state|state_label }}</span>{% endmacro %}

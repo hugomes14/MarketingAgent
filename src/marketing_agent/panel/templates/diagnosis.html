@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% import "_macros.html" as ui %}
+{% block title %}Diagnóstico{% endblock %}
+{% block content %}
+{% set d = view.diagnostico %}
+<h1>Diagnóstico {{ ui.state_badge(view.record.state.value) }}</h1>
+
+{% if view.record.state.value == "submitted" %}
+<p class="aviso importante" role="alert"><strong>Nada fica ativo até o aprovar:</strong> ler esta página não aprova o diagnóstico.</p>
+{% endif %}
+
+<section class="cartao">
+  <h2>Onde está a marca</h2>
+  <dl class="detalhes">
+    <dt>Oferta prioritária</dt><dd>{{ d.oferta_prioritaria }}</dd>
+    <dt>Cliente prioritário</dt><dd>{{ d.cliente_prioritario }}</dd>
+    <dt>Geografia</dt><dd>{{ d.geografia }}</dd>
+    <dt>Motivos de compra</dt><dd>{{ d.motivos_compra }}</dd>
+    <dt>Motivos de perda</dt><dd>{{ d.motivos_perda }}</dd>
+    <dt>Capacidade de entrega</dt><dd>{{ d.capacidade_entrega }}</dd>
+    <dt>Provas disponíveis</dt><dd>{{ d.provas_disponiveis }}</dd>
+    <dt>Percurso de contacto</dt><dd>{{ d.percurso_contacto }}</dd>
+    <dt>Adequação dos canais</dt><dd>{{ d.adequacao_canais }}</dd>
+  </dl>
+</section>
+
+<section class="cartao">
+  <h2>Achados</h2>
+  <ul>
+    {% for finding in d.achados %}
+    <li>
+      <span class="etiqueta">{{ "Facto" if finding.tipo == "facto" else "Hipótese" }}</span>
+      {{ finding.afirmacao }}
+      {% if finding.evidencia %}<span class="nota">Evidência: {{ finding.evidencia }}</span>{% endif %}
+      {% if finding.origem %}<span class="etiqueta">{{ finding.origem|origin_label }}</span>{% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+
+<section class="cartao">
+  <h2>Riscos</h2>
+  <ul>{% for item in d.riscos %}<li>{{ item }}</li>{% else %}<li class="nota">Sem riscos indicados.</li>{% endfor %}</ul>
+  <h2>Alternativas</h2>
+  <ul>{% for item in d.alternativas %}<li>{{ item }}</li>{% else %}<li class="nota">Sem alternativas indicadas.</li>{% endfor %}</ul>
+</section>
+
+{% if view.record.state.value == "submitted" %}
+<section class="cartao decisao">
+  <h2>Decisão</h2>
+  {{ ui.post_button("/diagnostico/" ~ view.record.id ~ "/aprovar", csrf_token, "Aprovar") }}
+  {{ ui.reject_form("/diagnostico/" ~ view.record.id ~ "/rejeitar", csrf_token) }}
+</section>
+{% endif %}
+{% endblock %}

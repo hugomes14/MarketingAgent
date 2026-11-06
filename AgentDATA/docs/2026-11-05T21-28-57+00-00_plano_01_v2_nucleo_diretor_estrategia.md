@@ -4,7 +4,7 @@
 
 - Timestamp: `2026-11-05T21:28:57+00:00`
 - Autor: `agent`
-- Estado de execução: **Tarefas 1 a 13 concluídas; Tarefas 14 e 15 por fazer.**
+- Estado de execução: **Tarefas 1 a 14 concluídas; Tarefa 15 por fazer.**
 - Substitui: Anexo E.1 do plano mestre (Plano 01 v1), com as correções do Anexo E, secção E.0
 
 **Goal:** Construir o esqueleto Python, o núcleo comum dos agentes e o primeiro percurso do Diretor, que termina com perfil de marca, diagnóstico e estratégia aprovados no painel.
@@ -769,7 +769,7 @@
   - cabeçalho `Content-Security-Policy: default-src 'self'; script-src 'self'; object-src 'none'; frame-ancestors 'none'`.
 - **HTMX:** ficheiro local de versão fixada, com versão e `sha256` em `static/README.md`.
 
-- [ ] **Step 1: Escrever os testes que falham.** `TestClient` com `client=("127.0.0.1", 5000)` e login válido.
+- [x] **Step 1: Escrever os testes que falham.** `TestClient` com `client=("127.0.0.1", 5000)` e login válido.
   - CSRF: `test_cross_site_post_403` (Foco 4: `Sec-Fetch-Site: cross-site`), `test_missing_csrf_token_403`, `test_valid_csrf_passes`.
   - Rotas:
     - `test_every_route_requires_auth`: todas as rotas sem cabeçalho dão 401;
@@ -783,10 +783,21 @@
     - `test_no_external_scripts`;
     - `test_strategy_approval_without_all_decisions_422`;
     - `test_confirm_profile_button_activates`.
-- [ ] **Step 2: Correr e ver falhar.**
-- [ ] **Step 3: Implementar.** Rotas síncronas (`def`). A aprovação existe **só** como POST explícito. O aviso aparece quando `injection_suspected` é verdadeiro, mas não altera nenhuma ação.
-- [ ] **Step 4: Correr a validação global.**
-- [ ] **Step 5: Commit.** `feat: painel com csrf, entrevista, diagnostico e estrategia`.
+- [x] **Step 2: Correr e ver falhar.**
+- [x] **Step 3: Implementar.** Rotas síncronas (`def`). A aprovação existe **só** como POST explícito. O aviso aparece quando `injection_suspected` é verdadeiro, mas não altera nenhuma ação.
+- [x] **Step 4: Correr a validação global.**
+- [x] **Step 5: Commit.** `feat: painel com csrf, entrevista, diagnostico e estrategia`.
+
+**Notas de execução (Tarefa 14):**
+
+- Concluída no ramo `agent/2026-11-06_plano01_tarefa14` (commits `493aec5` e `71d0f24`), empilhada sobre o PR do ajuste do papel `system` (#12); em modo subagente: implementação, revisão da tarefa (modelo mais capaz, em modo de atacante) e uma ronda de correção com re-revisão limpa. 472 testes passam; `ruff` e `mypy src` limpos.
+- **Primeira interface gráfica:** Jinja no servidor + HTMX 2.0.11 local (integridade sha512 verificada contra o registo npm; versão, sha256 e licença 0BSD em `panel/static/README.md`, com teste), CSS próprio, sem JS inline. Páginas: `/` (estado do mês, sessões, artefactos ativos e à espera de decisão), `/entrevista/{id}`, `/perfil/{id}`, `/diagnostico/{id}`, `/estrategia/{id}`.
+- **Decisões do controlador:** `create_app` recebe também `brand_id` e `queries` (`panel/queries.py`, só leitura), preenche `app.state.settings`, valida `PANEL_TRUSTED_PROXY` e recusa uma lista de logins vazia no arranque; páginas de revisão `GET` extra; CSP exatamente a do brief, mais `nosniff` e `no-store`; `Idempotency-Key` nova depois de resultado completo, bloqueado ou `needs_human`, a mesma depois de `in_progress`, 422 se faltar (o servidor nunca a gera).
+- **Aprovar a estratégia:** um par de botões por proposta, sem nenhum pré-selecionado; valores desconhecidos dão 422; a página inicial mostra só as propostas aceites da estratégia ativa.
+- **Correção da ronda 1 (invisível aos testes):** `Referrer-Policy: no-referrer` fazia o browser enviar `Origin: null` nas submissões de formulários simples, que recusamos; **todos os botões de decisão simples falhariam com 403 num browser real**. Passou a `same-origin` (cross-site continua recusado). O `TestClient` não envia `Origin`, por isso os testes passam agora com `Origin` e `Sec-Fetch-Site` realistas. Novo `static/panel.js` impede o duplo envio dos formulários simples (os do HTMX usam `hx-disabled-elt`).
+- **Não verificado em browser real** (sem browser nem `node` neste ambiente): o comportamento do HTMX (trocas, `HX-Retarget` em 4xx/5xx, `hx-disabled-elt`, cabeçalhos combinados), o `panel.js` (duplo clique, cache de páginas do browser) e o `Origin` real nos formulários simples. **Fazer uma passagem manual no browser depois da Tarefa 15.**
+- Sem `python-multipart`: um leitor de formulários próprio e limitado (`panel/forms.py`) substitui-o. As sessões ordenam-se pelo início da primeira execução (a tabela não tem data). Os métodos de leitura recebem `brand_id` (ids de outra marca dão 404).
+- Achados menores adiados: erros `HTTPException` fora do HTMX respondem JSON cru (403 CSRF, 404, 405, 413, 415) em vez da página de erro; `decisao_01` e `decisao_1` mapeiam o mesmo índice; o token CSRF usa `casefold()` e não roda; `assert isinstance` em `errors.py` desaparece com `python -O`; `app.py` importa `auth._parse_networks` (privado); CRLF das textareas pode exceder `max_message_chars`; o aviso `injection_suspected` só aparece na resposta ao envio.
 
 ### Task 15: Bootstrap, comandos de operação e ponta a ponta
 

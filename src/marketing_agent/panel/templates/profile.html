@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% import "_macros.html" as ui %}
+{% block title %}Perfil{% endblock %}
+{% block content %}
+<h1>Perfil da marca {{ ui.state_badge(view.record.state.value) }}</h1>
+
+{% if view.record.state.value == "submitted" %}
+<p class="aviso importante" role="alert"><strong>Nada fica ativo até o confirmar:</strong> ler esta página não aprova nem ativa o perfil. Só o botão «Confirmar» o faz.</p>
+{% endif %}
+
+<section class="cartao">
+  <h2>Tópicos</h2>
+  <dl class="detalhes">
+    {% for name, topic in view.perfil.topicos.items() %}
+    <dt>{{ name|topic_label }}</dt>
+    <dd>{{ topic.texto }} <span class="etiqueta">{{ topic.origem|origin_label }}</span></dd>
+    {% endfor %}
+  </dl>
+</section>
+
+<section class="cartao">
+  <h2>Lacunas abertas</h2>
+  {% if view.perfil.lacunas_abertas %}<ul>{% for item in view.perfil.lacunas_abertas %}<li>{{ item }}</li>{% endfor %}</ul>
+  {% else %}<p class="nota">Sem lacunas abertas.</p>{% endif %}
+</section>
+
+<section class="cartao">
+  <h2>Suposições</h2>
+  {% if view.perfil.suposicoes %}<ul>{% for item in view.perfil.suposicoes %}<li>{{ item }}</li>{% endfor %}</ul>
+  {% else %}<p class="nota">Sem suposições.</p>{% endif %}
+</section>
+
+{% if view.record.state.value == "submitted" %}
+<section class="cartao decisao">
+  <h2>Decisão</h2>
+  {{ ui.post_button("/perfil/" ~ view.record.id ~ "/confirmar", csrf_token, "Confirmar") }}
+  {{ ui.reject_form("/perfil/" ~ view.record.id ~ "/rejeitar", csrf_token) }}
+</section>
+{% endif %}
+{% endblock %}

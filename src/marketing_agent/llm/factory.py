@@ -2,6 +2,7 @@
 
 from collections.abc import Mapping
 from pathlib import Path
+from typing import Literal
 
 from marketing_agent.config import Capability, RoleRoute, Settings
 from marketing_agent.llm.anthropic_adapter import AnthropicClient
@@ -40,8 +41,15 @@ def _build_anthropic(settings: Settings, capabilities: frozenset[Capability]) ->
 def _build_openai(settings: Settings, capabilities: frozenset[Capability]) -> LlmClient:
     variable = "OPENAI_API_KEY_FILE"
     key_file = _require_key_file(settings.openai_api_key_file, variable)
+    # Endereco personalizado = servidor compativel (Ollama, LM Studio): ignora o papel `developer`
+    # (o prompt de sistema desaparece), por isso usa `system`. A API oficial mantem `developer`.
+    system_role: Literal["developer", "system"] = (
+        "developer" if settings.openai_base_url is None else "system"
+    )
     try:
-        return OpenAiClient(key_file, capabilities, base_url=settings.openai_base_url)
+        return OpenAiClient(
+            key_file, capabilities, base_url=settings.openai_base_url, system_role=system_role
+        )
     except SecretFileError as exc:
         raise ValueError(f"{variable} invalido: {exc}") from exc
 

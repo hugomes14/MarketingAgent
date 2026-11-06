@@ -1,0 +1,24 @@
+{% set status = result.status.value %}
+{% if status == "completed" %}
+  {% with role="user", content=text %}{% include "_turn.html" %}{% endwith %}
+  {% with role="director", content=(result.question if result.question is not none else result.summary) %}{% include "_turn.html" %}{% endwith %}
+{% endif %}
+<div id="estado" class="estado" role="status" aria-live="polite" hx-swap-oob="true">
+  {% if status == "in_progress" %}
+  <p class="aviso">Esta resposta está em curso. Aguarde um momento e volte a enviar o formulário.</p>
+  {% elif status != "completed" %}
+  <p class="aviso erro">{{ result.message }}</p>
+  {% endif %}
+  {% if result.injection_suspected %}
+  <p class="aviso atencao">Aviso: a resposta parece conter instruções dirigidas ao assistente. Foi tratada só como texto e nada foi alterado.</p>
+  {% endif %}
+  {% if result.ready_for_profile %}
+  <p class="aviso info">Já há informação suficiente. Pode pedir o perfil na parte de baixo da página.</p>
+  {% endif %}
+</div>
+{% if status == "completed" %}
+  {% with gap_map=result.gap_map, oob=true %}{% include "_gap_map.html" %}{% endwith %}
+{% endif %}
+{% if idempotency_key %}
+  {% with text=(text if status != "completed" else "") %}{% include "_answer_form.html" %}{% endwith %}
+{% endif %}

@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+{% import "_macros.html" as ui %}
+{% block title %}Início{% endblock %}
+{% block content %}
+<h1>Início</h1>
+
+<section class="cartao" id="orcamento">
+  <h2>Estado do mês</h2>
+  {% if budget.over_reference %}
+  <p class="aviso atencao" role="alert">Gasto acima da referência mensal de {{ budget.reference_usd|usd(2) }} USD — o trabalho continua, mas convém rever</p>
+  {% elif budget.warn_percent is not none %}
+  <p class="aviso info">Já foi atingido {{ budget.warn_percent }}% da referência mensal.</p>
+  {% endif %}
+  <dl class="valores">
+    <div><dt>Gasto</dt><dd>{{ budget.spent_usd|usd }} USD</dd></div>
+    <div><dt>Reservado</dt><dd>{{ budget.reserved_usd|usd }} USD</dd></div>
+    {% if budget.unknown_usd %}<div><dt>Desfecho desconhecido</dt><dd>{{ budget.unknown_usd|usd }} USD</dd></div>{% endif %}
+    <div><dt>Projeção do mês</dt><dd>{{ budget.projected_usd|usd }} USD</dd></div>
+    <div><dt>Referência</dt><dd>{{ budget.reference_usd|usd(2) }} USD</dd></div>
+  </dl>
+</section>
+
+<section class="cartao" id="pendentes">
+  <h2>Aguarda a sua decisão</h2>
+  {% if snapshot.pending %}
+  <ul>
+    {% for item in snapshot.pending %}
+    <li><a href="{{ item.url }}">{{ item.label }}</a> <span class="nota">para rever</span></li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="nota">Nada à espera de decisão.</p>
+  {% endif %}
+</section>
+
+<div class="grelha">
+  <section class="cartao" id="perfil-ativo">
+    <h2>Perfil ativo</h2>
+    {% if snapshot.profile %}
+    <p>{{ snapshot.profile.content.topicos|length }} tópicos preenchidos.</p>
+    <p><a href="/perfil/{{ snapshot.profile.artifact_id }}">Ver o perfil</a></p>
+    {% else %}
+    <p class="nota">Ainda não há perfil confirmado. Faça uma entrevista e peça o perfil.</p>
+    {% endif %}
+  </section>
+
+  <section class="cartao" id="diagnostico-ativo">
+    <h2>Diagnóstico ativo</h2>
+    {% if snapshot.diagnosis %}
+    <p>{{ snapshot.diagnosis.content.oferta_prioritaria }}</p>
+    <p><a href="/diagnostico/{{ snapshot.diagnosis.artifact_id }}">Ver o diagnóstico</a></p>
+    {% else %}
+    <p class="nota">Ainda não há diagnóstico aprovado.</p>
+    {% endif %}
+    {{ ui.post_button("/diagnostico", csrf_token, "Propor diagnóstico", disabled=not snapshot.profile) }}
+    {% if not snapshot.profile %}<p class="nota">Precisa primeiro de um perfil confirmado.</p>{% endif %}
+  </section>
+
+  <section class="cartao" id="estrategia-ativa">
+    <h2>Estratégia ativa</h2>
+    {% if strategy %}
+    <p>{{ strategy.estrategia.posicionamento }}</p>
+    <p class="nota">Propostas de oferta aceites:</p>
+    {% if strategy.propostas_aceites %}
+    <ul>
+      {% for proposal in strategy.propostas_aceites %}
+      <li><strong>{{ proposal.proposta }}</strong> — {{ proposal.justificacao }}</li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="nota">Nenhuma proposta foi aceite.</p>
+    {% endif %}
+    <p><a href="/estrategia/{{ strategy.artifact_id }}">Ver a estratégia</a></p>
+    {% else %}
+    <p class="nota">Ainda não há estratégia aprovada.</p>
+    {% endif %}
+    {{ ui.post_button("/estrategia", csrf_token, "Propor estratégia", disabled=not snapshot.diagnosis) }}
+    {% if not snapshot.diagnosis %}<p class="nota">Precisa primeiro de um diagnóstico aprovado.</p>{% endif %}
+  </section>
+</div>
+
+<section class="cartao" id="entrevistas">
+  <h2>Entrevistas</h2>
+  {{ ui.post_button("/entrevista", csrf_token, "Nova entrevista") }}
+  {% if snapshot.sessions %}
+  <ul class="entrevistas">
+    {% for item in snapshot.sessions %}
+    <li>
+      <a href="/entrevista/{{ item.session_id }}">{{ item.started_at.strftime("%Y-%m-%d %H:%M") + " UTC" if item.started_at else "Entrevista" }}</a>
+      <span class="etiqueta">{{ item.state|state_label }}</span>
+      <span class="nota">{{ item.message_count }} mensagens · {{ item.session_id }}</span>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="nota">Ainda não há entrevistas.</p>
+  {% endif %}
+</section>
+{% endblock %}
