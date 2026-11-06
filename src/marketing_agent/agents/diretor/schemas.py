@@ -1,6 +1,6 @@
-"""Esquemas de saida do Diretor: turno de entrevista e perfil de marca."""
+"""Esquemas de saida do Diretor: entrevista, perfil de marca, diagnostico e estrategia."""
 
-from typing import Final
+from typing import Final, Literal
 
 from pydantic import BaseModel, ConfigDict, field_validator
 
@@ -57,3 +57,76 @@ class PerfilMarca(BaseModel):
         if unknown:
             raise ValueError(f"topicos inexistentes no mapa de lacunas: {unknown}")
         return value
+
+
+class Achado(BaseModel):
+    """Afirmacao do diagnostico: `facto` exige evidencia e origem, `hipotese` nao."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    afirmacao: str
+    tipo: Literal["facto", "hipotese"]
+    evidencia: str | None
+    origem: Origin | None
+
+
+class Diagnostico(BaseModel):
+    """Diagnostico da marca: onde esta, o que se sabe e o que ainda e hipotese."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    oferta_prioritaria: str
+    cliente_prioritario: str
+    geografia: str
+    motivos_compra: str
+    motivos_perda: str
+    capacidade_entrega: str
+    provas_disponiveis: str
+    percurso_contacto: str
+    adequacao_canais: str
+    achados: list[Achado]
+    riscos: list[str]
+    alternativas: list[str]
+
+
+class Objetivo(BaseModel):
+    """Objetivo da estrategia e o indicador que o mede."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    descricao: str
+    indicador: str
+    alvo: str | None
+
+
+class PropostaOferta(BaseModel):
+    """Proposta de oferta; so entra na vista ativa se o responsavel a aceitar."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    proposta: str
+    justificacao: str
+
+
+class Experiencia(BaseModel):
+    """Experiencia a testar: hipotese, metrica e prazo (validado em 1..90 dias)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    hipotese: str
+    metrica: str
+    prazo_dias: int
+
+
+class Estrategia(BaseModel):
+    """Estrategia proposta; o posicionamento e `hipotese` ate o responsavel o decidir."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    objetivos: list[Objetivo]
+    posicionamento: str
+    posicionamento_estado: Literal["hipotese", "decidido"]
+    pilares: list[str]
+    propostas_oferta: list[PropostaOferta]
+    experiencias: list[Experiencia]
+    indicadores_minimos: list[str]

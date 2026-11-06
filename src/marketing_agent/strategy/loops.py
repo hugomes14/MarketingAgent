@@ -1,0 +1,86 @@
+"""Ciclos de LLM do diagnostico e da estrategia: uma chamada estruturada cada.
+
+Os artefactos ativos entram no pedido so como dado, dentro de etiquetas de delimitacao;
+nenhum ciclo muda estado de artefactos: criam um `draft` e mais nada.
+"""
+
+import json
+import re
+from collections.abc import Mapping
+from dataclasses import dataclass
+
+from marketing_agent.agents.diretor import DIRETOR_DIR
+from marketing_agent.agents.diretor.schemas import Diagnostico, Estrategia
+from marketing_agent.artifacts.store import ArtifactRecord, ArtifactType
+from marketing_agent.harness.engine import RunContext
+from marketing_agent.llm.types import Message, TextPart
+
+# Etiquetas de delimitacao. Tolera espacos e as quebras de linha ja escapadas pelo JSON.
+_SPACE = r"(?:\s|\\[nrt])*"
+_DELIMITER_PATTERN = re.compile(
+    rf"<{_SPACE}/?{_SPACE}(perfil_marca|diagnostico){_SPACE}>", re.IGNORECASE
+)
+_NEUTRALIZED = "[etiqueta removida]"
+
+DIAGNOSIS_REQUEST = "Produz agora o diagnostico com base nos dados abaixo."
+STRATEGY_REQUEST = "Produz agora a estrategia com base nos dados abaixo."
+
+
+@dataclass(frozen=True)
+class DiagnosisPayload:
+    """Entrada do diagnostico: perfil ativo (de confianca) e id do diagnostico ativo (pai)."""
+
+    perfil_marca: Mapping[str, object]
+    parent_id: str | None
+
+
+@dataclass(frozen=True)
+class StrategyPayload:
+    """Entrada da estrategia: perfil e diagnostico ativos e a estrategia ativa (pai)."""
+
+    perfil_marca: Mapping[str, object]
+    diagnostico: Mapping[str, object]
+    parent_id: str | None
+
+
+def neutralize(text: str) -> str:
+    """Remove etiquetas de delimitacao do texto, para que ele nao saia do bloco de dados."""
+    return _DELIMITER_PATTERN.sub(_NEUTRALIZED, text)
+
+
+def wrap_data(tag: str, data: Mapping[str, object]) -> str:
+    """Serializa `data` como JSON e delimita-o com `tag`, neutralizando etiquetas la dentro."""
+    body = neutralize(json.dumps(data, ensure_ascii=False, indent=2))
+    return f"<{tag}>\n{body}\n</{tag}>"
+
+
+def _request(instruction: str, *blocks: str) -> list[Message]:
+    return [Message("user", [TextPart("\n\n".join([instruction, *blocks]))])]
+
+
+class DiagnosisLoop:
+    """Gera o diagnostico e cria o artefacto `diagnostico` em `draft`."""
+
+    def run(self, ctx: RunContext, payload: DiagnosisPayload) -> ArtifactRecord:
+        """Chama o LLM com o perfil ativo; a submissao e decisao do servico."""
+        messages = _request(DIAGNOSIS_REQUEST, wrap_data("perfil_marca", payload.perfil_marca))
+        output = ctx.call_llm(ctx.spec.load_prompt(DIRETOR_DIR), messages, Diagnostico)
+        return ctx.create_artifact(
+            ArtifactType.DIAGNOSTICO, output.model_dump(mode="json"), parent_id=payload.parent_id
+        )
+
+
+class StrategyLoop:
+    """Gera a estrategia e cria o artefacto `estrategia` em `draft`."""
+
+    def run(self, ctx: RunContext, payload: StrategyPayload) -> ArtifactRecord:
+        """Chama o LLM com perfil e diagnostico ativos; a submissao e decisao do servico."""
+        messages = _request(
+            STRATEGY_REQUEST,
+            wrap_data("perfil_marca", payload.perfil_marca),
+            wrap_data("diagnostico", payload.diagnostico),
+        )
+        output = ctx.call_llm(ctx.spec.load_prompt(DIRETOR_DIR), messages, Estrategia)
+        return ctx.create_artifact(
+            ArtifactType.ESTRATEGIA, output.model_dump(mode="json"), parent_id=payload.parent_id
+        )

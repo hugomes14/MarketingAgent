@@ -141,13 +141,21 @@ class ArtifactStore:
     ) -> ArtifactRecord:
         """Aprova, torna ativo (guardando o anterior) e projeta o perfil, numa transacao."""
         with self._session_factory.begin() as session:
-            row = self._advance(
-                session, artifact_id, actor, ArtifactState.APPROVED, "artifact.approve"
-            )
-            self._upsert_head(session, row, actor, scope)
-            if row.type == ArtifactType.PERFIL_MARCA.value:
-                self._upsert_profile(session, row)
-            return to_record(row)
+            return self.approve_and_activate_in(session, artifact_id, actor, scope)
+
+    def approve_and_activate_in(
+        self, session: Session, artifact_id: str, actor: str, scope: str = "brand"
+    ) -> ArtifactRecord:
+        """Corpo de `approve_and_activate` na transacao do chamador (que faz o commit).
+
+        Permite juntar a aprovacao a outras escritas atomicas; uma falha aqui levanta
+        sem tocar na versao ativa e o chamador deve reverter a sua transacao.
+        """
+        row = self._advance(session, artifact_id, actor, ArtifactState.APPROVED, "artifact.approve")
+        self._upsert_head(session, row, actor, scope)
+        if row.type == ArtifactType.PERFIL_MARCA.value:
+            self._upsert_profile(session, row)
+        return to_record(row)
 
     def get(self, artifact_id: str) -> ArtifactRecord:
         """Le um artefacto; levanta `ArtifactNotFound` se nao existir."""

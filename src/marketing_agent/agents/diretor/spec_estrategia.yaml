@@ -1,0 +1,21 @@
+# Spec do Diretor ao produzir a estrategia a partir do perfil e do diagnostico ativos.
+# Valores monetarios SEMPRE como texto entre aspas (o carregador recusa numeros).
+role: diretor
+name: estrategia
+version: 1
+loop_type: structured
+prompt_file: prompt_estrategia.md
+output_schema: Estrategia
+required_capabilities: [text, json_schema]
+tools: []
+reads: [perfil_marca, diagnostico]
+writes: [estrategia]
+validators: [estrategia_experiencias_completas]
+limits:
+  max_steps: 4
+  max_tokens: 80000
+  max_cost_usd: "2.00"
+  max_duration_s: 240
+max_output_tokens: 6000
+budget_share_hint: "0.30"
+escalation: Sem saida valida ou limite atingido, o pedido de estrategia falha e o responsavel pode repeti-lo.
