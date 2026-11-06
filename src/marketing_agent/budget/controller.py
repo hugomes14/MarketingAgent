@@ -9,7 +9,7 @@ import calendar
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from decimal import Decimal
+from decimal import ROUND_CEILING, ROUND_HALF_UP, Decimal
 
 from sqlalchemy import ColumnElement, func, select, update
 from sqlalchemy.orm import InstrumentedAttribute, Session, sessionmaker
@@ -20,6 +20,7 @@ from marketing_agent.db.base import new_id
 from marketing_agent.db.models import AgentRun, CostEntry, CostReservation
 
 PENDING_STATUSES = ("open", "unknown_outcome")
+CENT_MILLI = Decimal("0.000001")  # escala das colunas Numeric(12, 6)
 
 
 class RunCostLimitExceeded(Exception):
@@ -65,6 +66,11 @@ class BudgetStatus:
     over_reference: bool
 
 
+def _money(value: Decimal, rounding: str) -> Decimal:
+    """Quantiza a 6 casas, como a base guarda, para valor devolvido e gravado coincidirem."""
+    return value.quantize(CENT_MILLI, rounding=rounding)
+
+
 def _month_window(now: datetime) -> tuple[datetime, datetime]:
     start = datetime(now.year, now.month, 1, tzinfo=UTC)
     end = datetime(now.year + now.month // 12, now.month % 12 + 1, 1, tzinfo=UTC)
@@ -98,9 +104,9 @@ class BudgetController:
     def reserve(self, request: ReservationRequest, run_cost_limit_usd: Decimal) -> Reservation:
         """Reserva o custo maximo da chamada; recusa se a execucao passar `run_cost_limit_usd`."""
         price = self._price_book.get(request.provider, request.model_id)
-        amount = compute_cost_usd(
-            price, Usage(request.input_tokens_estimate, request.max_output_tokens)
-        )
+        estimate = Usage(request.input_tokens_estimate, request.max_output_tokens)
+        # Teto: a retencao nunca fica abaixo da estimativa exata.
+        amount = _money(compute_cost_usd(price, estimate), ROUND_CEILING)
         with self._session_factory.begin() as session:
             self._lock_run(session, request)
             committed = self._run_committed_usd(session, request.run_id)
@@ -134,7 +140,7 @@ class BudgetController:
             if row.status == "settled":
                 return self._entry_cost(session, reservation_id)
             price = self._price_book.get(row.provider, row.model_id)
-            cost = compute_cost_usd(price, usage)
+            cost = _money(compute_cost_usd(price, usage), ROUND_HALF_UP)
             now = self._clock.now()
             session.add(
                 CostEntry(

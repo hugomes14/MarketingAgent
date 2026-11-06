@@ -228,3 +228,25 @@ def test_recover_stale_marks_unknown_and_counts_in_status(
     assert controller.recover_stale(timedelta(hours=1)) == 0
     status = controller.status(brand_id)
     assert (status.reserved_usd, status.unknown_usd) == (Decimal(0), Decimal("0.6"))
+
+
+def test_amounts_rounded_to_six_decimals_consistently(
+    controller: BudgetController, session_factory: Factory, brand_id: str
+) -> None:
+    fine = ModelPrice(
+        "fake", "m2", "v1", (PriceTier(0, Decimal("0.15"), Decimal("0.60")),), valid_from=VALID_FROM
+    )
+    sync_model_prices(session_factory, [fine])
+    run_id, step_id = make_run(session_factory, brand_id)
+    pedido = ReservationRequest(brand_id, "director", run_id, step_id, "fake", "m2", 1234, 0)
+    reservation = controller.reserve(pedido, RUN_LIMIT)
+    # 1234 * 0.15 / 1e6 = 0.0001851: a reserva arredonda para cima, o custo para o mais proximo.
+    assert reservation.reserved_usd == Decimal("0.000186")
+    first = controller.settle(reservation.id, Usage(1234, 0), None)
+    second = controller.settle(reservation.id, Usage(1234, 0), None)
+    with session_factory() as session:
+        entry = session.scalars(select(CostEntry)).one()
+        row = session.get(CostReservation, reservation.id)
+        assert row is not None
+        assert row.reserved_usd == reservation.reserved_usd
+    assert first == second == entry.cost_usd == Decimal("0.000185")
