@@ -13,7 +13,9 @@ import logging
 from collections.abc import Iterable
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from marketing_agent.loopback import parse_loopback_endpoint
+from marketing_agent.loopback import is_loopback_host, parse_loopback_endpoint
+from marketing_agent.panel.hosts import parse_host_header
+from marketing_agent.startup import director_max_duration_s
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +24,11 @@ NAME_HEADER = "Tailscale-User-Name"
 MAX_LOGIN_CHARS = 254
 MAX_NAME_CHARS = 100
 MAX_BODY_BYTES = 1024 * 1024
-UPSTREAM_TIMEOUT_S = 130  # acima do maior max_duration_s dos agentes (240 s so no diagnostico)
+# Margem sobre o maior max_duration_s dos specs do Diretor: o destino pode demorar tanto como
+# uma execucao inteira (chamada ao LLM) antes de responder.
+UPSTREAM_MARGIN_S = 30
+CLIENT_READ_TIMEOUT_S = 30
+PROTECTED_HEADERS = frozenset({"content-length", "host"})
 HOP_BY_HOP = frozenset(
     {
         "connection",
@@ -67,25 +73,41 @@ def _is_forgeable(name: str) -> bool:
 
 
 def _connection_tokens(headers: Iterable[tuple[str, str]]) -> set[str]:
-    """Cabecalhos que o cliente declarou como salto-a-salto em `Connection`."""
+    """Cabecalhos que o cliente declarou como salto-a-salto em `Connection`.
+
+    `content-length` e `host` nunca entram: deixar o cliente remove-los desalinharia o
+    enquadramento do corpo (request smuggling) ou a verificacao de `Host` no destino.
+    """
     tokens: set[str] = set()
     for name, value in headers:
         if name.lower() == "connection":
             tokens.update(token.strip().lower() for token in value.split(","))
-    return tokens
+    return tokens - PROTECTED_HEADERS
 
 
 def forwarded_request_headers(
-    incoming: Iterable[tuple[str, str]], login: str, name: str | None
+    incoming: Iterable[tuple[str, str]],
+    login: str,
+    name: str | None,
+    content_length: int | None = None,
 ) -> Headers:
-    """Cabecalhos para o destino: sem identidade forjada nem salto-a-salto, com o login fixo."""
+    """Cabecalhos para o destino: sem identidade forjada nem salto-a-salto, com o login fixo.
+
+    O `Content-Length` do cliente nunca e reencaminhado; quando `content_length` e dado, o
+    proxy define o seu proprio valor a partir do corpo que leu.
+    """
     pairs = list(incoming)
     declared = _connection_tokens(pairs)
     kept = [
         (key, value)
         for key, value in pairs
-        if key.lower() not in HOP_BY_HOP and key.lower() not in declared and not _is_forgeable(key)
+        if key.lower() not in HOP_BY_HOP
+        and key.lower() not in declared
+        and key.lower() != "content-length"
+        and not _is_forgeable(key)
     ]
+    if content_length is not None:
+        kept.append(("Content-Length", str(content_length)))
     kept.append((LOGIN_HEADER, login))
     if name is not None:
         kept.append((NAME_HEADER, name))
@@ -109,22 +131,27 @@ class DevProxyServer(ThreadingHTTPServer):
         self.upstream = upstream
         self.login = login
         self.name = name
+        self.upstream_timeout = director_max_duration_s() + UPSTREAM_MARGIN_S
         super().__init__(listen, _ProxyHandler)
 
 
 class _ProxyHandler(BaseHTTPRequestHandler):
     server: DevProxyServer
     protocol_version = "HTTP/1.1"
+    timeout = CLIENT_READ_TIMEOUT_S  # um cliente parado nao prende a thread para sempre
 
     def _forward(self) -> None:
+        if not self._host_is_acceptable():
+            return
         body = self._read_body()
         if body is None:
             return
+        server = self.server
         headers = forwarded_request_headers(
-            self.headers.items(), self.server.login, self.server.name
+            self.headers.items(), server.login, server.name, content_length=len(body)
         )
-        host, port = self.server.upstream
-        connection = http.client.HTTPConnection(host, port, timeout=UPSTREAM_TIMEOUT_S)
+        host, port = server.upstream
+        connection = http.client.HTTPConnection(host, port, timeout=server.upstream_timeout)
         try:
             self._send_upstream(connection, headers, body)
             self._relay(connection.getresponse())
@@ -143,19 +170,37 @@ class _ProxyHandler(BaseHTTPRequestHandler):
             connection.putheader(key, value)
         connection.endheaders(body or None)
 
+    def _host_is_acceptable(self) -> bool:
+        """Um unico `Host` de loopback (anti DNS rebinding); senao responde 400 ou 421."""
+        values = self.headers.get_all("Host") or []
+        hostname = parse_host_header(values[0]) if len(values) == 1 else None
+        if hostname is None:
+            self._reply_text(400, "Bad Request: Host invalido.")
+            return False
+        if not is_loopback_host(hostname):
+            self._reply_text(421, "Misdirected Request: use um endereco de loopback.")
+            return False
+        return True
+
+    def _content_length(self) -> int | None:
+        """Tamanho do corpo; `None` (e resposta 400) se o enquadramento for ambiguo."""
+        lengths = self.headers.get_all("Content-Length") or []
+        text = lengths[0].strip() if len(lengths) == 1 else ("0" if not lengths else "")
+        is_numeric = text.isascii() and text.isdigit()
+        if "Transfer-Encoding" in self.headers or not is_numeric:
+            self._reply_text(400, "Bad Request: enquadramento do corpo invalido.")
+            return None
+        return int(text)
+
     def _read_body(self) -> bytes | None:
         """Corpo completo (Content-Length); `None` quando ja foi enviada uma resposta de erro."""
-        if "transfer-encoding" in {key.lower() for key in self.headers}:
-            self._reply_text(411, "Length Required: use Content-Length.")
+        length = self._content_length()
+        if length is None:
             return None
-        length = self.headers.get("Content-Length", "0")
-        if not length.isdigit():
-            self._reply_text(400, "Bad Request: Content-Length invalido.")
-            return None
-        if int(length) > MAX_BODY_BYTES:
+        if length > MAX_BODY_BYTES:
             self._reply_text(413, "Payload Too Large.")
             return None
-        return self.rfile.read(int(length)) if int(length) else b""
+        return self.rfile.read(length) if length else b""
 
     def _relay(self, response: http.client.HTTPResponse) -> None:
         body = response.read() if self.command != "HEAD" else b""

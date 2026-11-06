@@ -246,5 +246,6 @@ def build_settings(**overrides: object) -> Settings:
         "database_url": "postgresql+psycopg://u:p@127.0.0.1:5433/db",
         "panel_allowed_logins": [LOGIN],
         "panel_trusted_proxy": [PEER],
+        "panel_allowed_hosts": ["testserver"],  # o TestClient usa Host `testserver`
     }
     return Settings(_env_file=None, **{**values, **overrides})  # type: ignore[arg-type]

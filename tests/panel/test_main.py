@@ -44,6 +44,7 @@ def environment(
         "OPENAI_API_KEY_FILE": str(key_file),
         "PANEL_ALLOWED_LOGINS": json.dumps([LOGIN]),
         "PANEL_TRUSTED_PROXY": json.dumps(["127.0.0.1"]),
+        "PANEL_ALLOWED_HOSTS": json.dumps(["testserver"]),  # Host do TestClient
         "PANEL_CSRF_SECRET_FILE": str(csrf_file),
     }
     for name, value in values.items():
@@ -242,3 +243,25 @@ def seed_reservation(factory: Factory, brand_id: str, created_at: datetime) -> s
 
 def test_director_duration_is_derived_from_specs() -> None:
     assert director_max_duration_s() == 240
+
+
+def test_default_allowed_hosts_refuse_other_hosts(
+    environment: Path, monkeypatch: pytest.MonkeyPatch, session_factory: Factory
+) -> None:
+    add_brand(session_factory)
+    monkeypatch.delenv("PANEL_ALLOWED_HOSTS")
+    app = create_app_from_env()
+    headers = {"Tailscale-User-Login": LOGIN}
+    local = TestClient(app, client=("127.0.0.1", 5000), base_url="http://127.0.0.1:8001")
+    assert local.get("/", headers=headers).status_code == 200
+    rebinding = TestClient(app, client=("127.0.0.1", 5000), base_url="http://evil.com:8001")
+    assert rebinding.get("/", headers=headers).status_code == 400
+
+
+def test_wildcard_allowed_hosts_fail_at_startup(
+    environment: Path, monkeypatch: pytest.MonkeyPatch, session_factory: Factory
+) -> None:
+    add_brand(session_factory)
+    monkeypatch.setenv("PANEL_ALLOWED_HOSTS", '["*"]')
+    with pytest.raises(StartupError, match="PANEL_ALLOWED_HOSTS"):
+        create_app_from_env()

@@ -37,6 +37,10 @@ nunca em logs, mensagens de erro ou no `.env`.
 uv sync
 ```
 
+Os dois ficheiros compose têm nome de projeto próprio (`marketing_agent_dev` e
+`marketing_agent_test`): as pilhas de desenvolvimento (porta 5434) e de teste (porta 5433) são
+independentes e subir uma nunca substitui o contentor da outra.
+
 O comando `marketing-agent` fica disponível com `uv run marketing-agent --help`.
 
 ## Correr localmente (passo a passo, com Ollama)
@@ -88,6 +92,9 @@ Tudo corre em `127.0.0.1`. Execute a partir da raiz do repositório.
    uv run marketing-agent dev-proxy --login dono@local
    ```
 
+   O painel só responde a pedidos cujo `Host` esteja em `PANEL_ALLOWED_HOSTS` (por omissão
+   `127.0.0.1` e `localhost`, sem porta); o `dev-proxy` só aceita `Host` de loopback (421).
+
 8. Abra <http://127.0.0.1:8001>. O login `dono@local` tem de estar em `PANEL_ALLOWED_LOGINS`.
 
 A primeira pergunta e cada resposta chamam o modelo local, por isso podem demorar. Se o
@@ -98,7 +105,7 @@ desfecho desconhecido) e a mesma chave de formulário nunca repete a chamada.
 
 | Comando | Função |
 | --- | --- |
-| `create-brand NOME` | Cria a marca (idempotente por nome) e imprime o seu id |
+| `create-brand NOME` | Cria a marca e imprime o seu id; idempotente por nome, e recusa um nome diferente se já existir uma marca (instalação de marca única) |
 | `sync-prices [--file CAMINHO ...]` | Sincroniza os preços dos modelos (por omissão `MODEL_PRICES_PATH`) |
 | `recover-reservations --older-than-minutes N` | Marca como `unknown_outcome` as reservas abertas há mais de N minutos |
 | `migrate` | Aplica as migrações (`upgrade head`) na base de `DATABASE_URL` |
@@ -145,6 +152,10 @@ referência mensal e a recuperação após uma morte do processo.
   que remove os cabeçalhos de identidade enviados pelo cliente e acrescenta `Tailscale-User-Login`.
   A origem da ligação (`PANEL_TRUSTED_PROXY`) é verificada antes do cabeçalho e do login
   (`PANEL_ALLOWED_LOGINS`).
+- **DNS rebinding**: o painel recusa com 400, antes de qualquer autenticação, todo o pedido cujo
+  `Host` não seja exatamente um dos hostnames de `PANEL_ALLOWED_HOSTS` (sem porta; `*` é
+  recusado no arranque). Em produção acrescente o hostname do `tailscale serve`; sem isso o dono
+  também recebe 400.
 - O servidor tem de correr com `proxy_headers=False` e **sem** `FORWARDED_ALLOW_IPS`; senão um
   cliente forjaria `X-Forwarded-For` e passaria por proxy. O comando `serve` impõe ambos e escuta
   em loopback por omissão.

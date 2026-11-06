@@ -1,7 +1,9 @@
 """CLI de operacao: marca, precos, reservas, migracoes e arranque do painel."""
 
 import socket
+import threading
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -12,9 +14,11 @@ from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from marketing_agent import cli
+from marketing_agent.brands import ensure_brand
 from marketing_agent.budget.controller import BudgetController
 from marketing_agent.budget.pricing import PriceBook
 from marketing_agent.clock import Clock, SystemClock
+from marketing_agent.db.base import make_engine, make_session_factory
 from marketing_agent.db.models import AgentRun, Brand, CostReservation
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -49,13 +53,53 @@ def test_create_brand_idempotent(
     assert [(row.id, row.name) for row in rows] == [(brand_id, "Padaria Teste")]
 
 
-def test_create_brand_distinct_names_make_distinct_brands(
+def test_create_brand_with_different_name_is_refused(
     session_factory: Factory, capsys: pytest.CaptureFixture[str]
 ) -> None:
     run(capsys, "create-brand", "A")
-    run(capsys, "create-brand", "B")
+    code, out, err = run(capsys, "create-brand", "B")
+    assert code == 2 and out == ""
+    assert err.strip() == "erro: instalacao de marca unica: ja existe a marca 'A'"
     with session_factory() as session:
-        assert session.scalar(select(func.count()).select_from(Brand)) == 2
+        assert [row.name for row in session.scalars(select(Brand))] == ["A"]
+
+
+def test_concurrent_create_brand_same_name_makes_one_row(
+    session_factory: Factory, pg_url: str
+) -> None:
+    engine = make_engine(pg_url)
+    factory = make_session_factory(engine)
+    barrier = threading.Barrier(2)
+
+    def create() -> tuple[str, bool]:
+        barrier.wait()
+        return ensure_brand(factory, "Concorrente")
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = list(pool.map(lambda _: create(), range(2)))
+    finally:
+        engine.dispose()
+    assert results[0][0] == results[1][0]
+    assert sorted(created for _, created in results) == [False, True]
+    with session_factory() as session:
+        assert session.scalar(select(func.count()).select_from(Brand)) == 1
+
+
+def test_concurrent_create_brand_different_names_make_one_row(
+    session_factory: Factory,
+) -> None:
+    barrier = threading.Barrier(2)
+
+    def create(name: str) -> int:
+        barrier.wait()
+        return cli.main(["create-brand", name])
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        codes = sorted(pool.map(create, ["Primeira", "Segunda"]))
+    assert codes == [0, 2]
+    with session_factory() as session:
+        assert session.scalar(select(func.count()).select_from(Brand)) == 1
 
 
 @pytest.mark.parametrize("name", ["", "   ", "x" * 201])

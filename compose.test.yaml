@@ -1,4 +1,6 @@
 # Postgres de teste local. Arrancar com: docker compose -f compose.test.yaml up -d
+# Nome de projeto proprio, distinto do de compose.dev.yaml (ver o comentario desse ficheiro).
+name: marketing_agent_test
 services:
   postgres:
     image: postgres:17

@@ -47,6 +47,9 @@ class Settings(BaseSettings):
     # Lista vazia nega todos os logins: falha segura quando nada foi configurado.
     panel_allowed_logins: list[str] = []
     panel_trusted_proxy: list[str] = ["127.0.0.1", "::1"]
+    # Hostnames (sem porta) aceites no cabecalho Host: defesa contra DNS rebinding. Em producao
+    # acrescentar o hostname do `tailscale serve`.
+    panel_allowed_hosts: list[str] = ["127.0.0.1", "localhost"]
     # Ficheiro com o segredo CSRF do painel (>= 32 caracteres); obrigatorio para servir o painel.
     panel_csrf_secret_file: Path | None = None
     max_message_chars: int = Field(default=4000, gt=0)

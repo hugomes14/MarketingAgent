@@ -17,6 +17,7 @@ from marketing_agent.panel.auth import _parse_networks
 from marketing_agent.panel.context import PanelContext
 from marketing_agent.panel.csrf import MIN_SECRET_BYTES
 from marketing_agent.panel.errors import install_error_handlers
+from marketing_agent.panel.hosts import AllowedHostsMiddleware, normalize_allowed_hosts
 from marketing_agent.panel.queries import PanelQueries
 from marketing_agent.panel.rendering import STATIC_DIR, Renderer
 from marketing_agent.panel.security import SecurityHeadersMiddleware
@@ -37,7 +38,9 @@ def create_app(
 
     Levanta `ValueError` se `panel_trusted_proxy` tiver uma entrada invalida ou demasiado
     larga, se `panel_allowed_logins` estiver vazio (ninguem poderia entrar) ou se o segredo
-    CSRF tiver menos de `MIN_SECRET_BYTES` bytes.
+    CSRF tiver menos de `MIN_SECRET_BYTES` bytes, ou se `panel_allowed_hosts` estiver vazio ou
+    tiver entradas invalidas (`*`, vazias, com porta). Qualquer pedido cujo `Host` nao esteja
+    nessa lista recebe 400 antes da autenticacao.
     """
     _validate_security_settings(settings, csrf_secret)
     # Sem /docs, /redoc nem /openapi.json: o painel nao expoe o esquema das rotas.
@@ -48,6 +51,9 @@ def create_app(
     app.state.panel = PanelContext(
         interview, strategy, budget, queries, renderer, brand_id, settings.max_message_chars
     )
+    # Ordem: o ultimo adicionado e o mais externo. Os cabecalhos de seguranca envolvem o filtro
+    # de Host, para tambem cobrirem as suas respostas 400.
+    app.add_middleware(AllowedHostsMiddleware, allowed_hosts=settings.panel_allowed_hosts)
     app.add_middleware(SecurityHeadersMiddleware)
     install_error_handlers(app, renderer)
     for module in (routes_home, routes_interview, routes_strategy):
@@ -58,6 +64,7 @@ def create_app(
 
 def _validate_security_settings(settings: Settings, csrf_secret: bytes) -> None:
     _parse_networks(tuple(settings.panel_trusted_proxy))
+    normalize_allowed_hosts(settings.panel_allowed_hosts)
     if not any(login.strip() for login in settings.panel_allowed_logins):
         raise ValueError("PANEL_ALLOWED_LOGINS esta vazio: ninguem poderia entrar no painel")
     if len(csrf_secret) < MIN_SECRET_BYTES:

@@ -1,12 +1,14 @@
 """Marca do sistema: criacao idempotente por nome e resolucao da marca unica do painel."""
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from marketing_agent.db.models import Brand
 from marketing_agent.startup import StartupError
 
 MAX_NAME_CHARS = 200
+# Chave do lock consultivo que serializa a criacao da marca (valor arbitrario, fixo).
+BRAND_LOCK_KEY = 7_150_001
 
 
 def normalize_brand_name(name: str) -> str:
@@ -18,12 +20,22 @@ def normalize_brand_name(name: str) -> str:
 
 
 def ensure_brand(session_factory: sessionmaker[Session], name: str) -> tuple[str, bool]:
-    """Devolve (id, criada): reutiliza a marca com o mesmo nome em vez de duplicar."""
+    """Devolve (id, criada): reutiliza a marca com o mesmo nome em vez de duplicar.
+
+    A instalacao tem uma so marca: se ja existe outra com nome diferente levanta `StartupError`.
+    O lock consultivo (de transacao, chave constante) serializa verificacao e insercao: sem ele,
+    duas execucoes concorrentes em READ COMMITTED poderiam inserir ambas, e `brand.name` nao tem
+    UNIQUE.
+    """
     clean = normalize_brand_name(name)
     with session_factory.begin() as session:
-        existing = session.scalars(select(Brand).where(Brand.name == clean).limit(1)).first()
-        if existing is not None:
-            return existing.id, False
+        session.execute(select(func.pg_advisory_xact_lock(BRAND_LOCK_KEY)))
+        existing = list(session.scalars(select(Brand).order_by(Brand.id)))
+        for brand in existing:
+            if brand.name == clean:
+                return brand.id, False
+        if existing:
+            raise StartupError(f"instalacao de marca unica: ja existe a marca {existing[0].name!r}")
         brand = Brand(name=clean)
         session.add(brand)
         session.flush()

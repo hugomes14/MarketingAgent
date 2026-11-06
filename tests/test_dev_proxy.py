@@ -1,6 +1,7 @@
 """Proxy de desenvolvimento: injeta a identidade e nunca confia em cabecalhos do cliente."""
 
 import http.client
+import socket
 import threading
 from collections.abc import Iterator
 from dataclasses import dataclass, field
@@ -15,6 +16,7 @@ from marketing_agent.dev_proxy import (
     validate_login,
     validate_name,
 )
+from marketing_agent.startup import director_max_duration_s
 
 LOGIN = "dono@local"
 
@@ -232,3 +234,96 @@ def test_forwarded_request_headers_is_case_insensitive() -> None:
     assert ("Accept", "*/*") in result
     assert all(name.lower() != "x-forwarded-for" for name, _ in result)
     assert sum(name.lower() == "tailscale-user-login" for name, _ in result) == 1
+
+
+# --- Host (anti DNS rebinding) -----------------------------------------------------------------
+
+
+def raw_request(port: int, payload: bytes) -> bytes:
+    """Envia bytes crus ao proxy e le a resposta ate o fecho da ligacao."""
+    with socket.create_connection(("127.0.0.1", port), timeout=5) as connection:
+        connection.sendall(payload)
+        chunks: list[bytes] = []
+        while chunk := connection.recv(4096):
+            chunks.append(chunk)
+    return b"".join(chunks)
+
+
+def status_of(response: bytes) -> int:
+    return int(response.split(b" ", 2)[1])
+
+
+@pytest.mark.parametrize("host", ["evil.com", "evil.com:8001", "127.0.0.1.evil.com", "10.0.0.5"])
+def test_foreign_host_is_421_and_never_reaches_upstream(rig: Rig, host: str) -> None:
+    response, body = request(rig.proxy_port, headers={"Host": host})
+    assert response.status == 421 and len(body) < 200
+    assert rig.seen == []
+
+
+@pytest.mark.parametrize("host", ["localhost", "LOCALHOST:8001", "127.0.0.1", "[::1]:8001"])
+def test_loopback_hosts_are_forwarded(rig: Rig, host: str) -> None:
+    response, _ = request(rig.proxy_port, headers={"Host": host})
+    assert response.status == 200 and rig.seen[0].headers["host"] == [host]
+
+
+def test_missing_or_duplicate_host_is_400(rig: Rig) -> None:
+    missing = raw_request(rig.proxy_port, b"GET / HTTP/1.0\r\n\r\n")
+    twice = raw_request(
+        rig.proxy_port, b"GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nHost: evil.com\r\n\r\n"
+    )
+    assert status_of(missing) == 400 and status_of(twice) == 400
+    assert rig.seen == []
+
+
+# --- enquadramento do corpo ---------------------------------------------------------------------
+
+
+def head(rig: Rig, extra: bytes) -> bytes:
+    return b"POST /a HTTP/1.1\r\nHost: 127.0.0.1:%d\r\n" % rig.proxy_port + extra
+
+
+def test_connection_header_cannot_remove_content_length_or_host(rig: Rig) -> None:
+    smuggled = b"GET /x HTTP/1.1\r\nHost: 127.0.0.1\r\nTailscale-User-Login: atacante@x\r\n\r\n"
+    payload = head(
+        rig,
+        b"Connection: content-length, host\r\nContent-Length: %d\r\n\r\n" % len(smuggled)
+        + smuggled,
+    )
+    status = status_of(raw_request(rig.proxy_port, payload))
+    assert status == 200
+    assert len(rig.seen) == 1  # um unico pedido chegou ao destino
+    seen = rig.seen[0]
+    assert seen.path == "/a" and seen.body == smuggled
+    assert seen.headers["content-length"] == [str(len(smuggled))]
+    assert seen.headers["tailscale-user-login"] == [LOGIN]
+    assert seen.headers["host"] == [f"127.0.0.1:{rig.proxy_port}"]
+
+
+def test_content_length_is_set_from_the_body_read(rig: Rig) -> None:
+    request(rig.proxy_port, "POST", "/a", {"Content-Type": "text/plain"}, b"12345")
+    assert rig.seen[0].headers["content-length"] == ["5"]
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        b"Content-Length: 3\r\nContent-Length: 3\r\n\r\nabc",
+        b"Content-Length: abc\r\n\r\n",
+        b"Content-Length: -1\r\n\r\n",
+        b"Content-Length: \xc2\xb2\r\n\r\n",
+        b"Transfer-Encoding: chunked\r\n\r\n0\r\n\r\n",
+        b"Transfer-Encoding: chunked\r\nContent-Length: 3\r\n\r\nabc",
+    ],
+)
+def test_ambiguous_framing_is_400(rig: Rig, extra: bytes) -> None:
+    assert status_of(raw_request(rig.proxy_port, head(rig, extra))) == 400
+    assert rig.seen == []
+
+
+def test_timeouts_come_from_configuration() -> None:
+    proxy = build_dev_proxy(("127.0.0.1", 0), ("127.0.0.1", 9), LOGIN, None)
+    try:
+        assert proxy.upstream_timeout == director_max_duration_s() + 30
+        assert proxy.RequestHandlerClass.timeout == 30  # type: ignore[attr-defined]
+    finally:
+        proxy.server_close()

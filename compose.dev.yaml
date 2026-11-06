@@ -2,6 +2,9 @@
 # compose.test.yaml, que usa tmpfs). Arrancar com: docker compose -f compose.dev.yaml up -d
 # Credenciais so de desenvolvimento e porta publicada apenas em loopback: nunca reutilizar
 # estes valores nem expor esta base fora desta maquina.
+# Nome de projeto proprio: sem ele, este ficheiro e o compose.test.yaml (mesma pasta) partilham o
+# projeto e o servico `postgres`, e subir um substitui o contentor do outro.
+name: marketing_agent_dev
 services:
   postgres:
     image: postgres:17
