@@ -4,7 +4,7 @@
 
 - Timestamp: `2026-11-05T21:28:57+00:00`
 - Autor: `agent`
-- Estado de execução: **Tarefa 1 concluída; Tarefas 2 a 15 por fazer.**
+- Estado de execução: **Tarefas 1 a 3 concluídas; Tarefas 4 a 15 por fazer.**
 - Substitui: Anexo E.1 do plano mestre (Plano 01 v1), com as correções do Anexo E, secção E.0
 
 **Goal:** Construir o esqueleto Python, o núcleo comum dos agentes e o primeiro percurso do Diretor, que termina com perfil de marca, diagnóstico e estratégia aprovados no painel.
@@ -158,7 +158,7 @@
     - `brand_id`: marca criada.
 - O Anexo A.2 lista mais tabelas (publicação, entrada, métricas). Essas ficam para os Planos 2 a 5 (YAGNI); `agent_definition` também, porque as especificações vêm de ficheiros.
 
-- [ ] **Step 1: Escrever os testes que falham.**
+- [x] **Step 1: Escrever os testes que falham.**
   - `test_migration.py::test_upgrade_head_creates_core_tables`: as 15 tabelas acima existem.
   - `test_constraints.py::test_cross_brand_head_rejected`: um `artifact_head` da marca B a apontar para um artefacto da marca A levanta `IntegrityError`.
   - `test_constraints.py::test_artifact_state_check`: `state='superseded'` levanta `IntegrityError`.
@@ -166,15 +166,24 @@
   - `test_constraints.py::test_cost_entry_unique_per_reservation`.
   - `test_constraints.py::test_turn_seq_unique_per_session`.
   - `test_constraints.py::test_submission_key_unique_per_session`.
-- [ ] **Step 2: Correr e ver falhar.** `uv run pytest tests/db -v`.
-- [ ] **Step 3: Implementar.**
+- [x] **Step 2: Correr e ver falhar.** `uv run pytest tests/db -v`.
+- [x] **Step 3: Implementar.**
   - Modelos com `JSONB` e `Numeric(12, 6)`.
   - FKs compostas `(brand_id, id)`: cada tabela referenciada tem `UNIQUE (brand_id, id)`.
   - `CHECK` para cada enum.
   - Migração `0001` escrita à mão, incluindo o *trigger*.
   - `migrations/env.py` lê `Settings.database_url`.
-- [ ] **Step 4: Correr a validação global.**
-- [ ] **Step 5: Commit.** `feat: tabelas do nucleo em postgres com integridade por marca`.
+- [x] **Step 4: Correr a validação global.**
+- [x] **Step 5: Commit.** `feat: tabelas do nucleo em postgres com integridade por marca`.
+
+**Notas de execução (Tarefa 2):**
+
+- Concluída no ramo `agent/2026-11-06_plano01_tarefa2` (commit `0b64250`). 40 testes passam (10 em `tests/db`), `ruff` e `mypy src` limpos, roundtrip `downgrade base` + `upgrade head` OK.
+- Testes além do plano: `test_migration_matches_models` (`compare_metadata` sem diferenças), `test_state_update_allowed_by_trigger` e `test_strategy_decision_unique_per_proposal`.
+- Fixture `engine` (por sessão) recria o schema `public`, aplica `alembic upgrade head` e só depois cada teste faz `TRUNCATE` das tabelas; `DATABASE_URL` é definido a partir de `TEST_DATABASE_URL` só durante a migração.
+- Nomes de restrições seguem a convenção em `db/base.py`; a migração usa os mesmos nomes por escrito.
+- `agent_step`, `interview_submission` e `interview_turn` não levam `brand_id`: a marca vem da execução ou da sessão a que pertencem.
+- `audit_log` ainda não tem proteção contra `UPDATE`/`DELETE` (o papel da aplicação só existe a partir do Plano de operação).
 
 ### Task 3: Artefactos imutáveis com versão ativa
 
@@ -203,7 +212,7 @@
 - **Transições permitidas:** `draft→submitted`, `submitted→approved`, `submitted→rejected`, `draft→withdrawn` e `submitted→withdrawn`.
 - **`approve_and_activate`:** uma transação. Aprova o artefacto, faz *upsert* de `artifact_head` guardando `previous_artifact_id` e, se o tipo for `perfil_marca`, atualiza a projeção `brand_profile`. Cada transição escreve um `AuditLog` com o `actor`.
 
-- [ ] **Step 1: Escrever os testes que falham.**
+- [x] **Step 1: Escrever os testes que falham.**
   - `test_create_is_draft`.
   - `test_new_draft_does_not_change_active`: com o perfil v1 ativo, criar e submeter o v2 deixa `active(...)` igual a v1.
   - `test_rejected_draft_keeps_active`: rejeitar o v2 deixa v1 ativo.
@@ -212,10 +221,17 @@
   - `test_illegal_transition_raises`: `draft→approved` levanta `InvalidTransition`.
   - `test_transitions_write_audit_with_actor`.
   - `test_payload_preserved_in_storage`: depois de várias transições, o `payload` lido por SQL bruto é igual ao original.
-- [ ] **Step 2: Correr e ver falhar.** `uv run pytest tests/artifacts -v`.
-- [ ] **Step 3: Implementar.** Transições num mapa constante; `SELECT … FOR UPDATE` na linha do artefacto na transição.
-- [ ] **Step 4: Correr a validação global.**
-- [ ] **Step 5: Commit.** `feat: artefactos imutaveis com versao ativa separada`.
+- [x] **Step 2: Correr e ver falhar.** `uv run pytest tests/artifacts -v`.
+- [x] **Step 3: Implementar.** Transições num mapa constante; `SELECT … FOR UPDATE` na linha do artefacto na transição.
+- [x] **Step 4: Correr a validação global.**
+- [x] **Step 5: Commit.** `feat: artefactos imutaveis com versao ativa separada`.
+
+**Notas de execução (Tarefa 3):**
+
+- Concluída no ramo `agent/2026-11-06_plano01_tarefa2` (commits `00fc9e9` e `c019b34`), em modo subagente: implementador, revisão da tarefa e uma ronda de correção com re-revisão limpa. 51 testes passam; `ruff` e `mypy src` limpos.
+- Decisões: `brand_profile.data` recebe a cópia do payload do `perfil_marca` aprovado; `approve_and_activate` não restringe o tipo do artefacto.
+- Correção da ronda 1: o `previous_artifact_id` vem do `ON CONFLICT DO UPDATE` (linha existente), porque sem linha de `artifact_head` não há o que bloquear na primeira ativação.
+- Achados menores adiados: sem teste de ativação com `scope` diferente de `brand` além do de `week:...`; o teste de corrida é probabilístico (barreira só alinha o início, sem timeout); argumentos por omissão a sombrear `scope` nesse teste.
 
 ### Task 4: Preços versionados
 
