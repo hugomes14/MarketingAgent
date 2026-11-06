@@ -86,6 +86,23 @@ def test_openai_base_url_is_passed_on(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(
+    ("base_url", "expected_role"),
+    [("http://127.0.0.1:11434/v1", "system"), (None, "developer")],
+)
+def test_openai_system_role_depends_on_custom_endpoint(
+    tmp_path: Path, base_url: str | None, expected_role: str
+) -> None:
+    # Atributo privado: a fabrica nao deixa injetar o SDK, e o papel e o que interessa verificar.
+    settings = _settings(
+        {"revisor": _route("openai")},
+        openai_api_key_file=_key(tmp_path, "o.key"),
+        openai_base_url=base_url,
+    )
+    client = _clients(build_llm_router(settings))["openai"]
+    assert client._system_role == expected_role
+
+
+@pytest.mark.parametrize(
     ("provider", "variable"),
     [("anthropic", "ANTHROPIC_API_KEY_FILE"), ("openai", "OPENAI_API_KEY_FILE")],
 )

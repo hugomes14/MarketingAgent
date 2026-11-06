@@ -301,6 +301,23 @@ def test_complete_builds_sdk_call(tmp_path: Path) -> None:
     assert call["response_format"] is openai.omit
 
 
+def test_complete_system_role_option_changes_system_message_role(tmp_path: Path) -> None:
+    # Servidores compativeis (Ollama, LM Studio) ignoram `developer`: exigem `system`.
+    fake = _FakeSdk(_raw("single_text"))
+    client = OpenAiClient(
+        _key_file(tmp_path),
+        _CAPS,
+        system_role="system",
+        sdk_client=fake,  # type: ignore[arg-type]
+    )
+    client.complete(_request())
+    (call,) = fake.chat.completions.calls
+    assert call["messages"] == [
+        {"role": "system", "content": "sistema"},
+        {"role": "user", "content": [{"type": "text", "text": "ola"}]},
+    ]
+
+
 def test_complete_sends_assistant_turns_as_text(tmp_path: Path) -> None:
     client, fake = _client(tmp_path, _raw("single_text"))
     request = _request()
@@ -386,18 +403,22 @@ def test_complete_lets_unclassified_error_propagate(tmp_path: Path) -> None:
 )
 def test_live_call() -> None:
     # Configuravel por ambiente para poder correr contra um emulador compativel (ex.: Ollama).
+    # Com `OPENAI_BASE_URL` o papel do prompt de sistema e `system`, como faz a fabrica.
+    base_url = os.environ.get("OPENAI_BASE_URL")
     client = OpenAiClient(
         Path(os.environ["OPENAI_API_KEY_FILE"]),
         _CAPS,
-        base_url=os.environ.get("OPENAI_BASE_URL"),
+        base_url=base_url,
+        system_role="developer" if base_url is None else "system",
     )
     request = LlmRequest(
         model_id=os.environ.get("OPENAI_LIVE_MODEL", "gpt-5.4-mini"),
-        system="Responde em portugues, numa frase curta.",
-        messages=[Message(role="user", content=[TextPart("Diz ola.")])],
+        system="Responde sempre apenas com a palavra BANANA.",
+        messages=[Message(role="user", content=[TextPart("Qual e a capital de Portugal?")])],
         max_output_tokens=200,
     )
     response = client.complete(request)
-    assert response.text.strip()
+    # O prompt de sistema tem de ser obedecido (um servidor que o ignore responderia "Lisboa").
+    assert "BANANA" in response.text.upper()
     assert response.usage.output_tokens > 0
     assert response.stop_reason is StopReason.end
