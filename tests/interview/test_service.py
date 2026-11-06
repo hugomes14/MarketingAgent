@@ -4,6 +4,9 @@ import hashlib
 import itertools
 import json
 import logging
+import threading
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -38,20 +41,30 @@ from marketing_agent.harness.engine import AgentEngine
 from marketing_agent.interview.service import (
     InterviewService,
     InvalidAnswer,
+    InvalidSessionState,
     ProfileRequestFailed,
     SessionBusy,
     SubmissionConflict,
+    TurnResult,
     TurnStatus,
 )
 from marketing_agent.llm import fake_scenarios
 from marketing_agent.llm.fake import FakeLlmClient
 from marketing_agent.llm.router import LlmRouter
-from marketing_agent.llm.types import LlmResponse, StopReason, TextPart
+from marketing_agent.llm.types import (
+    LlmRequest,
+    LlmResponse,
+    LlmUnknownOutcome,
+    StopReason,
+    TextPart,
+)
 
 Factory = sessionmaker[Session]
 Script = list[LlmResponse | Exception]
 VALID_FROM = datetime(2026, 11, 1, tzinfo=UTC)
 _request_ids = itertools.count(1)  # o ledger exige provider_request_id unico
+INTERRUPTED_TEXT = "Esta submissão foi interrompida. Envie a resposta de novo."
+INTERNAL_TEXT = "Ocorreu um erro interno ao processar a resposta. Tente novamente."
 BLOCKED_TEXT = "Limite desta execução atingido. A entrevista fica guardada e pode continuar depois."
 
 
@@ -92,12 +105,26 @@ def scripted(script: Script) -> Script:
     ]
 
 
+class HookedLlmClient(FakeLlmClient):
+    """Cliente falso que corre `hook` depois de registar o pedido e antes de devolver."""
+
+    def __init__(self, responses: Script) -> None:
+        super().__init__(responses)
+        self.hook: Callable[[], None] | None = None
+
+    def complete(self, request: LlmRequest) -> LlmResponse:
+        response = super().complete(request)
+        if self.hook is not None:
+            self.hook()
+        return response
+
+
 @dataclass
 class Rig:
     """Servico montado sobre cliente falso, base de teste e relogio fixo."""
 
     service: InterviewService
-    llm: FakeLlmClient
+    llm: HookedLlmClient
     clock: FixedClock
     factory: Factory
     brand_id: str
@@ -120,6 +147,9 @@ class Rig:
     def submissions(self) -> list[InterviewSubmission]:
         with self.factory() as session:
             return list(session.scalars(select(InterviewSubmission)))
+
+    def submission(self, key: str) -> InterviewSubmission:
+        return next(s for s in self.submissions() if s.idempotency_key == key)
 
     def session_row(self, session_id: str) -> InterviewSession:
         with self.factory() as session:
@@ -154,7 +184,7 @@ class Rig:
 
 
 def build_service(
-    factory: Factory, llm: FakeLlmClient, clock: FixedClock, settings: Settings
+    factory: Factory, llm: HookedLlmClient, clock: FixedClock, settings: Settings
 ) -> tuple[InterviewService, ArtifactStore]:
     free = PriceTier(0, Decimal(0), Decimal(0))
     sync_model_prices(factory, [ModelPrice("fake", "fake-1", "v1", (free,), valid_from=VALID_FROM)])
@@ -182,7 +212,7 @@ class RigFactory(Protocol):
 def make_rig(session_factory: Factory, clock: FixedClock, brand_id: str) -> RigFactory:
     def make(script: Script) -> Rig:
         settings = Settings(database_url="postgresql+psycopg://x/y")
-        llm = FakeLlmClient(script)
+        llm = HookedLlmClient(script)
         service, store = build_service(session_factory, llm, clock, settings)
         return Rig(service, llm, clock, session_factory, brand_id, store, settings)
 
@@ -298,11 +328,11 @@ def test_second_key_while_busy_raises_session_busy(make_rig: RigFactory) -> None
         rig.service.submit_answer(session_id, "Outra resposta.", "k2")
     assert len(rig.llm.requests) == 1
     assert rig.session_row(session_id).busy_submission_id == owner
-    k2 = next(s for s in rig.submissions() if s.idempotency_key == "k2")
-    assert k2.status == "failed"  # a mesma chave pode ser repetida depois
+    # A transacao desfez-se: nenhuma linha para k2, a mesma chave pode ser tentada depois.
+    assert [s.idempotency_key for s in rig.submissions()] == ["k1"]
 
 
-def test_failed_submission_retried_with_same_key_is_processed(make_rig: RigFactory) -> None:
+def test_busy_attempt_leaves_no_row_and_same_key_succeeds_later(make_rig: RigFactory) -> None:
     rig = make_rig([turn_response(topic=None), turn_response("E o cliente?")])
     session_id = rig.start()
     owner = rig.add_submission(session_id, "k1", "Vendemos pao.", "reserved")
@@ -313,7 +343,7 @@ def test_failed_submission_retried_with_same_key_is_processed(make_rig: RigFacto
         session.get_one(InterviewSession, session_id).busy_submission_id = None
     result = rig.service.submit_answer(session_id, "Outra resposta.", "k2")
     assert result.status is TurnStatus.COMPLETED and result.question == "E o cliente?"
-    assert len(rig.submissions()) == 2
+    assert [s.status for s in rig.submissions() if s.idempotency_key == "k2"] == ["completed"]
 
 
 def test_stale_busy_reclaimed_after_max_duration(make_rig: RigFactory) -> None:
@@ -495,3 +525,336 @@ def test_request_profile_failure_raises_and_creates_no_artifact(make_rig: RigFac
         rig.service.request_profile(session_id)
     assert rig.artifact_count() == 0
     assert rig.session_row(session_id).state == "open"
+
+
+# --- Maquina de estados: nenhuma submissao e reprocessada nem fica presa ---------------------
+
+
+def assert_interrupted(result: object) -> None:
+    assert isinstance(result, TurnResult)
+    assert (result.status, result.message) == (TurnStatus.NEEDS_HUMAN, INTERRUPTED_TEXT)
+
+
+def test_dead_holder_key_replays_interrupted_after_other_key_reclaims(make_rig: RigFactory) -> None:
+    rig = make_rig([turn_response(topic=None), turn_response("E o cliente?")])
+    session_id = rig.start()
+    dead = rig.add_submission(session_id, "k1", "Vendemos pao.", "reserved")
+    rig.set_busy(session_id, dead, rig.clock.now())
+    rig.clock.advance(timedelta(seconds=121))
+    assert rig.service.submit_answer(session_id, "Outra.", "k2").status is TurnStatus.COMPLETED
+    stored = rig.submission("k1")
+    assert stored.status == "failed" and stored.result is not None
+    requests_before = len(rig.llm.requests)
+    replay = rig.service.submit_answer(session_id, "Vendemos pao.", "k1")
+    assert_interrupted(replay)
+    assert len(rig.llm.requests) == requests_before
+    assert [t.content for t in rig.turns(session_id) if t.role == "user"] == ["Outra."]
+
+
+@pytest.mark.parametrize(
+    ("script_tail", "status", "message"),
+    [
+        ([llm_response("x"), llm_response("y"), llm_response("z")], TurnStatus.NEEDS_HUMAN, None),
+        ([LlmUnknownOutcome("desfecho")], TurnStatus.NEEDS_HUMAN, None),
+        ([RuntimeError("falha")], TurnStatus.NEEDS_HUMAN, INTERNAL_TEXT),
+    ],
+    ids=["invalid-output", "unknown-outcome", "internal-error"],
+)
+def test_failed_submission_replays_stored_result_without_new_call(
+    make_rig: RigFactory, script_tail: Script, status: TurnStatus, message: str | None
+) -> None:
+    rig = make_rig([turn_response(topic=None), *script_tail, turn_response()])
+    session_id = rig.start()
+    first = rig.service.submit_answer(session_id, "Vendemos pao.", "k1")
+    assert first.status is status and first.message
+    assert message is None or first.message == message
+    requests_before = len(rig.llm.requests)
+    assert rig.service.submit_answer(session_id, "Vendemos pao.", "k1") == first
+    assert len(rig.llm.requests) == requests_before
+    assert rig.submission("k1").status == "failed"
+    with pytest.raises(SubmissionConflict):
+        rig.service.submit_answer(session_id, "Outro texto.", "k1")
+
+
+def test_blocked_limit_replays_blocked_without_new_call(make_rig: RigFactory) -> None:
+    rig = make_rig([turn_response(topic=None), turn_response()])
+    session_id = rig.start()
+    make_model_expensive(rig.factory)
+    first = rig.service.submit_answer(session_id, "Vendemos pao.", "k1")
+    assert first.status is TurnStatus.BLOCKED
+    assert rig.service.submit_answer(session_id, "Vendemos pao.", "k1") == first
+    assert len(rig.llm.requests) == 1
+    assert rig.submission("k1").result is not None
+
+
+def test_new_key_after_failure_is_processed(make_rig: RigFactory) -> None:
+    rig = make_rig([turn_response(topic=None), RuntimeError("x"), turn_response("E o cliente?")])
+    session_id = rig.start()
+    assert rig.service.submit_answer(session_id, "Vendemos pao.", "k1").status is (
+        TurnStatus.NEEDS_HUMAN
+    )
+    assert rig.service.submit_answer(session_id, "Vendemos pao.", "k2").question == "E o cliente?"
+
+
+def test_reserved_with_stale_own_claim_becomes_interrupted_and_releases(
+    make_rig: RigFactory,
+) -> None:
+    rig = make_rig([turn_response(topic=None)])
+    session_id = rig.start()
+    owner = rig.add_submission(session_id, "k1", "Vendemos pao.", "reserved")
+    rig.set_busy(session_id, owner, rig.clock.now())
+    rig.clock.advance(timedelta(seconds=121))
+    assert_interrupted(rig.service.submit_answer(session_id, "Vendemos pao.", "k1"))
+    assert rig.session_row(session_id).busy_submission_id is None
+    stored = rig.submission("k1")
+    assert stored.status == "failed" and stored.result is not None
+    assert len(rig.llm.requests) == 1
+
+
+def test_reserved_without_claim_becomes_interrupted(make_rig: RigFactory) -> None:
+    rig = make_rig([turn_response(topic=None)])
+    session_id = rig.start()
+    rig.add_submission(session_id, "k1", "Vendemos pao.", "reserved")
+    assert_interrupted(rig.service.submit_answer(session_id, "Vendemos pao.", "k1"))
+    assert rig.submission("k1").status == "failed"
+
+
+def test_reserved_claimed_by_other_does_not_release_their_claim(make_rig: RigFactory) -> None:
+    rig = make_rig([turn_response(topic=None)])
+    session_id = rig.start()
+    rig.add_submission(session_id, "k1", "Vendemos pao.", "reserved")
+    other = rig.add_submission(session_id, "k2", "Outra.", "reserved")
+    rig.set_busy(session_id, other, rig.clock.now())
+    assert_interrupted(rig.service.submit_answer(session_id, "Vendemos pao.", "k1"))
+    assert rig.session_row(session_id).busy_submission_id == other
+
+
+def test_record_turns_writes_nothing_when_claim_was_lost(make_rig: RigFactory) -> None:
+    rig = make_rig([turn_response(topic=None), turn_response(topic="geografia")])
+    session_id = rig.start()
+    gap_before = rig.session_row(session_id).gap_map
+
+    def steal_claim() -> None:
+        rig.set_busy(session_id, "outra-submissao", rig.clock.now())
+
+    rig.llm.hook = steal_claim
+    result = rig.service.submit_answer(session_id, "Vendemos pao.", "k1")
+    assert_interrupted(result)
+    assert len(rig.turns(session_id)) == 1
+    assert rig.session_row(session_id).gap_map == gap_before
+    assert rig.submission("k1").status != "completed"
+    assert rig.session_row(session_id).busy_submission_id == "outra-submissao"
+
+
+def test_record_turns_refuses_submission_reclaimed_and_failed_by_other_key(
+    make_rig: RigFactory,
+) -> None:
+    rig = make_rig([turn_response(topic=None), turn_response("Q1")])
+    session_id = rig.start()
+
+    def other_key_reclaims_stale_claim() -> None:
+        rig.llm.hook = None
+        rig.clock.advance(timedelta(seconds=121))
+        other_llm = HookedLlmClient([turn_response("Q2")])
+        other, _ = build_service(rig.factory, other_llm, rig.clock, rig.settings)
+        assert other.submit_answer(session_id, "Outra.", "k2").status is TurnStatus.COMPLETED
+
+    rig.llm.hook = other_key_reclaims_stale_claim
+    assert_interrupted(rig.service.submit_answer(session_id, "Vendemos pao.", "k1"))
+    assert rig.submission("k1").status == "failed"
+    users = [t.content for t in rig.turns(session_id) if t.role == "user"]
+    assert users == ["Outra."]  # so uma execucao conclui
+
+
+def test_failure_between_reserve_and_engine_interrupts_and_releases(
+    make_rig: RigFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    rig = make_rig([turn_response(topic=None)])
+    session_id = rig.start()
+
+    def explode(*args: object, **kwargs: object) -> None:
+        raise RuntimeError("falha de leitura")
+
+    monkeypatch.setattr(rig.service, "_load_payload", explode)
+    with pytest.raises(RuntimeError, match="falha de leitura"):
+        rig.service.submit_answer(session_id, "Vendemos pao.", "k1")
+    assert rig.submission("k1").status == "failed"
+    assert rig.session_row(session_id).busy_submission_id is None
+    assert_interrupted(rig.service.submit_answer(session_id, "Vendemos pao.", "k1"))
+
+
+def test_cleanup_failure_is_logged_and_does_not_mask_original(
+    make_rig: RigFactory, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    rig = make_rig([turn_response(topic=None)])
+    session_id = rig.start()
+
+    def explode(*args: object, **kwargs: object) -> None:
+        raise RuntimeError("original")
+
+    def cleanup_explodes(*args: object, **kwargs: object) -> None:
+        raise ValueError("limpeza")
+
+    monkeypatch.setattr(rig.service, "_load_payload", explode)
+    monkeypatch.setattr(rig.service, "_interrupt", cleanup_explodes)
+    monkeypatch.setattr(rig.service, "_release_session", cleanup_explodes)
+    with caplog.at_level(logging.ERROR), pytest.raises(RuntimeError, match="original"):
+        rig.service.submit_answer(session_id, "SEGREDO", "k1")
+    assert "ValueError" in caplog.text and "SEGREDO" not in caplog.text
+    # Sem limpeza a submissao fica `reserved`, mas o proximo pedido da chave resolve-a.
+    monkeypatch.undo()
+    rig.clock.advance(timedelta(seconds=121))
+    assert_interrupted(rig.service.submit_answer(session_id, "SEGREDO", "k1"))
+
+
+# --- request_profile: reclamacao da sessao e estado ------------------------------------------
+
+
+def profile_script() -> Script:
+    full = fake_scenarios.interview_full(1)
+    return scripted([*full, full[-1]])
+
+
+def test_request_profile_busy_session_raises_without_engine_call(make_rig: RigFactory) -> None:
+    rig = make_rig(profile_script())
+    session_id = rig.start()
+    rig.set_busy(session_id, "alguem", rig.clock.now())
+    with pytest.raises(SessionBusy):
+        rig.service.request_profile(session_id)
+    assert len(rig.llm.requests) == 1
+    assert rig.artifact_count() == 0
+    assert rig.session_row(session_id).busy_submission_id == "alguem"
+
+
+def test_request_profile_during_running_turn_raises_session_busy(make_rig: RigFactory) -> None:
+    rig = make_rig(profile_script())
+    session_id = rig.start()
+    seen: list[type[BaseException]] = []
+
+    def request_during_turn() -> None:
+        rig.llm.hook = None
+        try:
+            rig.service.request_profile(session_id)
+        except SessionBusy as exc:
+            seen.append(type(exc))
+
+    rig.llm.hook = request_during_turn
+    rig.service.submit_answer(session_id, "Resposta.", "k1")
+    assert seen == [SessionBusy]
+    assert len(rig.llm.requests) == 2 and rig.artifact_count() == 0
+
+
+def test_request_profile_reclaims_stale_claim(make_rig: RigFactory) -> None:
+    rig = make_rig(profile_script())
+    session_id = rig.start()
+    rig.set_busy(session_id, "morto", rig.clock.now())
+    rig.clock.advance(timedelta(seconds=121))
+    assert rig.store.get(rig.service.request_profile(session_id)).state is ArtifactState.SUBMITTED
+
+
+def test_request_profile_on_closed_session_is_refused(make_rig: RigFactory) -> None:
+    rig = make_rig(profile_script())
+    session_id = rig.start()
+    with rig.factory.begin() as session:
+        session.get_one(InterviewSession, session_id).state = "closed"
+    with pytest.raises(InvalidSessionState):
+        rig.service.request_profile(session_id)
+    assert len(rig.llm.requests) == 1
+    assert rig.session_row(session_id).busy_submission_id is None
+
+
+def test_request_profile_again_after_rejection_and_claim_released(make_rig: RigFactory) -> None:
+    rig = make_rig(profile_script())
+    session_id = rig.start()
+    rig.service.submit_answer(session_id, "Resposta.", "k1")
+    first = rig.service.request_profile(session_id)
+    assert rig.session_row(session_id).busy_submission_id is None
+    rig.service.reject_profile(first, "ana", "faltam dados")
+    second = rig.service.request_profile(session_id)
+    assert second != first
+    assert rig.store.get(second).state is ArtifactState.SUBMITTED
+    assert rig.session_row(session_id).state == "profile_requested"
+    assert rig.session_row(session_id).busy_submission_id is None
+
+
+def test_request_profile_failure_releases_claim(make_rig: RigFactory) -> None:
+    rig = make_rig(
+        [turn_response(topic=None), llm_response("{"), llm_response("{"), llm_response("{")]
+    )
+    session_id = rig.start()
+    with pytest.raises(ProfileRequestFailed):
+        rig.service.request_profile(session_id)
+    assert rig.session_row(session_id).busy_submission_id is None
+
+
+# --- Concorrencia real --------------------------------------------------------------------------
+
+
+def test_same_key_concurrent_while_engine_running_is_in_progress(make_rig: RigFactory) -> None:
+    rig = make_rig([turn_response(topic=None), turn_response("E o cliente?")])
+    session_id = rig.start()
+    entered, proceed = threading.Event(), threading.Event()
+
+    def block_in_engine() -> None:
+        rig.llm.hook = None
+        entered.set()
+        assert proceed.wait(timeout=10)
+
+    rig.llm.hook = block_in_engine
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        running = pool.submit(rig.service.submit_answer, session_id, "Vendemos pao.", "k1")
+        assert entered.wait(timeout=10)
+        during = rig.service.submit_answer(session_id, "Vendemos pao.", "k1")
+        with pytest.raises(SessionBusy):
+            rig.service.submit_answer(session_id, "Outra.", "k2")
+        proceed.set()
+        final = running.result(timeout=10)
+    assert during.status is TurnStatus.IN_PROGRESS
+    assert final.status is TurnStatus.COMPLETED
+    assert len(rig.llm.requests) == 2
+    assert rig.service.submit_answer(session_id, "Vendemos pao.", "k1") == final
+    assert len(rig.turns(session_id)) == 3
+
+
+def race(rig: Rig, calls: list[tuple[str, str]], session_id: str) -> list[TurnResult | Exception]:
+    barrier = threading.Barrier(len(calls))
+
+    def attempt(text: str, key: str) -> TurnResult | Exception:
+        barrier.wait(timeout=10)
+        try:
+            return rig.service.submit_answer(session_id, text, key)
+        except Exception as exc:
+            return exc
+
+    with ThreadPoolExecutor(max_workers=len(calls)) as pool:
+        futures = [pool.submit(attempt, text, key) for text, key in calls]
+        return [future.result(timeout=20) for future in futures]
+
+
+def test_racing_same_key_calls_engine_once(make_rig: RigFactory) -> None:
+    rounds = 5
+    rig = make_rig([turn_response(topic=None) for _ in range(rounds * 2)])
+    for round_number in range(rounds):
+        session_id = rig.start()
+        before = len(rig.llm.requests)
+        results = race(rig, [("Vendemos pao.", "k"), ("Vendemos pao.", "k")], session_id)
+        assert all(isinstance(r, TurnResult) for r in results), results
+        statuses = sorted(r.status.value for r in results if isinstance(r, TurnResult))
+        assert statuses in (["completed", "completed"], ["completed", "in_progress"]), statuses
+        assert len(rig.llm.requests) == before + 1, round_number
+        assert [t.role for t in rig.turns(session_id)] == ["director", "user", "director"]
+
+
+def test_racing_different_keys_exactly_one_completes(make_rig: RigFactory) -> None:
+    rounds = 5
+    rig = make_rig([turn_response(topic=None) for _ in range(rounds * 3)])
+    for _ in range(rounds):
+        session_id = rig.start()
+        before = len(rig.llm.requests)
+        results = race(rig, [("Um.", "ka"), ("Dois.", "kb")], session_id)
+        completed = [r for r in results if isinstance(r, TurnResult)]
+        busy = [r for r in results if isinstance(r, SessionBusy)]
+        # O perdedor chega com a sessao ocupada, ou depois de a vencedora ter terminado.
+        assert len(completed) >= 1 and len(completed) + len(busy) == 2, results
+        assert len(rig.llm.requests) == before + len(completed)
+        assert len(rig.turns(session_id)) == 1 + 2 * len(completed)
