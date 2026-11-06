@@ -4,7 +4,7 @@
 
 - Timestamp: `2026-11-05T21:28:57+00:00`
 - Autor: `agent`
-- Estado de execução: **Tarefas 1 a 6 concluídas; Tarefas 7 a 15 por fazer.**
+- Estado de execução: **Tarefas 1 a 7 concluídas; Tarefas 8 a 15 por fazer.**
 - Substitui: Anexo E.1 do plano mestre (Plano 01 v1), com as correções do Anexo E, secção E.0
 
 **Goal:** Construir o esqueleto Python, o núcleo comum dos agentes e o primeiro percurso do Diretor, que termina com perfil de marca, diagnóstico e estratégia aprovados no painel.
@@ -409,7 +409,7 @@
 
   - `LlmRouter(routes: Mapping[str, RoleRoute], clients: Mapping[str, LlmClient])` com `resolve(spec: AgentSpec) -> tuple[LlmClient, RoleRoute]`. Levanta `RouteNotConfigured` se o papel não tiver rota e `MissingCapability` se o cliente ou a rota não cobrirem `spec.required_capabilities`.
 
-- [ ] **Step 1: Escrever os testes que falham.**
+- [x] **Step 1: Escrever os testes que falham.** (o `test_scenarios_produce_valid_shapes` fica para a Tarefa 11)
   - `test_fake_returns_in_order_and_records`.
   - `test_fake_raises_scripted_exception`.
   - `test_fake_exhausted_raises`.
@@ -417,10 +417,17 @@
   - `test_router_resolves_per_role`: `diretor` e `copywriter` com fornecedores distintos resolvem clientes distintos.
   - `test_router_missing_route_raises`.
   - `test_router_missing_capability_raises`.
-- [ ] **Step 2: Correr e ver falhar.**
-- [ ] **Step 3: Implementar.**
-- [ ] **Step 4: Correr a validação global.**
-- [ ] **Step 5: Commit.** `feat: contrato llm, cliente falso com cenarios e rota por papel`.
+- [x] **Step 2: Correr e ver falhar.**
+- [x] **Step 3: Implementar.**
+- [x] **Step 4: Correr a validação global.**
+- [x] **Step 5: Commit.** `feat: contrato llm, cliente falso com cenarios e rota por papel`.
+
+**Notas de execução (Tarefa 7):**
+
+- Concluída no ramo `agent/2026-11-06_plano01_tarefa7` (commit `3d6e29c`), em modo subagente: implementação e revisão da tarefa aprovada sem correções. 87 testes passam; `ruff` e `mypy src` limpos.
+- O `test_scenarios_produce_valid_shapes` **não** foi escrito: os esquemas só existem nas Tarefas 11 e 12. Nesta tarefa os testes verificam só a estrutura dos cenários (tipos, ordem, contagens, JSON inválido onde tem de ser inválido). As formas do JSON seguem as Tarefas 11 e 12; os 14 tópicos do mapa de lacunas estão numa constante privada em `fake_scenarios.py` e a Tarefa 11 deve passar a usar `GAP_TOPICS`.
+- Decisões: os cenários usam `provider_request_id=None` e `resolved_model="fake-1"` (o `provider_request_id` é único na base); fornecedor sem cliente levanta `RouteNotConfigured` e capacidade em falta, na rota ou no cliente, levanta `MissingCapability`; `interview_full(turns)` devolve `turns + 2` respostas (primeira pergunta, `turns` turnos e o perfil).
+- Achados menores adiados: `interview_full(turns<1)` sem guarda; listas mutáveis dentro de dataclasses `frozen` (conforme o brief); `pop(0)` O(n) no cliente falso.
 
 ### Task 8: Motor de execução (`AgentEngine`)
 
