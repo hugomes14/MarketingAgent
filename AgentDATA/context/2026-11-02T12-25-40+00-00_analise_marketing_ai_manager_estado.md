@@ -1,17 +1,20 @@
 # Contexto de execucao
 
-- Timestamp: `2026-11-05T22:21:14+00:00` (reescrito; criado em `2026-11-02T12:25:40+00:00`)
+- Timestamp: `2026-11-06T10:09:27+00:00` (reescrito; criado em `2026-11-02T12:25:40+00:00`)
 - Autor: `agent`
 - Escopo: Estado atual do projeto Marketing AI Manager. A fonte de verdade e o plano mestre v2; este registo so aponta para ele e para o que falta.
 
 ## Estado observado
 
-- Repositorio Git local, sem remoto. `main` contem so documentacao (plano mestre v2, revisao critica, Plano 01 v2).
-- **Tarefa 1 do Plano 01 implementada, ainda nao integrada em `main`.** Esta no ramo `agent/2026-11-05T21-40-00_plano01_tarefa1` (commits `bc55ba4`, `0f50a22`, `be714e2`).
+- **Tarefa 1 do Plano 01 concluida e integrada em `main`** (commits `2cf36ff`, `87aa100`, `a9b5563`). Remoto `origin` = `git@github.com:hugomes14/MarketingAgent.git` (SSH); `main` sincronizado com `origin/main`.
   - Contem: projeto Python 3.12 com `uv`, `config.py` (`Settings`, `RoleRoute`), `clock.py`, `secrets.py`, `compose.test.yaml`, `.env.example`, e a seccao "Desenvolvimento" do README.
-  - Validacao no ultimo commit: 30 testes, `ruff` e `mypy` strict limpos.
   - Teve revisao da tarefa, re-revisao e revisao final do ramo, todas fechadas.
-  - `compose.test.yaml` so foi validado como YAML: nao ha Docker nesta maquina.
+- **Ambiente de execucao mudou.** A Tarefa 1 foi feita em Windows 11 (`uv 0.13.6`). Desde `2026-11-06` o agente corre em WSL2 Ubuntu 24.04, utilizador `marketing-agent`, projeto em `~/MarketingAgent`.
+  - Ferramentas: `uv 0.13.7`, Python 3.12.3 do sistema, Docker 29.1.3, Docker Compose 2.40.3.
+  - `.venv` criado neste ambiente (Linux). `uv sync --frozen` para um venv novo funciona sem `UV_LINK_MODE=copy` (ver o registo de conhecimento do `uv`).
+  - Validacao em `2026-11-06`: `pytest` 30 passados; `ruff check` e `ruff format --check` limpos; `mypy src` limpo. `mypy src tests` da 9 erros ja conhecidos (8 `unused-ignore` em `tests/test_config.py` e falta de `types-PyYAML`), que estao nos achados adiados abaixo.
+  - Postgres de teste: o contentor `marketingagent-postgres-1` (`postgres:17`, 17.11) esta ativo e saudavel em `127.0.0.1:5433`. Fica assim desbloqueada a Tarefa 2.
+  - Nao ha `.env` local. Em `AgentDATA/secrets/` so existe `alert_email_to`, sem chaves de API, que so serao precisas nas Tarefas 9 e 10.
 - Fonte de verdade: `AgentDATA/docs/2026-11-05T21-10-57+00-00_plano_mestre_marketing_ai_manager.md` (v2); plano de implementacao: `AgentDATA/docs/2026-11-05T21-28-57+00-00_plano_01_v2_nucleo_diretor_estrategia.md` (Tarefas 2 a 15 por fazer).
 - Documento de apoio ativo: `AgentDATA/docs/revisao_critica_marketing_ai_manager_2026-11-05.md`. Versoes anteriores em `AgentDATA/docs/arquivo/`.
 - Skills recomendadas registadas como `desejada` em `AgentDATA/skills/`; nada instalado.
@@ -52,14 +55,13 @@ Resultado das revisoes; nenhum bloqueia a Tarefa 2. Quem os trata:
 
 ## Proxima acao sugerida
 
-1. Decidir como integrar o ramo da Tarefa 1 (merge, PR ou manter).
-2. Antes da Tarefa 2: instalar Docker Desktop ou Postgres 17 na maquina de desenvolvimento.
-3. Notas a levar para as tarefas seguintes (resultado das revisoes da Tarefa 1):
-   - Despachos que instalem pacotes levam `UV_LINK_MODE=copy` (ver o registo de conhecimento acima).
+1. Tarefa 2 do Plano 01 (base de dados e migracao inicial). `TEST_DATABASE_URL=postgresql+psycopg://marketing_agent:marketing_agent@127.0.0.1:5433/marketing_agent_test`.
+2. Notas a levar para as tarefas seguintes (resultado das revisoes da Tarefa 1):
+   - Em Windows, despachos que instalem pacotes levam `UV_LINK_MODE=copy`. Em WSL2 nao e preciso.
    - Tarefa 2: os testes e `migrations/env.py` definem `DATABASE_URL` explicitamente, a partir de `TEST_DATABASE_URL`; `.env.example` aponta `DATABASE_URL` a base de testes, o que torna dev e teste a mesma base, a decidir quando existir uma base de desenvolvimento.
    - Tarefa 4: acrescentar `types-PyYAML` as dependencias de desenvolvimento (o `mypy` strict falha ao importar `yaml`).
    - Tarefa 9: `-m "not live"` nas opcoes do pytest por omissao; o `skipif` le `os.environ`, porque o `.env` nao o preenche.
    - Tarefa 10: valores em branco em `OPENAI_API_KEY_FILE`, `ANTHROPIC_API_KEY_FILE` e `OPENAI_BASE_URL` devem virar `None`, para a mensagem de chave em falta nomear a variavel.
    - Tarefas 14 e 15: erros de validacao tratados com `exc.errors(include_input=False)`; acrescentar `PANEL_CSRF_SECRET_FILE` a `Settings`; no arranque, apanhar `SettingsError` e `ValidationError`; resolver `.env` e ficheiros de chave a partir de um diretorio de trabalho conhecido.
-4. Pendencias do responsavel: plano Tailscale gratuito (Personal, uso nao comercial) por confirmar; destinatario do email ja guardado em `AgentDATA/secrets/alert_email_to`.
-5. Reescrever o `README.md` por completo quando o Plano 1 estiver executado.
+3. Pendencias do responsavel: plano Tailscale gratuito (Personal, uso nao comercial) por confirmar; base de desenvolvimento separada da de testes por decidir; destinatario do email ja guardado em `AgentDATA/secrets/alert_email_to`.
+4. Reescrever o `README.md` por completo quando o Plano 1 estiver executado.

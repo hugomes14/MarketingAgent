@@ -4,7 +4,7 @@
 
 - Timestamp: `2026-11-05T22:21:14+00:00`
 - Autor: `agent`
-- Assunto: `uv` falha com "Acesso negado" ao criar hardlinks na cache quando instala pacotes num ambiente novo (Windows, ambiente de execucao dos agentes)
+- Assunto: `uv` falha com "Acesso negado" ao criar hardlinks na cache quando instala pacotes num ambiente novo (so em Windows; nao acontece em WSL2)
 - Status: `ativo`
 - Retestar em: ao atualizar o `uv` ou ao mudar o ambiente de execucao dos agentes
 
@@ -54,6 +54,12 @@ Nenhum. O ficheiro pyproject.toml nao define link-mode.
 
 O modo `copy` e mais lento e usa mais disco. Se o terminal do utilizador tambem falhar, a variavel tem de constar do README.
 
+## Reteste em `2026-11-06T10:09:27+00:00`
+
+- Ambiente novo: WSL2 Ubuntu 24.04, `uv 0.13.7`, projeto em `~/MarketingAgent`.
+- `UV_PROJECT_ENVIRONMENT=<pasta temporaria> uv sync --frozen` sem `UV_LINK_MODE` instalou os pacotes sem erro.
+- Conclusao: o problema e do ambiente Windows, nao do projeto. A regra `UV_LINK_MODE=copy` so se aplica quando o agente correr em Windows.
+
 ## Pendencias
 
-Confirmar no terminal do utilizador se `uv sync` funciona sem a variavel.
+Confirmar no terminal Windows do utilizador se `uv sync` funciona sem a variavel (so relevante se se voltar a trabalhar em Windows).
