@@ -1,0 +1,17 @@
+# Precos dos modelos LOCAIS servidos pelo Ollama (rota `openai` com OPENAI_BASE_URL local).
+# Correm na propria maquina, por isso o custo por token e zero. Valores monetarios sempre como
+# texto (aspas). Usar este ficheiro so em desenvolvimento local; nunca em producao.
+# Sincronizar com: uv run marketing-agent sync-prices --file config/model_prices.local.yaml
+models:
+  - provider: openai
+    model_id: "qwen2.5:14b"
+    price_version: "local-2026-11-06"
+    valid_from: "2026-11-05T00:00:00+00:00"
+    tiers:
+      - {min_prompt_tokens: 0, input_per_million: "0", output_per_million: "0"}
+  - provider: openai
+    model_id: "llama3.1:8b"
+    price_version: "local-2026-11-06"
+    valid_from: "2026-11-05T00:00:00+00:00"
+    tiers:
+      - {min_prompt_tokens: 0, input_per_million: "0", output_per_million: "0"}

@@ -47,11 +47,17 @@ class Settings(BaseSettings):
     # Lista vazia nega todos os logins: falha segura quando nada foi configurado.
     panel_allowed_logins: list[str] = []
     panel_trusted_proxy: list[str] = ["127.0.0.1", "::1"]
+    # Ficheiro com o segredo CSRF do painel (>= 32 caracteres); obrigatorio para servir o painel.
+    panel_csrf_secret_file: Path | None = None
     max_message_chars: int = Field(default=4000, gt=0)
     model_prices_path: Path = Path("config/model_prices.yaml")
 
     @field_validator(
-        "anthropic_api_key_file", "openai_api_key_file", "openai_base_url", mode="before"
+        "anthropic_api_key_file",
+        "openai_api_key_file",
+        "openai_base_url",
+        "panel_csrf_secret_file",
+        mode="before",
     )
     @classmethod
     def _blank_means_unset(cls, value: object) -> object:

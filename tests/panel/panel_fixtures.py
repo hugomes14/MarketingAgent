@@ -1,4 +1,8 @@
-"""Fixture que monta o painel sobre servicos reais, base de teste e cliente LLM falso."""
+"""Fixture `make_panel`: o painel sobre servicos reais, base de teste e cliente LLM falso.
+
+Vive num modulo proprio (e nao num conftest) para tambem servir os testes ponta a ponta; o
+`tests/conftest.py` regista-a e o `pythonpath` do pytest expoe esta pasta.
+"""
 
 from collections.abc import Callable
 from decimal import Decimal
