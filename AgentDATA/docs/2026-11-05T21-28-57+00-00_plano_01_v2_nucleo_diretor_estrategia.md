@@ -158,7 +158,7 @@
     - `brand_id`: marca criada.
 - O Anexo A.2 lista mais tabelas (publicação, entrada, métricas). Essas ficam para os Planos 2 a 5 (YAGNI); `agent_definition` também, porque as especificações vêm de ficheiros.
 
-- [ ] **Step 1: Escrever os testes que falham.**
+- [x] **Step 1: Escrever os testes que falham.**
   - `test_migration.py::test_upgrade_head_creates_core_tables`: as 15 tabelas acima existem.
   - `test_constraints.py::test_cross_brand_head_rejected`: um `artifact_head` da marca B a apontar para um artefacto da marca A levanta `IntegrityError`.
   - `test_constraints.py::test_artifact_state_check`: `state='superseded'` levanta `IntegrityError`.
@@ -166,15 +166,24 @@
   - `test_constraints.py::test_cost_entry_unique_per_reservation`.
   - `test_constraints.py::test_turn_seq_unique_per_session`.
   - `test_constraints.py::test_submission_key_unique_per_session`.
-- [ ] **Step 2: Correr e ver falhar.** `uv run pytest tests/db -v`.
-- [ ] **Step 3: Implementar.**
+- [x] **Step 2: Correr e ver falhar.** `uv run pytest tests/db -v`.
+- [x] **Step 3: Implementar.**
   - Modelos com `JSONB` e `Numeric(12, 6)`.
   - FKs compostas `(brand_id, id)`: cada tabela referenciada tem `UNIQUE (brand_id, id)`.
   - `CHECK` para cada enum.
   - Migração `0001` escrita à mão, incluindo o *trigger*.
   - `migrations/env.py` lê `Settings.database_url`.
-- [ ] **Step 4: Correr a validação global.**
-- [ ] **Step 5: Commit.** `feat: tabelas do nucleo em postgres com integridade por marca`.
+- [x] **Step 4: Correr a validação global.**
+- [x] **Step 5: Commit.** `feat: tabelas do nucleo em postgres com integridade por marca`.
+
+**Notas de execução (Tarefa 2):**
+
+- Concluída no ramo `agent/2026-11-06_plano01_tarefa2` (commit `0b64250`). 40 testes passam (10 em `tests/db`), `ruff` e `mypy src` limpos, roundtrip `downgrade base` + `upgrade head` OK.
+- Testes além do plano: `test_migration_matches_models` (`compare_metadata` sem diferenças), `test_state_update_allowed_by_trigger` e `test_strategy_decision_unique_per_proposal`.
+- Fixture `engine` (por sessão) recria o schema `public`, aplica `alembic upgrade head` e só depois cada teste faz `TRUNCATE` das tabelas; `DATABASE_URL` é definido a partir de `TEST_DATABASE_URL` só durante a migração.
+- Nomes de restrições seguem a convenção em `db/base.py`; a migração usa os mesmos nomes por escrito.
+- `agent_step`, `interview_submission` e `interview_turn` não levam `brand_id`: a marca vem da execução ou da sessão a que pertencem.
+- `audit_log` ainda não tem proteção contra `UPDATE`/`DELETE` (o papel da aplicação só existe a partir do Plano de operação).
 
 ### Task 3: Artefactos imutáveis com versão ativa
 
