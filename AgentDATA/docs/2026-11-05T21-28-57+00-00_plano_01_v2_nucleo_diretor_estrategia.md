@@ -4,7 +4,7 @@
 
 - Timestamp: `2026-11-05T21:28:57+00:00`
 - Autor: `agent`
-- Estado de execução: **Tarefas 1 a 9 concluídas; Tarefas 10 a 15 por fazer.**
+- Estado de execução: **Tarefas 1 a 10 concluídas; Tarefas 11 a 15 por fazer.**
 - Substitui: Anexo E.1 do plano mestre (Plano 01 v1), com as correções do Anexo E, secção E.0
 
 **Goal:** Construir o esqueleto Python, o núcleo comum dos agentes e o primeiro percurso do Diretor, que termina com perfil de marca, diagnóstico e estratégia aprovados no painel.
@@ -535,15 +535,24 @@
   - `OpenAiClient(api_key_file: Path, capabilities: frozenset[Capability], base_url: str | None = None)` e `to_llm_response(raw) -> LlmResponse`, com o mesmo mapeamento e classificação de T9.
   - `build_llm_router(settings: Settings, fake: FakeLlmClient | None = None) -> LlmRouter`. Constrói **só** os clientes dos fornecedores referidos em `role_routes`. Uma chave em falta levanta `ValueError` com o nome da variável `*_FILE`. O fornecedor `fake` exige o argumento `fake`.
 
-- [ ] **Step 1: Escrever os testes que falham.**
+- [x] **Step 1: Escrever os testes que falham.**
   - `test_to_llm_response_maps_text_usage_stop`.
   - `test_router_builds_only_referenced_providers`.
   - `test_two_roles_two_providers`: `diretor`→`anthropic` e `revisor`→`openai` resolvem clientes de classes diferentes.
   - `test_missing_key_file_names_variable`.
-- [ ] **Step 2: Correr e ver falhar.**
-- [ ] **Step 3: Implementar** com o SDK oficial `openai`, consultando a documentação para os nomes exatos. Repetições automáticas do SDK desligadas.
-- [ ] **Step 4: Correr a validação global.**
-- [ ] **Step 5: Commit.** `feat: adaptador openai e router por papel`.
+- [x] **Step 2: Correr e ver falhar.**
+- [x] **Step 3: Implementar** com o SDK oficial `openai`, consultando a documentação para os nomes exatos. Repetições automáticas do SDK desligadas.
+- [x] **Step 4: Correr a validação global.**
+- [x] **Step 5: Commit.** `feat: adaptador openai e router por papel`.
+
+**Notas de execução (Tarefa 10):**
+
+- Concluída no ramo `agent/2026-11-06_plano01_tarefa10` (commit `f96cf5a`), em modo subagente: implementação e revisão da tarefa aprovada sem correções. 243 testes passam (2 testes `live` excluídos por omissão); `ruff` e `mypy src` limpos.
+- O adaptador usa a API Chat Completions do SDK `openai` 3.46.0 (nomes confirmados no pacote instalado). O SDK usa `httpx2`, tal como o da Anthropic, por isso a classificação de erros foi extraída para `llm/transport_errors.py` (movimento puro; os testes da Tarefa 9 ficaram inalterados). A OpenAI não distingue 503/529 de outros 5xx por classe, por isso a classificação é pelo código de estado: 429/503/529 dão `LlmNetworkError` e os restantes 5xx dão `LlmUnknownOutcome`.
+- `build_llm_router` só cria os clientes dos fornecedores referidos em `role_routes`; as capacidades de cada cliente são a união das das rotas que o usam; uma chave em falta (variável por definir, ficheiro inexistente ou vazio) dá `ValueError` com o nome da variável `*_FILE`; o fornecedor `fake` exige o argumento `fake`. `Settings` converte valores em branco de `ANTHROPIC_API_KEY_FILE`, `OPENAI_API_KEY_FILE` e `OPENAI_BASE_URL` em `None` (achado adiado da Tarefa 1).
+- `OpenAiClient` usa o papel `developer` para o prompt de sistema, `max_completion_tokens`, `json_schema` com `strict: False` e `max_retries=0`.
+- **O teste live foi corrido uma vez, à mão, contra o Ollama local (`qwen2.5:14b`, formato OpenAI) — não contra a OpenAI.** O Ollama ignora o papel `developer` e `max_completion_tokens`, por isso o teste só verifica texto não vazio, tokens de saída e paragem normal. Por verificar com a chave real: parâmetros de raciocínio, `json_schema` estrito, formas reais de 4xx/5xx e detalhes de `usage`. Comando: `OPENAI_API_KEY_FILE=<ficheiro com a chave> OPENAI_BASE_URL=http://127.0.0.1:11434/v1 OPENAI_LIVE_MODEL=qwen2.5:14b uv run pytest -m live tests/llm/test_openai_adapter.py`.
+- Achados menores adiados: duplicação entre os dois adaptadores (marcador de texto vazio, tipos de imagem, validadores `_require_str` e `_token_count`); um 429 `insufficient_quota` é tratado como falha de rede e o motor repete duas vezes sem proveito (custo zero); o papel `developer` faz servidores compatíveis que o ignoram descartarem o prompt de sistema; os testes leem atributos privados (`router._clients`, `client._sdk`).
 
 ### Task 11: Diretor em entrevista com submissões idempotentes
 
