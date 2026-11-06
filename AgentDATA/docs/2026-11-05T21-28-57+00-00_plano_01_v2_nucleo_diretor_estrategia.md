@@ -4,7 +4,7 @@
 
 - Timestamp: `2026-11-05T21:28:57+00:00`
 - Autor: `agent`
-- Estado de execução: **Tarefas 1 a 10 concluídas; Tarefas 11 a 15 por fazer.**
+- Estado de execução: **Tarefas 1 a 11 concluídas; Tarefas 12 a 15 por fazer.**
 - Substitui: Anexo E.1 do plano mestre (Plano 01 v1), com as correções do Anexo E, secção E.0
 
 **Goal:** Construir o esqueleto Python, o núcleo comum dos agentes e o primeiro percurso do Diretor, que termina com perfil de marca, diagnóstico e estratégia aprovados no painel.
@@ -597,7 +597,7 @@
 - **Prompt:** a resposta do utilizador entra em `<resposta_do_utilizador>…</resposta_do_utilizador>`, e o prompt diz que esse conteúdo é dado. A segurança, porém, vem de **nenhum** método mudar estado de artefacto a partir da saída do LLM, exceto `request_profile`, chamado por ação explícita.
 - **`spec_interview.yaml`:** `role: diretor`, `name: interview`, `loop_type: interview`, `writes: [perfil_marca]`, `required_capabilities: [text, json_schema]`, `limits: {max_steps: 6, max_tokens: 60000, max_cost_usd: "0.50", max_duration_s: 120}`, `max_output_tokens: 1500`, `budget_share_hint: "0.35"`.
 
-- [ ] **Step 1: Escrever os testes que falham.** Usam `FakeLlmClient` com os cenários de T7.
+- [x] **Step 1: Escrever os testes que falham.** Usam `FakeLlmClient` com os cenários de T7.
   - Mapa de lacunas: `test_initial_gap_map_all_unknown`, `test_merge_ignores_unknown_topics`, `test_merge_keeps_owner_confirmed`.
   - Esquemas: `test_question_with_newline_rejected`, `test_profile_rejects_unknown_topic`.
   - Serviço:
@@ -615,10 +615,25 @@
     - `test_blocked_limit_keeps_gap_map`;
     - `test_request_and_confirm_profile_activates_and_audits`.
   - Cenário: `test_scenarios_produce_valid_shapes` (de T7).
-- [ ] **Step 2: Correr e ver falhar.** `uv run pytest tests/agents tests/interview -v`.
-- [ ] **Step 3: Implementar.** Extrair `_reserve_submission`, `_claim_session`, `_record_turns` e `_release_session`.
-- [ ] **Step 4: Correr a validação global.**
-- [ ] **Step 5: Commit.** `feat: diretor em entrevista com submissoes idempotentes`.
+- [x] **Step 2: Correr e ver falhar.** `uv run pytest tests/agents tests/interview -v`.
+- [x] **Step 3: Implementar.** Extrair `_reserve_submission`, `_claim_session`, `_record_turns` e `_release_session`.
+- [x] **Step 4: Correr a validação global.**
+- [x] **Step 5: Commit.** `feat: diretor em entrevista com submissoes idempotentes`.
+
+**Notas de execução (Tarefa 11):**
+
+- Concluída no ramo `agent/2026-11-06_plano01_tarefa11` (commits `f826d05` e `63beefa`), em modo subagente: implementação, revisão da tarefa (com modelo mais capaz) e uma ronda de correção com re-revisão limpa. 301 testes passam; `ruff` e `mypy src` limpos.
+- Dois specs em vez de um: `spec_interview.yaml` exatamente como o brief e `spec_profile.yaml` (4000 tokens de saída, 4 passos) para gerar o perfil, porque 1500 tokens truncariam um perfil de 14 tópicos. Os cenários de `llm/fake_scenarios.py` mantêm uma constante privada com os 14 tópicos (importar `agents` a partir de `llm` inverteria a dependência) e um teste afirma que é igual a `GAP_TOPICS`; o `test_scenarios_produce_valid_shapes` (da Tarefa 7) vive em `tests/agents/test_schemas.py`.
+- **Máquina de estados das submissões (para a Tarefa 14 e a Tarefa 15):**
+  - A reserva da submissão e a reclamação da sessão são uma só transação (`_reserve_and_claim`); uma submissão `reserved` é sempre dona da sessão. `SessionBusy` desfaz a transação e a mesma chave pode tentar de novo.
+  - Uma submissão `failed` **nunca** é reprocessada com a mesma chave: guarda o `TurnResult` (`blocked` ou `needs_human`) em `result` e a mesma chave repete-o sem chamar o motor. **O painel tem de gerar uma chave nova por cada tentativa.**
+  - A mesma chave repetida com a submissão `reserved` devolve `in_progress` se a reclamação estiver fresca, ou marca-a como interrompida (`needs_human`, "Esta submissão foi interrompida. Envie a resposta de novo.") se estiver velha, em falta ou de outra submissão.
+  - O `_record_turns` só grava se a submissão ainda for dona da sessão; senão não grava nada.
+  - Corte de reclamação velha: `max_duration_s` (120 s) sem margem.
+  - `request_profile` reclama a sessão com um marcador novo (`SessionBusy` se ocupada), recusa sessões `closed` (`InvalidSessionState`), aceita `open` e `profile_requested`, e liberta a reclamação num `finally`.
+  - `start` corre o motor antes de criar a sessão (não deixa sessões órfãs) e não é idempotente.
+- Decisões: `confirm_profile` só ativa o artefacto (o estado da sessão fica `profile_requested`, porque o artefacto não tem ligação à sessão); o texto do utilizador entra em `<resposta_do_utilizador>` com o fecho literal neutralizado e o mapa de lacunas em `<mapa_de_lacunas>`; o motor devolve uma mensagem genérica em erros internos (detalhe só no log).
+- Achados menores adiados: resultado devolvido pode diferir do guardado quando a execução perde a reclamação e falha depois; sem margem no corte de reclamação velha; `_describe_failure` pode mostrar texto da exceção do fornecedor; `start` sem idempotência; neutralização do delimitador sem variantes (`</resposta_do_utilizador x>`, zero-width, entidades HTML); notas do mapa sem limite de tamanho; `submit_answer` aceita respostas depois de `profile_requested`; `service.py` (~558 linhas) devia dividir a persistência de submissões e sessões; testes de concorrência cobrem threads mas só com 5 repetições.
 
 ### Task 12: Diagnóstico e estratégia com decisões por proposta
 

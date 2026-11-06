@@ -1,0 +1,21 @@
+# Spec do Diretor em modo entrevista: um turno por execucao, uma pergunta de cada vez.
+# Valores monetarios SEMPRE como texto entre aspas (o carregador recusa numeros).
+role: diretor
+name: interview
+version: 1
+loop_type: interview
+prompt_file: prompt_interview.md
+output_schema: InterviewTurnOutput
+required_capabilities: [text, json_schema]
+tools: []
+reads: []
+writes: [perfil_marca]
+validators: []
+limits:
+  max_steps: 6
+  max_tokens: 60000
+  max_cost_usd: "0.50"
+  max_duration_s: 120
+max_output_tokens: 1500
+budget_share_hint: "0.35"
+escalation: Sem saida valida ou limite atingido, a entrevista fica guardada e o responsavel decide como continuar.
