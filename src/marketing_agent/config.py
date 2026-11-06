@@ -4,7 +4,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 Capability = Literal["text", "image_input", "json_schema"]
@@ -49,6 +49,16 @@ class Settings(BaseSettings):
     panel_trusted_proxy: list[str] = ["127.0.0.1", "::1"]
     max_message_chars: int = Field(default=4000, gt=0)
     model_prices_path: Path = Path("config/model_prices.yaml")
+
+    @field_validator(
+        "anthropic_api_key_file", "openai_api_key_file", "openai_base_url", mode="before"
+    )
+    @classmethod
+    def _blank_means_unset(cls, value: object) -> object:
+        """Uma variavel vazia (ex.: `OPENAI_BASE_URL=` no .env) equivale a nao definida."""
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
 
 
 def get_settings() -> Settings:
