@@ -4,7 +4,7 @@
 
 - Timestamp: `2026-11-05T21:28:57+00:00`
 - Autor: `agent`
-- Estado de execução: **Tarefas 1 a 12 concluídas; Tarefas 13 a 15 por fazer.**
+- Estado de execução: **Tarefas 1 a 13 concluídas; Tarefas 14 e 15 por fazer.**
 - Substitui: Anexo E.1 do plano mestre (Plano 01 v1), com as correções do Anexo E, secção E.0
 
 **Goal:** Construir o esqueleto Python, o núcleo comum dos agentes e o primeiro percurso do Diretor, que termina com perfil de marca, diagnóstico e estratégia aprovados no painel.
@@ -713,16 +713,25 @@
   - `X-Forwarded-For` e `X-Forwarded-Host` **são ignorados** para a decisão.
   - As mensagens estão em português e não revelam a lista de logins.
 
-- [ ] **Step 1: Escrever os testes que falham.**
+- [x] **Step 1: Escrever os testes que falham.**
   - `test_missing_header_401`.
   - `test_untrusted_peer_403_even_with_header` (Foco 4): o cliente `172.18.0.5` envia um cabeçalho válido.
   - `test_forwarded_for_ignored`: um peer não confiável com `X-Forwarded-For: 127.0.0.1` recebe 403.
   - `test_login_not_allowed_403`.
   - `test_allowed_login_returns_user`.
-- [ ] **Step 2: Correr e ver falhar.**
-- [ ] **Step 3: Implementar.** Acrescentar ao runbook do Plano 0 a prova no percurso real (Serve com a rede Docker, acesso direto à porta, dispositivo `tagged`). Este teste unitário só prova a condição.
-- [ ] **Step 4: Correr a validação global.**
-- [ ] **Step 5: Commit.** `feat: autenticacao do painel por proxy confiavel`.
+- [x] **Step 2: Correr e ver falhar.**
+- [x] **Step 3: Implementar.** Acrescentar ao runbook do Plano 0 a prova no percurso real (Serve com a rede Docker, acesso direto à porta, dispositivo `tagged`). Este teste unitário só prova a condição.
+- [x] **Step 4: Correr a validação global.**
+- [x] **Step 5: Commit.** `feat: autenticacao do painel por proxy confiavel`.
+
+**Notas de execução (Tarefa 13):**
+
+- Concluída no ramo `agent/2026-11-06_plano01_tarefa13` (commits `26329a4` e `c956c5e`), em modo subagente: implementação, revisão da tarefa (modelo mais capaz, em modo de atacante) e uma ronda de correção com re-revisão limpa. 378 testes passam; `ruff` e `mypy src` limpos.
+- `require_tailscale_user(request)` lê as definições de `request.app.state.settings` — **a Tarefa 14 tem de as preencher em `create_app`** (sem elas levanta `RuntimeError`). Ordem de decisão: primeiro o par de rede (`request.client` fora de `PANEL_TRUSTED_PROXY` dá 403 antes de ler qualquer cabeçalho de identidade); depois o cabeçalho `Tailscale-User-Login` (ausente dá 401; repetido, vazio, com mais de 254 caracteres ou com caracteres não imprimíveis dá 403); depois a lista de logins (comparação sem distinção de maiúsculas; lista vazia nega todos). Todos os 403 têm o mesmo texto "Acesso negado." (sem oráculo); o 401 diz "Autenticação necessária.". `X-Forwarded-For`, `X-Forwarded-Host`, `X-Forwarded-Proto`, `Forwarded` e `X-Real-IP` nunca são lidos. Os logs de recusa só têm o motivo e o IP do par.
+- `PANEL_TRUSTED_PROXY` aceita IPs e redes CIDR; um endereço IPv4 dentro de IPv6 normaliza-se; uma entrada inválida ou com prefixo 0 (`0.0.0.0/0`, `::/0`) levanta `ValueError` e todos os pedidos falham com 500 (falha fechada).
+- **Restrição obrigatória para a Tarefa 15:** o Uvicorn trata cabeçalhos de proxy por omissão (`X-Forwarded-For` reescreve `request.client`; `FORWARDED_ALLOW_IPS`). A revisão provou que com `ProxyHeadersMiddleware(trusted_hosts="*")` um par não confiável passa por dono. **O painel tem de arrancar com `proxy_headers=False` (programático, ou `--no-proxy-headers`) e sem `FORWARDED_ALLOW_IPS`, e a Tarefa 15 deve ter um teste que afirme esta configuração do Uvicorn.** Está também no docstring de `panel/auth.py` e no checklist.
+- O runbook do Plano 0 ainda não existe: criou-se `AgentDATA/docs/2026-11-06T14-26-00+00-00_checklist_prova_autenticacao_painel.md` (**por executar**) para ser incorporado quando o Plano 0 for escrito.
+- Achados menores adiados: entradas IPv4 dentro de IPv6 não se normalizam (nunca casam, o que nega); exigir `login.isascii()`; `Tailscale-User-Name` sem sanear caracteres de controlo (os templates da Tarefa 14 têm de usar `autoescape`; nomes não-ASCII podem vir codificados em RFC 2047); validar `panel_trusted_proxy` no arranque (em `create_app`) em vez de dar 500 em cada pedido; o teste de controlo da armadilha só afirma o estado 403.
 
 ### Task 14: Painel com proteção CSRF, entrevista, diagnóstico e estratégia
 
