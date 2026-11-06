@@ -7,7 +7,8 @@ passo, reserva e acerto sao transacoes curtas e proprias.
 
 import logging
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from decimal import Decimal
@@ -201,8 +202,9 @@ class RunContext:
         response = self._send(step_id, reservation_id, request)
         if isinstance(response, _Retry):
             return response
-        self._settle(reservation_id, response)
-        verdict = self._classify(response, schema)
+        with self._unknown_if_unsettled(step_id, reservation_id):
+            self._settle(reservation_id, response)
+        verdict = self._classify_or_close(step_id, response, schema)
         self._close_step(step_id, verdict.error_class)
         return self._outcome(verdict, response)
 
@@ -302,7 +304,8 @@ class RunContext:
     def _send(self, step_id: str, reservation_id: str, request: LlmRequest) -> LlmResponse | _Retry:
         """Chama o fornecedor (sem transacao aberta); falha de rede liberta a reserva."""
         try:
-            return self._s.client.complete(request)
+            with self._unknown_if_unsettled(step_id, reservation_id):
+                return self._s.client.complete(request)
         except LlmNetworkError as exc:
             self._s.budget.release(reservation_id)
             self._close_step(step_id, "network")
@@ -311,6 +314,46 @@ class RunContext:
             self._s.budget.mark_unknown(reservation_id)
             self._close_step(step_id, "unknown_outcome")
             raise NeedsHuman(f"desfecho desconhecido da chamada ao LLM: {exc}") from exc
+
+    @contextmanager
+    def _unknown_if_unsettled(self, step_id: str, reservation_id: str) -> Iterator[None]:
+        """Qualquer falha entre a reserva e o acerto deixa o desfecho desconhecido.
+
+        Conservador: a chamada pode ter sido faturada, entao nao se liberta a reserva.
+        Os erros de transporte do contrato tem tratamento proprio em `_send`. A excecao
+        original e sempre a que sobe, mesmo que o registo da falha tambem falhe.
+        """
+        try:
+            yield
+        except (LlmNetworkError, LlmUnknownOutcome):
+            raise
+        except BaseException:
+            self._record_unknown(step_id, reservation_id)
+            raise
+
+    def _record_unknown(self, step_id: str, reservation_id: str) -> None:
+        try:
+            self._s.budget.mark_unknown(reservation_id)
+        except Exception as exc:
+            logger.error("execucao %s: mark_unknown falhou (%s)", self.run_id, type(exc).__name__)
+        self._close_step_quietly(step_id, "unknown_outcome")
+
+    def _close_step_quietly(self, step_id: str, error_class: StepError) -> None:
+        """Fecha o passo sem deixar uma falha secundaria mascarar a excecao original."""
+        try:
+            self._close_step(step_id, error_class)
+        except Exception as exc:
+            logger.error("execucao %s: fecho do passo falhou (%s)", self.run_id, type(exc).__name__)
+
+    def _classify_or_close[M: BaseModel](
+        self, step_id: str, response: LlmResponse, schema: type[M]
+    ) -> _Verdict[M]:
+        """Classifica; se o codigo de validacao levantar, a reserva ja foi acertada."""
+        try:
+            return self._classify(response, schema)
+        except Exception:
+            self._close_step_quietly(step_id, "invalid_output")
+            raise
 
     def _settle(self, reservation_id: str, response: LlmResponse) -> None:
         self._s.budget.settle(reservation_id, response.usage, response.provider_request_id)

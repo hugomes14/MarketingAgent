@@ -21,7 +21,7 @@ from marketing_agent.budget.pricing import (
     sync_model_prices,
 )
 from marketing_agent.clock import FixedClock
-from marketing_agent.config import RoleRoute
+from marketing_agent.config import Capability, RoleRoute
 from marketing_agent.db.models import AgentRun, AgentStep, CostEntry, CostReservation
 from marketing_agent.harness.engine import (
     AgentEngine,
@@ -36,6 +36,7 @@ from marketing_agent.llm.fake import FakeLlmClient
 from marketing_agent.llm.router import LlmRouter
 from marketing_agent.llm.types import (
     LlmNetworkError,
+    LlmRequest,
     LlmResponse,
     LlmUnknownOutcome,
     Message,
@@ -442,3 +443,93 @@ def test_missing_route_fails_without_run_row(make_rig: RigFactory) -> None:
     assert result.message is not None and "sem_rota" in result.message
     with rig.factory() as session:
         assert session.scalars(select(AgentRun)).all() == []
+
+
+class RaisingClient:
+    """Cliente cujo `complete` levanta a excecao dada (nao e erro de transporte do contrato)."""
+
+    capabilities: frozenset[Capability] = frozenset({"text", "json_schema"})
+
+    def __init__(self, error: BaseException) -> None:
+        self._error = error
+
+    def complete(self, request: LlmRequest) -> LlmResponse:
+        raise self._error
+
+
+def install_client(rig: Rig, error: BaseException) -> None:
+    """Troca o cliente do router por um que levanta `error`."""
+    route = RoleRoute(
+        provider="fake", model_id="fake-1", capabilities=frozenset({"text", "json_schema"})
+    )
+    rig.engine._router = LlmRouter({"estrategista": route}, {"fake": RaisingClient(error)})
+
+
+def test_client_unexpected_error_marks_reservation_unknown(make_rig: RigFactory) -> None:
+    rig = make_rig([])
+    install_client(rig, RuntimeError("bug no sdk"))
+    result = rig.run(OneCallLoop())
+    assert result.status is RunStatus.FAILED
+    assert result.message == "RuntimeError: bug no sdk"
+    assert [r.status for r in rig.reservations()] == ["unknown_outcome"]
+    assert rig.step_errors() == ["unknown_outcome"]
+    assert rig.entries() == []
+    assert rig.run_row(result.run_id).status == "failed"
+
+
+def test_settle_failure_marks_reservation_unknown(
+    make_rig: RigFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def broken_settle(*args: object, **kwargs: object) -> Decimal:
+        raise RuntimeError("base caiu no acerto")
+
+    monkeypatch.setattr(BudgetController, "settle", broken_settle)
+    rig = make_rig([response()])
+    result = rig.run(OneCallLoop())
+    assert result.status is RunStatus.FAILED
+    assert result.message == "RuntimeError: base caiu no acerto"
+    assert [r.status for r in rig.reservations()] == ["unknown_outcome"]
+    assert rig.step_errors() == ["unknown_outcome"]
+    assert rig.entries() == []
+
+
+def test_raising_validator_closes_step_as_invalid_output(
+    make_rig: RigFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def broken_validator(model: BaseModel) -> list[str]:
+        raise KeyError("campo em falta")
+
+    monkeypatch.setitem(VALIDATORS, "quebrado", broken_validator)
+    rig = make_rig([response()])
+    result = rig.run(OneCallLoop(), make_spec(validators=["quebrado"]))
+    assert result.status is RunStatus.FAILED
+    assert result.message is not None and result.message.startswith("KeyError")
+    assert rig.step_errors() == ["invalid_output"]
+    assert [r.status for r in rig.reservations()] == ["settled"]
+    assert len(rig.entries()) == 1
+
+
+def test_keyboard_interrupt_from_client_marks_unknown_and_closes_run(make_rig: RigFactory) -> None:
+    rig = make_rig([])
+    install_client(rig, KeyboardInterrupt())
+    with pytest.raises(KeyboardInterrupt):
+        rig.run(OneCallLoop())
+    assert [r.status for r in rig.reservations()] == ["unknown_outcome"]
+    assert rig.step_errors() == ["unknown_outcome"]
+    with rig.factory() as session:
+        row = session.scalars(select(AgentRun)).one()
+    assert (row.status, row.ended_at is not None) == ("failed", True)
+
+
+def test_secondary_failure_in_mark_unknown_keeps_original_error(
+    make_rig: RigFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def broken_mark(*args: object, **kwargs: object) -> None:
+        raise ValueError("falha secundaria")
+
+    monkeypatch.setattr(BudgetController, "mark_unknown", broken_mark)
+    rig = make_rig([])
+    install_client(rig, RuntimeError("original"))
+    result = rig.run(OneCallLoop())
+    assert result.message == "RuntimeError: original"
+    assert rig.step_errors() == ["unknown_outcome"]
