@@ -4,7 +4,7 @@
 
 - Timestamp: `2026-11-05T21:28:57+00:00`
 - Autor: `agent`
-- Estado de execução: **Tarefas 1 a 8 concluídas; Tarefas 9 a 15 por fazer.**
+- Estado de execução: **Tarefas 1 a 9 concluídas; Tarefas 10 a 15 por fazer.**
 - Substitui: Anexo E.1 do plano mestre (Plano 01 v1), com as correções do Anexo E, secção E.0
 
 **Goal:** Construir o esqueleto Python, o núcleo comum dos agentes e o primeiro percurso do Diretor, que termina com perfil de marca, diagnóstico e estratégia aprovados no painel.
@@ -501,7 +501,7 @@
   - `to_llm_response(raw: Mapping[str, object]) -> LlmResponse`: junta os blocos de texto, mapeia `usage` e converte `stop_reason` (`end_turn` → `end`, `max_tokens` → `max_tokens`, `refusal` → `refusal`, o resto → `other`).
   - `classify_transport_error(exc: Exception) -> type[Exception]`: ligação recusada antes de enviar dá `LlmNetworkError`; timeout de leitura dá `LlmUnknownOutcome`.
 
-- [ ] **Step 1: Escrever os testes que falham.** Usam *fixtures* JSON representativas.
+- [x] **Step 1: Escrever os testes que falham.** Usam *fixtures* JSON representativas.
   - `test_multiple_text_blocks_joined`.
   - `test_usage_mapped`.
   - `test_refusal_mapped`.
@@ -509,10 +509,20 @@
   - `test_read_timeout_is_unknown_outcome`.
   - `test_key_read_from_file`.
   - `test_live_call` com `@pytest.mark.live`: só corre com `ANTHROPIC_API_KEY_FILE` definido.
-- [ ] **Step 2: Correr e ver falhar.**
-- [ ] **Step 3: Implementar.** **Antes de escrever, ler o skill `claude-api`** (ou a documentação oficial do SDK `anthropic`) para os nomes de parâmetros e o formato da resposta; não adivinhar a API. Desligar as repetições automáticas do SDK, porque o motor decide as repetições.
-- [ ] **Step 4: Correr a validação global**, sem `live`. Correr o teste `live` uma vez à mão e anotar o resultado no commit.
-- [ ] **Step 5: Commit.** `feat: adaptador anthropic`.
+- [x] **Step 2: Correr e ver falhar.**
+- [x] **Step 3: Implementar.** **Antes de escrever, ler o skill `claude-api`** (ou a documentação oficial do SDK `anthropic`) para os nomes de parâmetros e o formato da resposta; não adivinhar a API. Desligar as repetições automáticas do SDK, porque o motor decide as repetições.
+- [x] **Step 4: Correr a validação global**, sem `live`. Correr o teste `live` uma vez à mão e anotar o resultado no commit.
+- [x] **Step 5: Commit.** `feat: adaptador anthropic`.
+
+**Notas de execução (Tarefa 9):**
+
+- Concluída no ramo `agent/2026-11-06_plano01_tarefa9` (commit `0030973`), em modo subagente: implementação e revisão da tarefa aprovada sem correções. 165 testes passam (1 teste `live` excluído por omissão); `ruff` e `mypy src` limpos.
+- Os nomes do SDK `anthropic` 2.6.0 foram confirmados no pacote instalado. O SDK repete pedidos por omissão, por isso o cliente é criado com `max_retries=0`.
+- Decisões: `Usage.input_tokens` soma os tokens de cache (o escalão do Haiku depende do prompt total); `provider_request_id` é o `id` da mensagem; falhas de ligação e respostas 429/503/529 dão `LlmNetworkError`; timeout de leitura e restantes 5xx dão `LlmUnknownOutcome`; outros 4xx propagam a exceção original (o motor marca a reserva como desconhecida); `classify_transport_error` devolve `type[Exception] | None` (`None` = não classificado); o adaptador nunca envia blocos de texto vazios nem `thinking`, `temperature` ou prefill.
+- `AnthropicClient` tem um parâmetro opcional `base_url` (acrescentado a seguir ao brief) para apontar a um emulador local. O pytest passa a correr `-m "not live"` por omissão.
+- **O teste live foi corrido uma vez, à mão, contra o Ollama local (`qwen2.5:14b`), que emula a API Messages — não contra a Anthropic.** Ficam por verificar com a chave real: cabeçalhos, saída estruturada (`output_config.format`), erros 4xx/5xx reais e campos de cache. Comando: `ANTHROPIC_API_KEY_FILE=<ficheiro com a chave> ANTHROPIC_BASE_URL=http://127.0.0.1:11434 ANTHROPIC_LIVE_MODEL=qwen2.5:14b uv run pytest -m live tests/llm/test_anthropic_adapter.py`.
+- **Para a Tarefa 10:** o Ollama também responde ao formato OpenAI (`/v1/chat/completions`), por isso o teste live do `OpenAiClient` pode usar `base_url=http://127.0.0.1:11434/v1`.
+- Achados menores adiados: declarar `httpx2` em `pyproject.toml` (é importado diretamente mas só é dependência transitiva); construir `messages` e `output_config` antes do `try` (um erro determinístico nunca enviado deixa a reserva como desconhecida); `timeout_s=120` é por fase, e gerações longas podem dar `ReadTimeout` faturado e tratado como desconhecido; um `ValueError` ao ler uma resposta paga deixa a reserva como desconhecida.
 
 ### Task 10: Adaptador OpenAI e construção do router
 
