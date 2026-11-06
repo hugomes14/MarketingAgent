@@ -215,34 +215,34 @@ class ArtifactStore:
         return row
 
     def _upsert_head(self, session: Session, row: Artifact, actor: str, scope: str) -> None:
-        """Troca a versao ativa guardando a anterior.
+        """Troca a versao ativa guardando a anterior, num unico `INSERT ... ON CONFLICT`.
 
-        A linha atual do head e bloqueada antes de ler o anterior, para duas aprovacoes
-        concorrentes da mesma chave nao perderem `previous_artifact_id`. Se ainda nao
-        existe head, a corrida e resolvida pelo `ON CONFLICT` (a perdedora repete a leitura).
+        No `DO UPDATE`, `ArtifactHead.active_artifact_id` e o valor da linha existente (nao
+        `excluded`), logo `previous_artifact_id` e lido e escrito atomicamente. O Postgres
+        bloqueia a linha em conflito, por isso aprovacoes concorrentes da mesma chave
+        serializam-se, inclusive a primeira ativacao (sem linha previa nao ha o que ler).
+        Numa insercao nova, `previous_artifact_id` fica `None`.
         """
-        key = (ArtifactHead.brand_id == row.brand_id, ArtifactHead.type == row.type)
-        previous = session.scalars(
-            select(ArtifactHead.active_artifact_id)
-            .where(*key, ArtifactHead.scope == scope)
-            .with_for_update()
-        ).one_or_none()
-        values = {
-            "brand_id": row.brand_id,
-            "type": row.type,
-            "scope": scope,
-            "active_artifact_id": row.id,
-            "previous_artifact_id": previous,
-            "activated_by": actor,
-            "activated_at": self._clock.now(),
-        }
-        statement = insert(ArtifactHead).values(id=new_id(), **values)
-        update = {
-            name: values[name] for name in values if name not in ("brand_id", "type", "scope")
-        }
+        now = self._clock.now()
+        statement = insert(ArtifactHead).values(
+            id=new_id(),
+            brand_id=row.brand_id,
+            type=row.type,
+            scope=scope,
+            active_artifact_id=row.id,
+            previous_artifact_id=None,
+            activated_by=actor,
+            activated_at=now,
+        )
         session.execute(
             statement.on_conflict_do_update(
-                index_elements=["brand_id", "type", "scope"], set_=update
+                index_elements=["brand_id", "type", "scope"],
+                set_={
+                    "previous_artifact_id": ArtifactHead.active_artifact_id,
+                    "active_artifact_id": row.id,
+                    "activated_by": actor,
+                    "activated_at": now,
+                },
             )
         )
 

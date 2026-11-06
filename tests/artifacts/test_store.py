@@ -1,6 +1,8 @@
 """Ciclo de vida dos artefactos: imutabilidade, versao ativa, projecao e auditoria."""
 
+import threading
 from collections.abc import Mapping
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 from sqlalchemy import select, text
@@ -124,3 +126,47 @@ def test_payload_preserved_in_storage(
             text("SELECT payload FROM artifact WHERE id = :id"), {"id": v1}
         ).scalar_one()
     assert stored == PERFIL_V1
+
+
+def test_previous_recorded_per_scope_and_type(
+    store: ArtifactStore, session_factory: Factory, brand_id: str
+) -> None:
+    scope = "week:2026-W46"
+    ids = []
+    for _ in range(2):
+        plan = store.create(brand_id, ArtifactType.PLANO, {"n": len(ids)})
+        store.submit(plan.id, "ana")
+        ids.append(store.approve_and_activate(plan.id, "ana", scope).id)
+    other = activate_profile(store, brand_id, PERFIL_V1)
+    with session_factory() as session:
+        heads = {(h.type, h.scope): h for h in session.scalars(select(ArtifactHead)).all()}
+    plan_head = heads[("plano", scope)]
+    assert (plan_head.active_artifact_id, plan_head.previous_artifact_id) == (ids[1], ids[0])
+    profile_head = heads[("perfil_marca", "brand")]
+    assert (profile_head.active_artifact_id, profile_head.previous_artifact_id) == (other, None)
+
+
+def test_concurrent_first_activations_keep_previous(
+    store: ArtifactStore, session_factory: Factory, brand_id: str
+) -> None:
+    for repetition in range(20):
+        scope = f"race:{repetition}"
+        ids = []
+        for n in range(2):
+            draft = store.create(brand_id, ArtifactType.PLANO, {"n": n})
+            store.submit(draft.id, "ana")
+            ids.append(draft.id)
+        barrier = threading.Barrier(2)
+
+        def approve(
+            artifact_id: str, scope: str = scope, barrier: threading.Barrier = barrier
+        ) -> None:
+            barrier.wait()
+            store.approve_and_activate(artifact_id, "ana", scope)
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            for future in [pool.submit(approve, artifact_id) for artifact_id in ids]:
+                future.result()
+        with session_factory() as session:
+            head = session.scalars(select(ArtifactHead).where(ArtifactHead.scope == scope)).one()
+        assert {head.active_artifact_id, head.previous_artifact_id} == set(ids)
