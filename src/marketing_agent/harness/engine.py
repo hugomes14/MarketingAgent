@@ -49,6 +49,9 @@ NETWORK_BACKOFF_S = (1.0, 2.0)  # uma repeticao por espera
 MAX_ERROR_SUMMARY_CHARS = 500
 CHARS_PER_TOKEN = 3  # estimativa conservadora de tokens de entrada
 
+# Validador de contexto passado por quem chama: saida tipada -> violacoes (vazio = ok).
+type ExtraValidator[M: BaseModel] = Callable[[M], list[str]]
+
 StepError = Literal["invalid_output", "refusal", "truncated", "network", "limit", "unknown_outcome"]
 
 
@@ -159,16 +162,25 @@ class RunContext:
         self._steps_done = 0
         self._tokens_used = 0
 
-    def call_llm[M: BaseModel](self, system: str, messages: list[Message], schema: type[M]) -> M:
+    def call_llm[M: BaseModel](
+        self,
+        system: str,
+        messages: list[Message],
+        schema: type[M],
+        extra_validator: ExtraValidator[M] | None = None,
+    ) -> M:
         """Chama o LLM e devolve a saida validada por `schema` e pelos `spec.validators`.
 
-        Repete saidas invalidas (ate 3 tentativas) e falhas de rede (ate 2 repeticoes);
-        recusa, truncagem e desfecho desconhecido levantam `NeedsHuman` sem repetir.
+        `extra_validator` e para verificacoes que dependem de contexto que so o chamador tem
+        (nao e registado): as suas violacoes somam-se as dos validadores do spec e contam
+        como `invalid_output`. Repete saidas invalidas (ate 3 tentativas) e falhas de rede
+        (ate 2 repeticoes); recusa, truncagem e desfecho desconhecido levantam `NeedsHuman`
+        sem repetir.
         """
         state = _RetryState()
         history = list(messages)
         while True:
-            result = self._attempt(system, history, schema)
+            result = self._attempt(system, history, schema, extra_validator)
             if not isinstance(result, _Retry):
                 return result
             history = self._retry_policy(result, state, history)
@@ -186,7 +198,11 @@ class RunContext:
         )
 
     def _attempt[M: BaseModel](
-        self, system: str, messages: list[Message], schema: type[M]
+        self,
+        system: str,
+        messages: list[Message],
+        schema: type[M],
+        extra_validator: ExtraValidator[M] | None,
     ) -> M | _Retry:
         self._check_limits()
         estimate = _estimate_input_tokens(system, messages)
@@ -204,11 +220,13 @@ class RunContext:
             return response
         with self._unknown_if_unsettled(step_id, reservation_id):
             self._settle(reservation_id, response)
-        verdict = self._classify_or_close(step_id, response, schema)
+        verdict = self._classify_or_close(step_id, response, schema, extra_validator)
         self._close_step(step_id, verdict.error_class)
         return self._outcome(verdict, response)
 
-    def _classify[M: BaseModel](self, response: LlmResponse, schema: type[M]) -> _Verdict[M]:
+    def _classify[M: BaseModel](
+        self, response: LlmResponse, schema: type[M], extra_validator: ExtraValidator[M] | None
+    ) -> _Verdict[M]:
         if response.stop_reason is StopReason.refusal:
             return _Verdict("refusal", "o modelo recusou responder", None)
         if response.stop_reason is StopReason.max_tokens:
@@ -218,6 +236,8 @@ class RunContext:
         except ValidationError as exc:
             return _Verdict("invalid_output", _summarize_validation(exc), None)
         violations = [v for name in self.spec.validators for v in VALIDATORS[name](parsed)]
+        if extra_validator is not None:
+            violations += extra_validator(parsed)
         if violations:
             return _Verdict("invalid_output", "; ".join(violations), None)
         return _Verdict(None, "", parsed)
@@ -346,11 +366,15 @@ class RunContext:
             logger.error("execucao %s: fecho do passo falhou (%s)", self.run_id, type(exc).__name__)
 
     def _classify_or_close[M: BaseModel](
-        self, step_id: str, response: LlmResponse, schema: type[M]
+        self,
+        step_id: str,
+        response: LlmResponse,
+        schema: type[M],
+        extra_validator: ExtraValidator[M] | None,
     ) -> _Verdict[M]:
         """Classifica; se o codigo de validacao levantar, a reserva ja foi acertada."""
         try:
-            return self._classify(response, schema)
+            return self._classify(response, schema, extra_validator)
         except Exception:
             self._close_step_quietly(step_id, "invalid_output")
             raise

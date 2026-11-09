@@ -1,13 +1,15 @@
-"""Guioes prontos para o `FakeLlmClient`: entrevista, diagnostico, estrategia e falhas.
+"""Guioes prontos para o `FakeLlmClient`: entrevista, diagnostico, estrategia, plano e falhas.
 
 Os corpos JSON sao texto de `json.dumps`; os esquemas que os validam chegam mais tarde.
 """
 
 import json
+from datetime import timedelta
 from typing import Final
 
 from marketing_agent.budget.pricing import Usage
 from marketing_agent.llm.types import LlmNetworkError, LlmResponse, StopReason
+from marketing_agent.planning.validation import week_range
 
 Script = list[LlmResponse | Exception]
 
@@ -161,6 +163,45 @@ def _strategy() -> dict[str, object]:
 def diagnosis_and_strategy() -> Script:
     """Diagnostico seguido da estrategia."""
     return [_json_response(_diagnosis()), _json_response(_strategy())]
+
+
+_PLAN_THEMES: Final = (
+    ("Pao do dia saido do forno", "Producao artesanal"),
+    ("Os vizinhos que nos visitam", "Proximidade"),
+    ("O que dizem os clientes", "Prova social"),
+)
+_PLAN_CHANNELS: Final = (["instagram"], ["facebook", "instagram"], ["facebook"])
+
+
+def weekly_plan(week: str, slots: int = 3) -> Script:
+    """Plano valido de `slots` publicacoes (1 a 14) na semana ISO `week`, sem `kb_refs`.
+
+    Espalha os dias com salto de 2 (seg, qua, sex, dom, ...): ate 7 slots ficam um por dia.
+    A primeira publicacao liga-se a experiencia 0 da estrategia do cenario `_strategy`.
+    """
+    monday, _ = week_range(week)
+    plan_slots = []
+    for index in range(slots):
+        theme, pillar = _PLAN_THEMES[index % len(_PLAN_THEMES)]
+        plan_slots.append(
+            {
+                "slot_key": f"{week}-{index + 1}",
+                "data": (monday + timedelta(days=index * 2 % 7)).isoformat(),
+                "canais": _PLAN_CHANNELS[index % len(_PLAN_CHANNELS)],
+                "tema": theme,
+                "pilar": pillar,
+                "objetivo": "Gerar mensagens e encomendas.",
+                "experiment_index": 0 if index == 0 else None,
+                "kb_refs": [],
+                "justificacao": f"Reforca o pilar {pillar.lower()} com um tema concreto.",
+            }
+        )
+    body: dict[str, object] = {
+        "semana": week,
+        "slots": plan_slots,
+        "suposicoes": ["A capacidade de entrega suporta o numero de publicacoes proposto."],
+    }
+    return [_json_response(body)]
 
 
 def invalid_then_valid(valid_json: str) -> Script:

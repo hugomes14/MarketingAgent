@@ -28,6 +28,7 @@ from marketing_agent.clock import Clock
 from marketing_agent.config import Settings
 from marketing_agent.db.base import make_engine, make_session_factory
 from marketing_agent.harness.spec import SpecLoadError, load_agent_spec
+from marketing_agent.planning.schemas import PlanoSemanal
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +37,7 @@ _DIRECTOR_SCHEMAS: Mapping[str, type[BaseModel]] = {
     "PerfilMarca": PerfilMarca,
     "Diagnostico": Diagnostico,
     "Estrategia": Estrategia,
+    "PlanoSemanal": PlanoSemanal,
 }
 
 
