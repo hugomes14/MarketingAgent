@@ -51,6 +51,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--allow-non-loopback", action="store_true", help="Permite escutar fora do loopback."
     )
 
+    sub.add_parser(
+        "worker",
+        help="Processa a fila de geração de texto (um job de cada vez) até SIGINT/SIGTERM.",
+    )
+
     proxy = sub.add_parser(
         "dev-proxy", help="Só desenvolvimento: proxy local que injeta a identidade."
     )

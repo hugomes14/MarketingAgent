@@ -5,34 +5,54 @@ traceback); 1 erro inesperado. Os segredos nunca sao impressos.
 """
 
 import argparse
+import logging
 import os
+import signal
 import sys
-from collections.abc import Callable, Sequence
+import threading
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import contextmanager
 from datetime import timedelta
 from pathlib import Path
+from types import FrameType
 
 import uvicorn
 import yaml
 from alembic import command
 from alembic.config import Config
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import Session, sessionmaker
 
+from marketing_agent.artifacts.store import ArtifactStore
 from marketing_agent.brands import ensure_brand
 from marketing_agent.budget.pricing import ModelPrice, load_model_prices, sync_model_prices
 from marketing_agent.cli_parser import build_parser
 from marketing_agent.clock import SystemClock
+from marketing_agent.config import Settings
+from marketing_agent.content.pipeline import ContentPipeline
 from marketing_agent.dev_proxy import DevProxyServer, build_dev_proxy
+from marketing_agent.feedback.service import FeedbackService
+from marketing_agent.harness.engine import AgentEngine
+from marketing_agent.jobs.queue import JobQueue
+from marketing_agent.jobs.worker import Worker
+from marketing_agent.kb.service import KbService
+from marketing_agent.llm.factory import build_llm_router
+from marketing_agent.llm.router import LlmRouter
 from marketing_agent.loopback import is_loopback_host, parse_loopback_endpoint
 from marketing_agent.startup import (
     StartupError,
     build_budget_controller,
+    content_job_lease,
     database_error_message,
     load_settings,
     open_database,
+    worker_stale_after,
 )
+from marketing_agent.strategy.service import StrategyService
 
 PANEL_FACTORY = "marketing_agent.panel.main:create_app_from_env"
 FORWARDED_ALLOW_IPS = "FORWARDED_ALLOW_IPS"
+WORKER_ROLES = ("copywriter", "revisor")
 
 Command = Callable[[argparse.Namespace], int]
 
@@ -147,6 +167,79 @@ def cmd_serve(args: argparse.Namespace) -> int:
     return 0
 
 
+def _build_worker_router(settings: Settings) -> LlmRouter:
+    """Router do worker: exige as rotas do Copywriter e do Revisor e recusa o fornecedor `fake`."""
+    missing = [role for role in WORKER_ROLES if role not in settings.role_routes]
+    if missing:
+        raise StartupError(f"ROLE_ROUTES: faltam as rotas de {', '.join(missing)}")
+    if any(route.provider == "fake" for route in settings.role_routes.values()):
+        raise StartupError("ROLE_ROUTES: o fornecedor 'fake' so existe nos testes")
+    try:
+        return build_llm_router(settings)
+    except ValueError as exc:
+        raise StartupError(str(exc)) from exc
+
+
+def build_worker(settings: Settings, session_factory: sessionmaker[Session]) -> Worker:
+    """Liga motor, servicos, fila (com a lease dos specs) e pipeline num `Worker`."""
+    clock = SystemClock()
+    budget = build_budget_controller(settings, session_factory, clock)
+    store = ArtifactStore(session_factory, clock)
+    engine = AgentEngine(session_factory, _build_worker_router(settings), budget, store, clock)
+    queue = JobQueue(session_factory, clock, content_job_lease())
+    pipeline = ContentPipeline(
+        session_factory,
+        engine,
+        KbService(session_factory, store, clock),
+        FeedbackService(session_factory, clock),
+        queue,
+        clock,
+        store,
+        StrategyService(session_factory, engine, store, clock),
+    )
+    older_than = worker_stale_after()
+    return Worker(
+        queue,
+        pipeline,
+        f"worker-{os.getpid()}",
+        recover_reservations=lambda: budget.recover_stale(older_than),
+    )
+
+
+@contextmanager
+def stop_on_signals(stop: threading.Event) -> Iterator[None]:
+    """`SIGINT` e `SIGTERM` ativam `stop` (sem traceback); os tratadores antigos voltam ao sair."""
+
+    def request_stop(signum: int, frame: FrameType | None) -> None:
+        stop.set()
+
+    handled = (signal.SIGINT, signal.SIGTERM)
+    previous = {sig: signal.signal(sig, request_stop) for sig in handled}
+    try:
+        yield
+    finally:
+        for sig, handler in previous.items():
+            signal.signal(sig, handler)
+
+
+def cmd_worker(args: argparse.Namespace) -> int:
+    """Processa a fila de geracao de texto ate `SIGINT`/`SIGTERM` (o job em curso termina)."""
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    settings = load_settings()
+    stop = threading.Event()
+    with open_database(settings) as session_factory:
+        worker = build_worker(settings, session_factory)
+        with stop_on_signals(stop):
+            print(
+                "worker a escutar a fila (Ctrl+C ou SIGTERM para parar)",
+                file=sys.stderr,
+                flush=True,
+            )
+            worker.run_forever(stop)
+    print("worker terminado", file=sys.stderr)
+    return 0
+
+
 def serve_forever(server: DevProxyServer) -> None:
     """Serve ate Ctrl+C e liberta a porta."""
     try:
@@ -183,6 +276,7 @@ COMMANDS: dict[str, Command] = {
     "recover-reservations": cmd_recover_reservations,
     "migrate": cmd_migrate,
     "serve": cmd_serve,
+    "worker": cmd_worker,
     "dev-proxy": cmd_dev_proxy,
 }
 
