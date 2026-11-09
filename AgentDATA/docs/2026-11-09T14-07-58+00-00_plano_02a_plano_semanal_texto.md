@@ -4,7 +4,7 @@
 
 - Timestamp: `2026-11-09T14:07:58+00:00`
 - Autor: `agent`
-- Estado de execução: **Tarefas 1 a 5 concluídas; Tarefas 6 a 12 por fazer.**
+- Estado de execução: **Tarefas 1 a 6 concluídas; Tarefas 7 a 12 por fazer.**
 
 **Goal:** A partir da estratégia ativa, propor e aprovar o plano da semana e gerar em segundo plano, para cada publicação aprovada no plano, uma legenda revista que o responsável aprova, edita, devolve ou rejeita no painel.
 
@@ -261,11 +261,19 @@ tests/{db,kb,jobs,planning,content,feedback,panel,e2e}/...
     - `list_examples(brand_id: str) -> list[FeedbackExampleView]`;
     - `deactivate(brand_id: str, example_id: str, actor: str) -> None`.
 
-- [ ] **Step 1: Testes que falham.** `test_nao_usar_records_nothing`, `test_temporario_requires_future_expiry`, `test_prompt_examples_limits_and_order`, `test_expired_and_inactive_excluded`, `test_correcao_factual_not_in_prompt_examples`.
-- [ ] **Step 2: Correr e ver falhar.**
-- [ ] **Step 3: Implementar.**
-- [ ] **Step 4: Validação global.**
-- [ ] **Step 5: Commit.** `feat: exemplos de feedback com tipo, validade e limites no prompt`.
+- [x] **Step 1: Testes que falham.** `test_nao_usar_records_nothing`, `test_temporario_requires_future_expiry`, `test_prompt_examples_limits_and_order`, `test_expired_and_inactive_excluded`, `test_correcao_factual_not_in_prompt_examples`.
+- [x] **Step 2: Correr e ver falhar.**
+- [x] **Step 3: Implementar.**
+- [x] **Step 4: Validação global.**
+- [x] **Step 5: Commit.** `feat: exemplos de feedback com tipo, validade e limites no prompt`.
+
+**Notas de execução (Tarefa 6):**
+
+- Concluída (commit `bba7df4`), em modo subagente: implementação e revisão sem achados Critical/Important. 1079 testes passam (24 novos); `ruff` e `mypy src` limpos.
+- `FeedbackService`: `record_in` corre na sessão do chamador (sem commit; a auditoria `feedback.record` leva só o tipo e o `post_id`), `nao_usar` não escreve nada, `temporario` exige `expires_at` com fuso e estritamente no futuro (`== agora` conta como expirado), `expires_at` só para `temporario`; limites de texto 1–2500 / 1–500; revisão de outra marca ou post → `FeedbackError` com mensagem fixa. `prompt_examples` filtra (tipo, ativo, não expirado) **antes** de limitar (5 `estilo`, 3 `negativo`), do mais recente para o mais antigo; `correcao_factual` e `temporario` não entram. `deactivate` é idempotente e restrito à marca (mesma mensagem para id desconhecido e de outra marca).
+- **Para a Tarefa 9:** validar `choice` com o `Literal` (Pydantic) na fronteira web antes de `record_in`; um valor fora do conjunto chegaria ao CHECK da base e o `IntegrityError` pode incluir o texto.
+- Menores adiados: testes de "filtrar antes de limitar" e da fronteira `expires_at == agora` em `prompt_examples`; asserção do desempate `id desc`; `_audit` volta a ler o relógio.
+
 
 ### Task 7: Copywriter e Revisor: esquemas, validação e ciclos
 
