@@ -1,6 +1,12 @@
-"""CLI de operacao: marca, precos, reservas, migracoes e arranque do painel."""
+"""CLI de operacao: marca, precos, reservas, migracoes, painel e worker."""
 
+import json
+import os
+import selectors
+import signal
 import socket
+import subprocess
+import sys
 import threading
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
@@ -20,6 +26,7 @@ from marketing_agent.budget.pricing import PriceBook
 from marketing_agent.clock import Clock, SystemClock
 from marketing_agent.db.base import make_engine, make_session_factory
 from marketing_agent.db.models import AgentRun, Brand, CostReservation
+from marketing_agent.jobs.worker import Worker
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 Factory = sessionmaker[Session]
@@ -390,3 +397,102 @@ def test_dev_proxy_prints_banner_and_serves(
     )
     assert code == 0 and served == [("127.0.0.1", port)]
     assert "dono@local" in out + err and "DESENVOLVIMENTO" in (out + err)
+
+
+# --- worker ----------------------------------------------------------------------------------
+
+WORKER_ROUTES = {
+    role: {"provider": "openai", "model_id": "modelo", "capabilities": ["text", "json_schema"]}
+    for role in ("diretor", "copywriter", "revisor")
+}
+
+
+@pytest.fixture
+def worker_environment(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> dict[str, str]:
+    """Rotas e chave de API de pacotilha: o worker constroi o cliente mas nunca chama a rede."""
+    key_file = tmp_path / "openai.key"
+    key_file.write_text("chave-de-teste")
+    values = {
+        "ROLE_ROUTES": json.dumps(WORKER_ROUTES),
+        "OPENAI_API_KEY_FILE": str(key_file),
+        "OPENAI_BASE_URL": "http://127.0.0.1:9/v1",
+    }
+    for name, value in values.items():
+        monkeypatch.setenv(name, value)
+    return values
+
+
+@pytest.mark.parametrize("sent", [signal.SIGINT, signal.SIGTERM])
+def test_worker_stops_cleanly_on_signal_in_process(
+    sent: signal.Signals,
+    session_factory: Factory,
+    worker_environment: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    original = Worker.run_forever
+    handlers_before = {sig: signal.getsignal(sig) for sig in (signal.SIGINT, signal.SIGTERM)}
+
+    def signal_then_run(self: Worker, stop: threading.Event) -> None:
+        # Garante que o worker ja instalou o seu tratador: sem ele o sinal mataria o pytest.
+        assert signal.getsignal(sent) not in (signal.SIG_DFL, signal.default_int_handler)
+        signal.raise_signal(sent)
+        original(self, stop)
+
+    monkeypatch.setattr(Worker, "run_forever", signal_then_run)
+    code, out, err = run(capsys, "worker")
+    assert code == 0 and out == "" and "Traceback" not in err
+    assert {sig: signal.getsignal(sig) for sig in handlers_before} == handlers_before
+
+
+def read_line_with_timeout(stream: object, timeout_s: float) -> str:
+    with selectors.DefaultSelector() as selector:
+        selector.register(stream, selectors.EVENT_READ)  # type: ignore[arg-type]
+        assert selector.select(timeout_s), "o worker nao arrancou a tempo"
+    return stream.readline()  # type: ignore[attr-defined]
+
+
+@pytest.mark.parametrize("sent", [signal.SIGINT, signal.SIGTERM])
+def test_worker_cli_stops_cleanly(
+    sent: signal.Signals, session_factory: Factory, worker_environment: dict[str, str]
+) -> None:
+    code = "import sys; from marketing_agent.cli import main; sys.exit(main(['worker']))"
+    process = subprocess.Popen(
+        [sys.executable, "-c", code],
+        env={**os.environ, **worker_environment},
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        assert read_line_with_timeout(process.stderr, 30).startswith("worker a escutar")
+        process.send_signal(sent)
+        process.wait(timeout=15)
+        stderr = process.stderr.read() if process.stderr else ""
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait()
+    assert process.returncode == 0
+    assert "Traceback" not in stderr and process.stdout is not None
+    assert process.stdout.read() == ""
+
+
+def test_worker_requires_copywriter_and_reviewer_routes(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("ROLE_ROUTES", "{}")
+    code, _, err = run(capsys, "worker")
+    assert code == 2 and "copywriter" in err and "revisor" in err and "Traceback" not in err
+
+
+def test_worker_refuses_fake_provider(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    routes = {
+        role: {"provider": "fake", "model_id": "m", "capabilities": ["text", "json_schema"]}
+        for role in ("copywriter", "revisor")
+    }
+    monkeypatch.setenv("ROLE_ROUTES", json.dumps(routes))
+    code, _, err = run(capsys, "worker")
+    assert code == 2 and "fake" in err and "Traceback" not in err
