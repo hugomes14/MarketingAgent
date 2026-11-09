@@ -4,7 +4,7 @@
 
 - Timestamp: `2026-11-09T14:07:58+00:00`
 - Autor: `agent`
-- Estado de execução: **Tarefas 1 a 12 por fazer.**
+- Estado de execução: **Tarefas 1 a 3 concluídas; Tarefas 4 a 12 por fazer.**
 
 **Goal:** A partir da estratégia ativa, propor e aprovar o plano da semana e gerar em segundo plano, para cada publicação aprovada no plano, uma legenda revista que o responsável aprova, edita, devolve ou rejeita no painel.
 
@@ -93,7 +93,7 @@ tests/{db,kb,jobs,planning,content,feedback,panel,e2e}/...
 **Interfaces:**
 - Produces: modelos `KbItem`, `Post`, `PostRevision`, `Approval`, `FeedbackExample`, `Job` com as colunas e restrições da spec, secção 4. Enums como constantes de módulo: `KB_KINDS`, `SOURCE_KINDS`, `POST_LIFECYCLES = ("planned","drafting","in_review","approved","rejected","cancelled")`, `APPROVAL_DECISIONS`, `FEEDBACK_KINDS = ("estilo","correcao_factual","temporario","negativo")`, `JOB_STATUSES`, `CHANNELS = ("facebook","instagram")`. `Post.channels` é `ARRAY(Text)` com `CHECK` de não vazio e valores em `CHANNELS`. `Job.dedupe_key` com índice único parcial `WHERE status IN ('queued','running')`. Além da spec: `post.last_error` (Text NULL, motivo curto sem conteúdo do modelo) e `feedback_example.is_active` (Boolean, por omissão verdadeiro).
 
-- [ ] **Step 1: Escrever os testes que falham.**
+- [x] **Step 1: Escrever os testes que falham.**
   - `test_upgrade_head_creates_content_tables`: as 6 tabelas novas existem.
   - `test_migration_matches_models` (existente) continua sem diferenças.
   - `test_kb_price_requires_amount_currency_and_validity`: `kind='preco'` sem `valid_until` levanta `IntegrityError`.
@@ -103,10 +103,16 @@ tests/{db,kb,jobs,planning,content,feedback,panel,e2e}/...
   - `test_feedback_temporario_requires_expiry`.
   - `test_job_dedupe_key_unique_only_while_active`: dois `queued` com a mesma chave falham; um `succeeded` e um `queued` com a mesma chave convivem.
   - `test_cross_brand_post_revision_rejected` (FK composta).
-- [ ] **Step 2: Correr e ver falhar.** `uv run pytest tests/db -v`.
-- [ ] **Step 3: Implementar** os modelos e a migração `0002` (com `downgrade`).
-- [ ] **Step 4: Validação global.**
-- [ ] **Step 5: Commit.** `feat: tabelas de base de conhecimento, posts, revisoes, aprovacoes, feedback e fila`.
+- [x] **Step 2: Correr e ver falhar.** `uv run pytest tests/db -v`.
+- [x] **Step 3: Implementar** os modelos e a migração `0002` (com `downgrade`).
+- [x] **Step 4: Validação global.**
+- [x] **Step 5: Commit.** `feat: tabelas de base de conhecimento, posts, revisoes, aprovacoes, feedback e fila`.
+
+**Notas de execução (Tarefa 1):**
+
+- Concluída no ramo `agent/2026-11-09_plano02a` (commit `652c943`), em modo subagente: implementação e revisão aprovada sem correções. 666 testes passam; `ruff` e `mypy src` limpos. Marco M1 (dados): `compare_metadata` vazio; `upgrade`, `downgrade 0001` e `upgrade` verificados.
+- Além do plano: *trigger* `post_revision_immutable` (qualquer `UPDATE` a `post_revision` é recusado: as edições criam revisões novas), `CHECK`s de veredicto, origem, decisão, ciclo de vida e `review_rounds >= 0`, e uma FK composta `(brand_id, post_id, revision_id)` em `approval` e `feedback_example`. Colunas acrescentadas: `post.last_error` e `feedback_example.is_active`.
+- Menores adiados: faltam testes de `approval` (decisão, FK entre marcas, várias aprovações por revisão); `test_post_revision_is_immutable` usa `DBAPIError` largo; **o plano do 2B assume `JOB_TYPES`/`REVISION_ORIGINS` que o 2A não define** (acrescentar ao implementar o 2B); os helpers da migração `0002` têm cerca de 48 linhas.
 
 ### Task 2: Base de conhecimento
 
@@ -127,11 +133,17 @@ tests/{db,kb,jobs,planning,content,feedback,panel,e2e}/...
   - `KbError(ValueError)` para tópico inexistente, item de outra marca ou dados inválidos.
 - Cada operação escreve `AuditLog` (`kb.add`, `kb.promote`, `kb.deactivate`; `detail` só com `kind` e `key`).
 
-- [ ] **Step 1: Testes que falham.** `test_add_price_requires_validity`, `test_promote_profile_topic_copies_origin`, `test_promote_unknown_topic_raises`, `test_promote_is_idempotent`, `test_deactivated_item_not_valid`, `test_valid_refs_respects_date_window` (item expirado na data do post não é devolvido), `test_audit_without_text`.
-- [ ] **Step 2: Correr e ver falhar.**
-- [ ] **Step 3: Implementar.**
-- [ ] **Step 4: Validação global.**
-- [ ] **Step 5: Commit.** `feat: base de conhecimento com promocao do perfil e itens manuais`.
+- [x] **Step 1: Testes que falham.** `test_add_price_requires_validity`, `test_promote_profile_topic_copies_origin`, `test_promote_unknown_topic_raises`, `test_promote_is_idempotent`, `test_deactivated_item_not_valid`, `test_valid_refs_respects_date_window` (item expirado na data do post não é devolvido), `test_audit_without_text`.
+- [x] **Step 2: Correr e ver falhar.**
+- [x] **Step 3: Implementar.**
+- [x] **Step 4: Validação global.**
+- [x] **Step 5: Commit.** `feat: base de conhecimento com promocao do perfil e itens manuais`.
+
+**Notas de execução (Tarefa 2):**
+
+- Concluída (commits `6f2fef5` e `00bcdc6`), em modo subagente: implementação, revisão e uma ronda de correção com re-revisão limpa. 695 testes passam. Marco M2 (base de conhecimento): serviço pronto; as páginas vêm na Tarefa 10.
+- Decisões do controlador: um preço exige `valid_until > valid_from`, os outros tipos aceitam `>=`; `price_amount` aceita 0; o `KbError` nunca inclui o valor recebido (só campo e tipo de erro); promover um tópico noutro dia **desativa** a versão anterior (mesmo `kind='outro'` e `key`) na mesma transação.
+- Menores adiados: `__context__` ainda guarda a `ValidationError`; um perfil guardado inválido levantaria `ValidationError` com texto; a substituição também desativa um `outro` manual com a mesma chave; faltam testes negativos da substituição (outra marca, tipo ou chave).
 
 ### Task 3: Fila de trabalhos
 
@@ -151,11 +163,20 @@ tests/{db,kb,jobs,planning,content,feedback,panel,e2e}/...
     - `cancel_for_post_in(session: Session, post_id: str) -> int`.
   - `last_error` guarda só a classe e uma mensagem curta, nunca texto do modelo.
 
-- [ ] **Step 1: Testes que falham.** `test_enqueue_dedupes_active`, `test_claim_two_threads_one_wins` (barreira, 5 repetições), `test_claim_respects_run_at`, `test_complete_with_stale_token_returns_false`, `test_fail_retries_then_dead`, `test_fail_without_retry_is_failed`, `test_requeue_expired_lease`, `test_cancel_for_post`.
-- [ ] **Step 2: Correr e ver falhar.**
-- [ ] **Step 3: Implementar.**
-- [ ] **Step 4: Validação global.**
-- [ ] **Step 5: Commit.** `feat: fila de trabalhos em postgres com lease`.
+- [x] **Step 1: Testes que falham.** `test_enqueue_dedupes_active`, `test_claim_two_threads_one_wins` (barreira, 5 repetições), `test_claim_respects_run_at`, `test_complete_with_stale_token_returns_false`, `test_fail_retries_then_dead`, `test_fail_without_retry_is_failed`, `test_requeue_expired_lease`, `test_cancel_for_post`.
+- [x] **Step 2: Correr e ver falhar.**
+- [x] **Step 3: Implementar.**
+- [x] **Step 4: Validação global.**
+- [x] **Step 5: Commit.** `feat: fila de trabalhos em postgres com lease`.
+
+**Notas de execução (Tarefa 3):**
+
+- Concluída (commits `fde3748`, `8aa739a`, `06f3e98`, `ac238f5`), em modo subagente: implementação, revisão com modelo mais capaz e duas rondas de correção. 717 testes passam. Marco M4 (fila e worker): a fila está pronta; o worker vem na Tarefa 8.
+- **pytest passa a `--import-mode=importlib`** (sem `__init__.py` nas pastas de testes; `pythonpath = ["tests/panel"]` mantém-se).
+- `JobQueue`: reclamar com `SKIP LOCKED`, `lease` e `lease_token` em `complete_in`/`fail` (um worker que perdeu a `lease` não altera o trabalho; devolvem `bool`), espera de 30 s × tentativas, `requeue_expired`, `cancel_for_post_in`. Verificado por experiência: 50 trabalhos × 8 threads, cada um reclamado exatamente uma vez.
+- **`last_error` sem texto de modelos nem do utilizador:** `jobs/errors.py` (`describe_error`) devolve só o nome da classe; só 5 tipos exatos da aplicação (`RunLimitExceeded`, `RunCostLimitExceeded`, `MissingPrerequisite`, `PendingProposal`, `ProposalInProgress`) levam a mensagem. `NeedsHuman` e `KbError` ficam só com o nome: o motivo do `NeedsHuman` inclui chaves e mensagens de validação escolhidas pelo modelo. `jobs/queue.py` não importa módulos de domínio (teste num processo novo).
+- **Para a Tarefa 8 (worker):** o `payload` de `generate_post` é `{"post_id", "owner_comment", "reason": "plan" | "changes"}`; o worker tem de passar sempre `describe_error(exc)` ao `fail` (com teste) e de calcular a `lease` como 3 × (duração máxima do Copywriter + do Revisor) + 60 s a partir dos specs (corrige a regra "`director_max_duration_s()` + 60 s" das restrições globais, que daria cerca de 5 minutos para um trabalho de até 18).
+- Menores adiados: `max_attempts=3` é um literal em `enqueue_in`; `ClaimedJob.payload` é o dicionário vivo do ORM.
 
 ### Task 4: Plano semanal: esquema, validação e ciclo do Diretor
 
