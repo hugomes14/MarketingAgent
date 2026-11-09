@@ -51,7 +51,8 @@ def _strategy_view(estrategia: Estrategia) -> dict[str, object]:
     return view
 
 
-def _kb_view(entry: KbEntry) -> dict[str, object]:
+def kb_entry_view(entry: KbEntry) -> dict[str, object]:
+    """Item da base como dado de prompt: id citavel, tipo, texto, preco e validade."""
     price = None if entry.price_amount is None else f"{entry.price_amount} {entry.price_currency}"
     return {
         "id": entry.id,
@@ -102,7 +103,9 @@ class PlanLoop:
                 "propostas_aceites",
                 {"propostas": [p.model_dump(mode="json") for p in payload.accepted_proposals]},
             ),
-            wrap_data("base_conhecimento", {"itens": [_kb_view(e) for e in payload.kb_entries]}),
+            wrap_data(
+                "base_conhecimento", {"itens": [kb_entry_view(e) for e in payload.kb_entries]}
+            ),
         )
         output = ctx.call_llm(
             ctx.spec.load_prompt(DIRETOR_DIR),

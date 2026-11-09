@@ -1,0 +1,24 @@
+# Spec do Copywriter: legenda, hashtags, apelo a acao, texto alternativo e alegacoes.
+# Valores monetarios SEMPRE como texto entre aspas (o carregador recusa numeros).
+# Sem `validators` registados e sem `writes`: o rascunho e devolvido ao chamador, que grava a
+# `post_revision` pelo servico. Os limites por canal, os `kb_refs` e os precos verificam-se em
+# `content.validation` via `extra_validator` do motor.
+role: copywriter
+name: copywriter
+version: 1
+loop_type: structured
+prompt_file: prompt.md
+output_schema: RascunhoTexto
+required_capabilities: [text, json_schema]
+tools: []
+reads: [perfil_marca, estrategia, kb]
+writes: []
+validators: []
+limits:
+  max_steps: 4
+  max_tokens: 40000
+  max_cost_usd: "0.30"
+  max_duration_s: 180
+max_output_tokens: 1500
+budget_share_hint: "0.20"
+escalation: Sem saida valida ou limite atingido, a publicacao fica em geracao com o motivo visivel e o responsavel pode pedir nova geracao.

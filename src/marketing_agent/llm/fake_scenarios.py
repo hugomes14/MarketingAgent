@@ -1,9 +1,10 @@
-"""Guioes prontos para o `FakeLlmClient`: entrevista, diagnostico, estrategia, plano e falhas.
+"""Guioes prontos para o `FakeLlmClient`: entrevista, diagnostico, estrategia, plano, texto, falhas.
 
 Os corpos JSON sao texto de `json.dumps`; os esquemas que os validam chegam mais tarde.
 """
 
 import json
+from collections.abc import Mapping, Sequence
 from datetime import timedelta
 from typing import Final
 
@@ -200,6 +201,41 @@ def weekly_plan(week: str, slots: int = 3) -> Script:
         "semana": week,
         "slots": plan_slots,
         "suposicoes": ["A capacidade de entrega suporta o numero de publicacoes proposto."],
+    }
+    return [_json_response(body)]
+
+
+_DEFAULT_HASHTAGS: Final = ("#padariadobairo", "#paoartesanal")
+
+
+def caption_draft(
+    legenda: str = "Pao quente todas as manhas, feito com receitas de familia.",
+    *,
+    hashtags: Sequence[str] = _DEFAULT_HASHTAGS,
+    apelo_a_acao: str = "Passe pela loja e experimente.",
+    alt_text: str = "Pao artesanal acabado de sair do forno.",
+    alegacoes: Sequence[Mapping[str, str | None]] = (),
+) -> Script:
+    """Rascunho de texto valido por omissao (sem precos nem `kb_ref`); cada campo e ajustavel.
+
+    `alegacoes` e uma lista de `{"texto": ..., "kb_ref": id ou None}`.
+    """
+    body: dict[str, object] = {
+        "legenda": legenda,
+        "hashtags": list(hashtags),
+        "apelo_a_acao": apelo_a_acao,
+        "alt_text": alt_text,
+        "alegacoes": [dict(claim) for claim in alegacoes],
+    }
+    return [_json_response(body)]
+
+
+def review(veredicto: str, violacoes: Sequence[str] = (), notas: str = "") -> Script:
+    """Parecer do Revisor com o veredicto e as violacoes dados (strings do enum `Violacao`)."""
+    body: dict[str, object] = {
+        "veredicto": veredicto,
+        "violacoes": list(violacoes),
+        "notas": notas or f"Parecer automatico: {veredicto}.",
     }
     return [_json_response(body)]
 
