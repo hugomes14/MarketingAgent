@@ -24,6 +24,7 @@ from marketing_agent.clock import FixedClock
 from marketing_agent.config import Capability, RoleRoute
 from marketing_agent.db.models import AgentRun, AgentStep, CostEntry, CostReservation
 from marketing_agent.harness.engine import (
+    MAX_ERROR_SUMMARY_CHARS,
     AgentEngine,
     Loop,
     RunContext,
@@ -343,6 +344,62 @@ def test_extra_validator_violations_join_registered_ones(
     assert result.status is RunStatus.NEEDS_HUMAN  # o validador registado reprova sempre
     text = last_user_text(rig, 1)
     assert "nao pode dizer ola; slot fora da semana" in text
+
+
+HUGE = "texto do modelo " * 400  # 6400 caracteres, bem acima do limite do resumo
+
+
+def retry_errors(text: str) -> str:
+    """Parte da mensagem de repeticao entre o prefixo fixo e o sufixo fixo."""
+    prefix = "A resposta anterior foi invalida: "
+    suffix = ". Responde apenas com JSON valido."
+    assert text.startswith(prefix) and text.endswith(suffix)
+    return text[len(prefix) : -len(suffix)]
+
+
+def test_huge_extra_violation_is_truncated_in_retry_and_in_needs_human(
+    make_rig: RigFactory,
+) -> None:
+    rig = make_rig([response() for _ in range(3)])
+    loop = ExtraValidatorLoop([[HUGE + "\nsegunda linha"]] * 3)
+    result = rig.run(loop)
+    errors = retry_errors(last_user_text(rig, 1))
+    assert len(errors) <= MAX_ERROR_SUMMARY_CHARS and "\n" not in errors
+    assert result.status is RunStatus.NEEDS_HUMAN and result.message is not None
+    assert len(result.message) <= MAX_ERROR_SUMMARY_CHARS + 100
+    assert result.message.count("texto do modelo") < 50
+
+
+def test_huge_registered_violation_is_truncated_too(
+    make_rig: RigFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setitem(VALIDATORS, "enorme", lambda model: [HUGE])
+    rig = make_rig([response() for _ in range(3)])
+    result = rig.run(OneCallLoop(), make_spec(validators=["enorme"]))
+    errors = retry_errors(last_user_text(rig, 1))
+    assert len(errors) <= MAX_ERROR_SUMMARY_CHARS
+    assert result.message is not None and len(result.message) <= MAX_ERROR_SUMMARY_CHARS + 100
+
+
+def test_raising_extra_validator_closes_step_and_settles_reservation(
+    make_rig: RigFactory,
+) -> None:
+    class Boom:
+        def run(self, ctx: RunContext, payload: str) -> Out:
+            def broken(output: Out) -> list[str]:
+                raise KeyError("campo em falta")
+
+            return ctx.call_llm(
+                "sistema", [Message("user", [TextPart(payload)])], Out, extra_validator=broken
+            )
+
+    rig = make_rig([response()])
+    result = rig.run(Boom())
+    assert result.status is RunStatus.FAILED
+    assert result.message is not None and result.message.startswith("KeyError")
+    assert rig.step_errors() == ["invalid_output"]
+    assert [r.status for r in rig.reservations()] == ["settled"]
+    assert len(rig.entries()) == 1
 
 
 def test_extra_validator_not_called_for_unparseable_output(make_rig: RigFactory) -> None:

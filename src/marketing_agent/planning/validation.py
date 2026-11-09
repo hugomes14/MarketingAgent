@@ -25,7 +25,7 @@ class PlanLimits:
 
 def week_range(week: str) -> tuple[date, date]:
     """Segunda e domingo da semana ISO `AAAA-Www`; `ValueError` se a semana nao existe."""
-    if not _WEEK_RE.match(week):
+    if not _WEEK_RE.fullmatch(week):
         raise ValueError(f"semana {week!r} fora do formato AAAA-Www")
     try:
         monday = date.fromisocalendar(int(week[:4]), int(week[6:]), 1)
@@ -55,13 +55,12 @@ def validate_plan(
         violations.append(f"semana deve ser {week!r}, recebeu {plan.semana!r}")
     violations += _check_counts(plan, limits)
     for index, slot in enumerate(plan.slots):
-        problems = [
-            *_check_slot_key(slot, plan.semana, index),
-            *_check_date(slot, first_day, last_day),
-            *_check_experiment(slot, experiment_count),
-            *_check_kb_refs(slot, valid_kb_refs),
+        violations += [
+            *_check_slot_key(slot, week, index),
+            *_check_date(slot, index, first_day, last_day),
+            *_check_experiment(slot, index, experiment_count),
+            *_check_kb_refs(slot, index, valid_kb_refs),
         ]
-        violations += [f"slots[{index}]: {problem}" for problem in problems]
     return violations
 
 
@@ -81,33 +80,36 @@ def _check_counts(plan: PlanoSemanal, limits: PlanLimits) -> list[str]:
     return violations
 
 
-def _check_slot_key(slot: PlanSlot, semana: str, index: int) -> list[str]:
-    expected = f"{semana}-{index + 1}"  # sequencia 1..N garante tambem a unicidade
+def _check_slot_key(slot: PlanSlot, week: str, index: int) -> list[str]:
+    # A chave usa a semana PEDIDA: se o plano trouxe outra, a unica violacao de semana ja o diz.
+    expected = f"{week}-{index + 1}"  # sequencia 1..N garante tambem a unicidade
     if slot.slot_key == expected:
         return []
-    return [f"slot_key deve ser {expected!r}, recebeu {slot.slot_key!r}"]
+    return [f"slots[{index}]: slot_key deve ser {expected!r}, recebeu {slot.slot_key!r}"]
 
 
-def _check_date(slot: PlanSlot, first_day: date, last_day: date) -> list[str]:
+def _check_date(slot: PlanSlot, index: int, first_day: date, last_day: date) -> list[str]:
     if first_day <= slot.data <= last_day:
         return []
     return [
-        f"data {slot.data.isoformat()} fora da semana "
+        f"slots[{index}]: data {slot.data.isoformat()} fora da semana "
         f"({first_day.isoformat()} a {last_day.isoformat()})"
     ]
 
 
-def _check_experiment(slot: PlanSlot, experiment_count: int) -> list[str]:
-    index = slot.experiment_index
-    if index is None or 0 <= index < experiment_count:
+def _check_experiment(slot: PlanSlot, index: int, experiment_count: int) -> list[str]:
+    chosen = slot.experiment_index
+    if chosen is None or 0 <= chosen < experiment_count:
         return []
     if experiment_count == 0:
-        return [f"experiment_index {index} invalido: a estrategia nao tem experiencias"]
-    return [f"experiment_index {index} fora de 0..{experiment_count - 1}"]
+        return [f"slots[{index}]: experiment_index {chosen} invalido: sem experiencias"]
+    return [f"slots[{index}]: experiment_index {chosen} fora de 0..{experiment_count - 1}"]
 
 
-def _check_kb_refs(slot: PlanSlot, valid_kb_refs: Set[str]) -> list[str]:
-    unknown = [ref for ref in slot.kb_refs if ref not in valid_kb_refs]
-    if not unknown:
-        return []
-    return [f"kb_refs inexistentes ou sem validade na semana: {unknown}"]
+def _check_kb_refs(slot: PlanSlot, index: int, valid_kb_refs: Set[str]) -> list[str]:
+    """Cita a posicao do ref invalido, nunca o valor: o texto vem do modelo."""
+    return [
+        f"slots[{index}].kb_refs[{position}] desconhecido ou sem validade na semana"
+        for position, ref in enumerate(slot.kb_refs)
+        if ref not in valid_kb_refs
+    ]

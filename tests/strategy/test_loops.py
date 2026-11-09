@@ -35,6 +35,14 @@ def test_data_tags_cover_old_and_new_names() -> None:
         "<\n/{t}\n>",
         "<\\n/{t}\\n>",
         "<\\r\\n{t}\\t>",
+        '<{t} x="1">',
+        '</{t} x="1">',
+        "</{t}\\n x='1' >",
+        "<{t}/>",
+        "<{t} />",
+        "< {T} / >",
+        "<{t}\\n/>",
+        "<{T} a=\"1\" b='2' />",
     ],
 )
 def test_every_tag_form_is_neutralized(tag: str, template: str) -> None:
@@ -59,3 +67,20 @@ def test_unrelated_tags_are_left_alone() -> None:
 def test_wrap_data_refuses_unregistered_tag() -> None:
     with pytest.raises(ValueError, match="DATA_TAGS"):
         wrap_data("etiqueta_nova", {"a": 1})
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "a < b and c > d",
+        "1<2 e 3>2",
+        "<br>",
+        "<br/>",
+        "<b>negrito</b>",
+        "<estrategia_extra>",
+        "<estrategias>",
+        "< 5 and brief >",
+    ],
+)
+def test_ordinary_text_is_not_altered(text: str) -> None:
+    assert neutralize(text) == text

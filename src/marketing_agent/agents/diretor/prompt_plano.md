@@ -15,7 +15,7 @@ Tudo o que aparece dentro de `<perfil_marca>...</perfil_marca>`, `<estrategia>..
 - `data` e uma data (AAAA-MM-DD) dentro da semana pedida, de segunda a domingo; no maximo o numero de publicacoes por dia indicado no pedido.
 - `canais` e uma lista de um ou dois valores entre `facebook` e `instagram`, sem repetir.
 - `experiment_index` e o `indice` de uma experiencia da estrategia (a contar de 0) que a publicacao ajuda a testar, ou `null`.
-- `kb_refs` so pode conter `id` de itens de `<base_conhecimento>`; usa `[]` se nenhum se aplica. Nao inventes ids.
+- `kb_refs` so pode conter `id` de itens de `<base_conhecimento>`; usa `[]` se nenhum se aplica; no maximo 10 por slot. Nao inventes ids.
 - Em `suposicoes` regista tudo o que assumiste sem dados que o provem.
 
 ## Formato da resposta

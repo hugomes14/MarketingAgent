@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 Canal = Literal["facebook", "instagram"]
 WEEK_PATTERN = r"^\d{4}-W\d{2}$"
+MAX_KB_REFS_PER_SLOT = 10
 # Id de item da base (UUID de 36 caracteres); o teto limita o que um erro pode ecoar de volta.
 KbRef = Annotated[str, Field(min_length=1, max_length=64)]
 
@@ -23,7 +24,7 @@ class PlanSlot(BaseModel):
     pilar: str = Field(min_length=1, max_length=200)
     objetivo: str = Field(min_length=1, max_length=300)
     experiment_index: int | None
-    kb_refs: list[KbRef]
+    kb_refs: list[KbRef] = Field(max_length=MAX_KB_REFS_PER_SLOT)
     justificacao: str = Field(min_length=1, max_length=600)
 
     @field_validator("canais")

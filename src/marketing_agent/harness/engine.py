@@ -142,6 +142,15 @@ def _summarize_validation(exc: ValidationError) -> str:
     return "; ".join(parts)[:MAX_ERROR_SUMMARY_CHARS]
 
 
+def _join_violations(violations: list[str]) -> str:
+    """Junta as violacoes numa so linha, limitada a `MAX_ERROR_SUMMARY_CHARS`.
+
+    Quem escreve as mensagens pode citar texto do modelo; o limite impede que uma saida enorme
+    volte inteira no pedido seguinte ou no motivo de `NeedsHuman`.
+    """
+    return " ".join("; ".join(violations).split())[:MAX_ERROR_SUMMARY_CHARS]
+
+
 class RunContext:
     """Contexto de uma execucao entregue ao Loop: chamadas ao LLM e criacao de artefactos."""
 
@@ -239,7 +248,7 @@ class RunContext:
         if extra_validator is not None:
             violations += extra_validator(parsed)
         if violations:
-            return _Verdict("invalid_output", "; ".join(violations), None)
+            return _Verdict("invalid_output", _join_violations(violations), None)
         return _Verdict(None, "", parsed)
 
     @staticmethod

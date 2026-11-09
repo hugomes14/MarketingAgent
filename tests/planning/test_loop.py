@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal
 
+import pytest
 from pydantic import BaseModel
 
 from marketing_agent.agents.diretor.schemas import Estrategia, PropostaOferta
@@ -61,6 +62,7 @@ class StubContext:
         default_factory=list
     )
     spec: StubSpec = field(default_factory=StubSpec)
+    calls: int = 0
 
     def call_llm(
         self,
@@ -69,6 +71,7 @@ class StubContext:
         schema: type[BaseModel],
         extra_validator: Callable[[PlanoSemanal], list[str]] | None = None,
     ) -> PlanoSemanal:
+        self.calls += 1
         assert schema is PlanoSemanal and extra_validator is not None
         self.system, self.messages = system, messages
         self.violations = extra_validator(self.plan)
@@ -81,9 +84,9 @@ class StubContext:
         return "artefacto"
 
 
-def make_payload(entries: list[KbEntry]) -> PlanPayload:
+def make_payload(entries: list[KbEntry], week: str = WEEK) -> PlanPayload:
     return PlanPayload(
-        week=WEEK,
+        week=week,
         limits=PlanLimits(max_per_week=5, max_per_day=1),
         perfil_marca={"topicos": {}},
         estrategia=make_strategy(),
@@ -133,6 +136,14 @@ def test_validator_uses_payload_context() -> None:
     cited = ctx.plan.slots[0].model_copy(update={"kb_refs": ["kb-9"]})
     ctx.plan = ctx.plan.model_copy(update={"slots": [cited, *ctx.plan.slots[1:]]})
     run_loop(ctx, payload)
-    assert len(ctx.violations) == 1 and "kb-9" in ctx.violations[0]
+    assert len(ctx.violations) == 1 and "slots[0].kb_refs[0]" in ctx.violations[0]
     run_loop(ctx, make_payload([make_entry("kb-9")]))
     assert ctx.violations == []
+
+
+@pytest.mark.parametrize("week", ["2026-W54", "2026-46", "2026-W46\n", ""])
+def test_malformed_week_fails_before_any_llm_call(week: str) -> None:
+    ctx = make_context()
+    with pytest.raises(ValueError, match="semana"):
+        run_loop(ctx, make_payload([], week=week))
+    assert ctx.calls == 0 and ctx.created == []

@@ -32,11 +32,12 @@ DATA_TAGS: Final = (
     "notas_revisor",
 )
 
-# Tolera espacos e as quebras de linha ja escapadas pelo JSON (`\n` literal).
+# Tolera espacos e as quebras de linha ja escapadas pelo JSON (`\n` literal). Depois do nome
+# aceita uma cauda sem `<` nem `>` (atributos, `/`), para apanhar `</tag x="1">` e `<tag/>`;
+# `\b` evita apanhar nomes mais longos como `<estrategia_extra>`.
 _SPACE = r"(?:\s|\\[nrt])*"
-_DELIMITER_PATTERN = re.compile(
-    rf"<{_SPACE}/?{_SPACE}({'|'.join(map(re.escape, DATA_TAGS))}){_SPACE}>", re.IGNORECASE
-)
+_TAG_NAMES = "|".join(map(re.escape, DATA_TAGS))
+_DELIMITER_PATTERN = re.compile(rf"<{_SPACE}/?{_SPACE}(?:{_TAG_NAMES})\b[^<>]*>", re.IGNORECASE)
 _NEUTRALIZED = "[etiqueta removida]"
 
 DIAGNOSIS_REQUEST = "Produz agora o diagnostico com base nos dados abaixo."

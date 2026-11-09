@@ -14,7 +14,7 @@ from marketing_agent.artifacts.store import ArtifactRecord, ArtifactType
 from marketing_agent.harness.engine import ExtraValidator, RunContext
 from marketing_agent.kb.service import KbEntry
 from marketing_agent.planning.schemas import PlanoSemanal
-from marketing_agent.planning.validation import PlanLimits, validate_plan
+from marketing_agent.planning.validation import PlanLimits, validate_plan, week_range
 from marketing_agent.strategy.loops import build_request, wrap_data
 
 PLAN_REQUEST = (
@@ -84,7 +84,11 @@ class PlanLoop:
     """Gera o plano semanal e cria o artefacto `plano` em `draft`."""
 
     def run(self, ctx: RunContext, payload: PlanPayload) -> ArtifactRecord:
-        """Chama o LLM com os dados ativos; violacoes do codigo viram repeticoes do motor."""
+        """Chama o LLM com os dados ativos; violacoes do codigo viram repeticoes do motor.
+
+        `ValueError` se `payload.week` nao e uma semana ISO valida, antes de qualquer chamada.
+        """
+        week_range(payload.week)
         instruction = PLAN_REQUEST.format(
             week=payload.week,
             max_per_week=payload.limits.max_per_week,
