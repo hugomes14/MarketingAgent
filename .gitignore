@@ -45,3 +45,6 @@ AgentDATA/secrets/*
 !AgentDATA/secrets/*.example.md
 !AgentDATA/secrets/*.example.json
 !AgentDATA/secrets/.gitignore
+
+# Objetos de media locais
+var/

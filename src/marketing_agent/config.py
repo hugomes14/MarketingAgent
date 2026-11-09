@@ -57,6 +57,7 @@ class Settings(BaseSettings):
     plan_max_posts_per_week: int = Field(5, gt=0)
     plan_max_posts_per_day: int = Field(1, gt=0)
     model_prices_path: Path = Path("config/model_prices.yaml")
+    media_dir: Path = Path("var/media")
 
     @field_validator(
         "anthropic_api_key_file",
