@@ -38,7 +38,7 @@ class NewKbEntry(BaseModel):
     key: str = Field(min_length=1, max_length=120)
     title: str = Field(min_length=1, max_length=120)
     body: str = Field(min_length=1, max_length=2000)
-    price_amount: Decimal | None = Field(default=None, gt=0, max_digits=12, decimal_places=2)
+    price_amount: Decimal | None = Field(default=None, ge=0, max_digits=12, decimal_places=2)
     price_currency: str | None = Field(default=None, pattern=r"^[A-Z]{3}$")
     valid_from: date
     valid_until: date | None = None
@@ -64,8 +64,17 @@ class NewKbEntry(BaseModel):
             raise ValueError("price_amount e price_currency vem sempre juntos")
         if self.kind == _PRICE_KIND and (self.price_amount is None or self.valid_until is None):
             raise ValueError("kind 'preco' exige price_amount, price_currency e valid_until")
-        if self.valid_until is not None and self.valid_until <= self.valid_from:
-            raise ValueError("valid_until tem de ser posterior a valid_from")
+        if self.valid_until is not None:
+            # Preco exige janela positiva (`>`); os outros tipos aceitam um so dia (`>=`).
+            is_inverted = (
+                self.valid_until <= self.valid_from
+                if self.kind == _PRICE_KIND
+                else self.valid_until < self.valid_from
+            )
+            if is_inverted:
+                raise ValueError(
+                    "valid_until nao pode ser anterior a valid_from (preco: posterior)"
+                )
         return self
 
 
@@ -85,6 +94,12 @@ class KbEntry:
     source_kind: str
     source_ref: str | None
     is_active: bool
+
+
+def _describe(exc: ValidationError) -> str:
+    """Resume o erro so com campo e tipo (ex.: `body: string_too_long`), sem valores."""
+    errors = exc.errors(include_input=False)
+    return "; ".join(f"{'.'.join(map(str, e['loc'])) or 'entrada'}: {e['type']}" for e in errors)
 
 
 def _to_entry(row: KbItem) -> KbEntry:
@@ -145,6 +160,8 @@ class KbService:
             row = self._insert(session, brand_id, entry, actor, "kb.promote", source_ref)
             if row is None:
                 row = session.scalars(self._same_slot(brand_id, entry)).one()
+            else:
+                self._deactivate_superseded(session, row, actor)
             return _to_entry(row)
 
     def deactivate(self, brand_id: str, item_id: str, actor: str) -> None:
@@ -187,7 +204,10 @@ class KbService:
                 source_kind=origin,
             )
         except ValidationError as exc:
-            raise KbError(f"topico {topic!r} nao cabe na base de conhecimento: {exc}") from exc
+            # Nunca `str(exc)`: o pydantic inclui `input_value` e o texto do perfil e livre.
+            raise KbError(
+                f"topico {topic!r} nao cabe na base de conhecimento: {_describe(exc)}"
+            ) from None
 
     def _insert(
         self,
@@ -218,6 +238,21 @@ class KbService:
         if row is not None:
             self._audit(session, actor, action, row.id, row.kind, row.key)
         return row
+
+    def _deactivate_superseded(self, session: Session, promoted: KbItem, actor: str) -> None:
+        """Desativa as versoes anteriores ativas do mesmo `(marca, kind, key)`; a nova fica."""
+        older = session.scalars(
+            select(KbItem).where(
+                KbItem.brand_id == promoted.brand_id,
+                KbItem.kind == promoted.kind,
+                KbItem.key == promoted.key,
+                KbItem.is_active.is_(True),
+                KbItem.id != promoted.id,
+            )
+        )
+        for row in older:
+            row.is_active = False
+            self._audit(session, actor, "kb.deactivate", row.id, row.kind, row.key)
 
     def _audit(
         self, session: Session, actor: str, action: str, item_id: str, kind: str, key: str

@@ -1,7 +1,9 @@
 """Base de conhecimento: itens manuais, promocao do perfil, validade e auditoria."""
 
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 
 import pytest
@@ -256,3 +258,92 @@ def test_audit_without_text(rig: Rig) -> None:
     assert {a.actor for a in audits} == {"ana"}
     assert all(a.subject_type == "kb_item" for a in audits)
     assert all("confidencial" not in str(a.detail) for a in audits)
+
+
+def test_one_day_offer_accepted_but_inverted_window_rejected() -> None:
+    same_day = offer(valid_until=date(2026, 11, 1))
+    assert same_day.valid_until == same_day.valid_from
+    with pytest.raises(ValidationError, match="valid_until"):
+        offer(valid_until=date(2026, 10, 31))
+    with pytest.raises(ValidationError, match="valid_until"):
+        price(valid_until=date(2026, 11, 1))  # preco exige janela positiva
+
+
+def test_free_item_accepts_zero_price(rig: Rig) -> None:
+    entry = rig.service.add(rig.brand_id, price(price_amount=Decimal("0")), "ana")
+    assert entry.price_amount == Decimal("0.00")
+    with pytest.raises(ValidationError, match="price_amount"):
+        price(price_amount=Decimal("-1"))
+
+
+def test_promote_error_never_leaks_profile_text(rig: Rig) -> None:
+    secret = "SEGREDO-do-cliente-"
+    payload = {
+        "topicos": {"o_que_vende": {"texto": secret * 200, "origem": "verificado"}},
+        "lacunas_abertas": [],
+        "suposicoes": [],
+    }
+    created = rig.store.create(rig.brand_id, ArtifactType.PERFIL_MARCA, payload)
+    rig.store.submit(created.id, "ana")
+    rig.store.approve_and_activate(created.id, "ana")
+
+    with pytest.raises(KbError, match="body: string_too_long") as caught:
+        rig.service.promote_profile_topic(rig.brand_id, "o_que_vende", "ana")
+
+    assert "SEGREDO" not in str(caught.value)
+    assert caught.value.__cause__ is None
+    assert rig.item_count() == 0
+
+
+def test_promote_on_later_day_supersedes_previous_version(
+    rig: Rig, clock: FixedClock, session_factory: Factory
+) -> None:
+    rig.activate_profile()
+    first = rig.service.promote_profile_topic(rig.brand_id, "o_que_vende", "ana")
+    clock.advance(timedelta(days=1))
+
+    second = rig.service.promote_profile_topic(rig.brand_id, "o_que_vende", "bia")
+
+    assert second.id != first.id
+    assert second.valid_from == TODAY + timedelta(days=1)
+    assert rig.service.list_active(rig.brand_id, TODAY + timedelta(days=1)) == [second]
+    with session_factory() as session:
+        states = {i: active for i, active in session.execute(select(KbItem.id, KbItem.is_active))}
+    assert states == {first.id: False, second.id: True}
+    audits = rig.audits()
+    assert [(a.action, a.subject_id, a.actor) for a in audits] == [
+        ("kb.promote", first.id, "ana"),
+        ("kb.promote", second.id, "bia"),
+        ("kb.deactivate", first.id, "bia"),
+    ]
+    assert all(a.detail == {"kind": "outro", "key": "o_que_vende"} for a in audits)
+
+
+def test_same_day_repeat_keeps_active_row_and_manual_add_touches_nothing(rig: Rig) -> None:
+    rig.activate_profile()
+    first = rig.service.promote_profile_topic(rig.brand_id, "o_que_vende", "ana")
+    rig.service.promote_profile_topic(rig.brand_id, "o_que_vende", "ana")
+    manual = rig.service.add(rig.brand_id, offer(kind="outro", key="o_que_vende"), "ana")
+
+    assert {e.id for e in rig.service.list_active(rig.brand_id, TODAY)} == {first.id, manual.id}
+    assert [a.action for a in rig.audits()] == ["kb.promote", "kb.add"]
+
+
+def test_concurrent_promotes_create_one_row(rig: Rig) -> None:
+    rig.activate_profile()
+    barrier = threading.Barrier(8)
+
+    def promote() -> str:
+        barrier.wait()
+        return rig.service.promote_profile_topic(rig.brand_id, "o_que_vende", "ana").id
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        ids = [f.result() for f in [pool.submit(promote) for _ in range(8)]]
+
+    assert len(set(ids)) == 1
+    assert rig.item_count() == 1
+    assert [a.action for a in rig.audits()] == ["kb.promote"]
+
+
+def test_valid_refs_tolerates_malformed_refs(rig: Rig) -> None:
+    assert rig.service.valid_refs(rig.brand_id, ["not-a-uuid", "", "'; drop"], TODAY) == {}
