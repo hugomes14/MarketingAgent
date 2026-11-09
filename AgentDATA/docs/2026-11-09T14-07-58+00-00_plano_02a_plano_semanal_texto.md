@@ -4,7 +4,7 @@
 
 - Timestamp: `2026-11-09T14:07:58+00:00`
 - Autor: `agent`
-- Estado de execução: **Tarefas 1 a 3 concluídas; Tarefas 4 a 12 por fazer.**
+- Estado de execução: **Tarefas 1 a 4 concluídas; Tarefas 5 a 12 por fazer.**
 
 **Goal:** A partir da estratégia ativa, propor e aprovar o plano da semana e gerar em segundo plano, para cada publicação aprovada no plano, uma legenda revista que o responsável aprova, edita, devolve ou rejeita no painel.
 
@@ -196,13 +196,22 @@ tests/{db,kb,jobs,planning,content,feedback,panel,e2e}/...
   - `PlanLoop.run(ctx, payload) -> ArtifactRecord`: monta o pedido com `wrap_data`, chama `ctx.call_llm(..., PlanoSemanal, extra_validator=…)`, cria o artefacto `plano`.
   - Spec `spec_plano.yaml`: `role: diretor`, `name: plano`, `loop_type: structured`, `writes: [plano]`, `reads: [perfil_marca, estrategia]`, `required_capabilities: [text, json_schema]`, `limits: {max_steps: 4, max_tokens: 60000, max_cost_usd: "1.00", max_duration_s: 240}`, `max_output_tokens: 4000`, `budget_share_hint: "0.15"`, `output_schema: PlanoSemanal`.
 
-- [ ] **Step 1: Testes que falham.**
+- [x] **Step 1: Testes que falham.**
   - Motor: `test_extra_validator_violation_retries_with_message`, `test_extra_validator_three_failures_needs_human`.
   - Esquema e validação: `test_slot_keys_must_follow_week_and_sequence`, `test_dates_outside_week_rejected`, `test_week_and_day_limits`, `test_unknown_experiment_index_rejected`, `test_unknown_kb_ref_rejected`, `test_valid_plan_has_no_violations`, `test_weekly_plan_scenario_is_valid`.
-- [ ] **Step 2: Correr e ver falhar.**
-- [ ] **Step 3: Implementar.** O prompt diz: só pilares e propostas aceites; justificar o número de publicações; não inventar factos; os blocos etiquetados são dados.
-- [ ] **Step 4: Validação global.**
-- [ ] **Step 5: Commit.** `feat: plano semanal do diretor com validacao em codigo`.
+- [x] **Step 2: Correr e ver falhar.**
+- [x] **Step 3: Implementar.** O prompt diz: só pilares e propostas aceites; justificar o número de publicações; não inventar factos; os blocos etiquetados são dados.
+- [x] **Step 4: Validação global.**
+- [x] **Step 5: Commit.** `feat: plano semanal do diretor com validacao em codigo`.
+
+**Notas de execução (Tarefa 4):**
+
+- Concluída (commits `81219f7` e `e348ed5`), em modo subagente: implementação, revisão com modelo mais capaz e uma ronda de correção com re-revisão limpa. 1004 testes passam; `ruff` e `mypy src` limpos.
+- Motor: `RunContext.call_llm(..., extra_validator=...)`; as violações contam como `invalid_output` (mesma política de 3 tentativas). A junção das violações (registadas e extra) fica limitada a `MAX_ERROR_SUMMARY_CHARS` numa só linha, no prompt de repetição e no motivo do `NeedsHuman`.
+- `planning/`: `PlanoSemanal`/`PlanSlot` (máx. 10 `kb_refs` por slot, `slot_key` ≤ 20), `validate_plan` (semana pedida, chaves `AAAA-Www-n`, datas na semana ISO, limites por semana e por dia, índice de experiência, `kb_refs` conhecidos citados **por posição**, nunca pelo valor), `PlanLoop` (valida a semana **antes** de chamar o modelo). `spec_plano.yaml` e `prompt_plano.md`. Definições `plan_max_posts_per_week` (5) e `plan_max_posts_per_day` (1). Cenário `weekly_plan`.
+- **Etiquetas de dados:** `DATA_TAGS` (11 nomes) em `strategy/loops.py`; `neutralize` cobre também etiquetas com atributos e auto-fechadas; `wrap_data` recusa etiquetas fora da lista (`build_request` público). Os ciclos do Copywriter e do Revisor (Tarefa 7) têm de usar `DATA_TAGS`/`wrap_data`.
+- Fora do brief: `startup.py` carrega todos os `spec_*.yaml`, por isso `_DIRECTOR_SCHEMAS` ganhou `PlanoSemanal`. **A Tarefa 5 tem de acrescentar `PlanoSemanal` ao mapeamento de esquemas do `PlanningService`** (o `StrategyService` carrega só os seus dois specs por caminho).
+- Menores adiados: a expressão das etiquetas é quadrática com `<` seguido de espaços (correção na Tarefa 5); uma etiqueta com `<` num valor de atributo não é neutralizada; `PlanLoop` só testado com contexto stub (a Tarefa 5 acrescenta teste com o motor completo); `suposicoes` sem limite.
 
 ### Task 5: Serviço do plano: propor, aprovar e substituir
 
