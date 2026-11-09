@@ -5,11 +5,13 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 
 import pytest
-from sqlalchemy import select
+from pydantic import BaseModel, ValidationError
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from marketing_agent.clock import FixedClock
-from marketing_agent.db.models import Job
+from marketing_agent.db.models import ACTIVE_JOB_PREDICATE_SQL, Job
+from marketing_agent.harness.engine import NeedsHuman
 from marketing_agent.jobs.queue import (
     GENERATE_POST_JOB,
     MAX_ERROR_CHARS,
@@ -20,6 +22,7 @@ from marketing_agent.jobs.queue import (
 
 Factory = sessionmaker[Session]
 LEASE = timedelta(minutes=10)
+BARRIER_TIMEOUT_S = 5
 
 
 @pytest.fixture
@@ -108,7 +111,7 @@ def test_claim_respects_run_at(
 def test_claim_two_threads_one_wins(queue: JobQueue, session_factory: Factory) -> None:
     for repetition in range(5):  # repete para o intercalamento sem lock aparecer
         job_id = enqueue(queue, session_factory, f"race-{repetition}")
-        barrier = threading.Barrier(2)
+        barrier = threading.Barrier(2, timeout=BARRIER_TIMEOUT_S)
 
         def attempt(name: str, barrier: threading.Barrier = barrier) -> ClaimedJob | None:
             barrier.wait()
@@ -199,12 +202,34 @@ def test_fail_truncates_error(queue: JobQueue, session_factory: Factory) -> None
     assert error is not None and len(error) == MAX_ERROR_CHARS
 
 
-def test_describe_error_keeps_class_and_short_message() -> None:
-    assert describe_error(ValueError("abc")) == "ValueError: abc"
+class _Strict(BaseModel):
+    count: int
+
+
+def test_describe_error_default_is_class_name_only() -> None:
+    assert describe_error(KeyError("texto do utilizador")) == "KeyError"
+    assert describe_error(RuntimeError("saida do modelo")) == "RuntimeError"
     assert describe_error(KeyError()) == "KeyError"
-    long = describe_error(RuntimeError("m\n" * 300))
-    assert long.startswith("RuntimeError: ") and len(long) == MAX_ERROR_CHARS
-    assert "\n" not in long
+
+
+def test_describe_error_validation_error_has_no_input() -> None:
+    with pytest.raises(ValidationError) as caught:
+        _Strict.model_validate({"count": "SEGREDO DO MODELO texto gerado pelo LLM"})
+    assert "SEGREDO" in str(caught.value)  # o str() cru vazaria o texto
+    summary = describe_error(caught.value)
+    assert "SEGREDO" not in summary and "LLM" not in summary
+    assert summary == "ValidationError: 1 erros (int_parsing)"
+
+
+def test_describe_error_allow_listed_keeps_message() -> None:
+    assert describe_error(NeedsHuman("motivo")) == "NeedsHuman: motivo"
+
+
+def test_describe_error_allow_listed_is_single_line_and_truncated() -> None:
+    summary = describe_error(NeedsHuman("linha longa\n" * 100))
+    assert "\n" not in summary
+    assert summary.startswith("NeedsHuman: linha longa linha longa")
+    assert len(summary) == MAX_ERROR_CHARS
 
 
 def test_requeue_expired_lease(
@@ -247,3 +272,69 @@ def test_cancel_for_post(queue: JobQueue, session_factory: Factory) -> None:
     with session_factory.begin() as session:  # o worker que perdeu o job nao o conclui
         assert queue.complete_in(session, running) is False
         assert queue.cancel_for_post_in(session, "post-1") == 0
+
+
+JOBS_IN_STRESS = 50
+THREADS_IN_STRESS = 8
+
+
+def drain(queue: JobQueue, session_factory: Factory, barrier: threading.Barrier) -> list[str]:
+    """Reclama e conclui jobs ate a fila esvaziar; devolve os ids reclamados."""
+    barrier.wait()
+    claimed_ids: list[str] = []
+    while (claimed := queue.claim(threading.current_thread().name)) is not None:
+        claimed_ids.append(claimed.id)
+        with session_factory.begin() as session:
+            assert queue.complete_in(session, claimed) is True
+    return claimed_ids
+
+
+def test_claim_many_threads_claims_each_job_exactly_once(
+    queue: JobQueue, session_factory: Factory
+) -> None:
+    for round_number in range(3):
+        enqueued = {
+            enqueue(queue, session_factory, f"stress-{round_number}-{n}")
+            for n in range(JOBS_IN_STRESS)
+        }
+        barrier = threading.Barrier(THREADS_IN_STRESS, timeout=BARRIER_TIMEOUT_S)
+        with ThreadPoolExecutor(max_workers=THREADS_IN_STRESS) as pool:
+            futures = [
+                pool.submit(drain, queue, session_factory, barrier)
+                for _ in range(THREADS_IN_STRESS)
+            ]
+            claimed_ids = [job_id for f in futures for job_id in f.result(timeout=60)]
+        assert len(claimed_ids) == JOBS_IN_STRESS  # nenhum reclamado duas vezes
+        assert set(claimed_ids) == enqueued
+        with session_factory() as session:
+            rows = session.scalars(select(Job).where(Job.id.in_(enqueued))).all()
+        assert {(row.status, row.attempts) for row in rows} == {("succeeded", 1)}
+
+
+def index_predicate(session: Session, index_name: str) -> str | None:
+    """Predicado normalizado pelo Postgres de um indice parcial."""
+    return session.scalar(
+        text(
+            "SELECT pg_get_expr(i.indpred, i.indrelid) FROM pg_index i "
+            "JOIN pg_class c ON c.oid = i.indexrelid WHERE c.relname = :name"
+        ),
+        {"name": index_name},
+    )
+
+
+def test_active_predicate_matches_migrated_index(session_factory: Factory) -> None:
+    """O predicado da migracao 0002 (literal congelado) tem de coincidir com a constante."""
+    with session_factory() as session:
+        migrated = index_predicate(session, "uq_job_dedupe_key_active")
+        # O Postgres normaliza o predicado; compara-se a forma normalizada de ambos.
+        session.execute(text("CREATE TEMP TABLE predicate_probe (status text)"))
+        session.execute(
+            text(
+                "CREATE INDEX predicate_probe_idx ON predicate_probe (status) "
+                f"WHERE {ACTIVE_JOB_PREDICATE_SQL}"
+            )
+        )
+        expected = index_predicate(session, "predicate_probe_idx")
+        session.rollback()
+    assert migrated is not None
+    assert migrated == expected

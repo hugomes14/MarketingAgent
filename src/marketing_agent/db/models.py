@@ -59,6 +59,9 @@ FEEDBACK_KINDS = ("estilo", "correcao_factual", "temporario", "negativo")
 JOB_STATUSES = ("queued", "running", "succeeded", "failed", "dead", "cancelled")
 # Estados em que um job ainda conta para a deduplicacao (ver o indice parcial de `Job`).
 ACTIVE_JOB_STATUSES = ("queued", "running")
+# Predicado SQL unico do indice parcial de `Job`; a migracao 0002 mantem o seu literal e um
+# teste (tests/jobs/test_queue.py) falha se os dois divergirem.
+ACTIVE_JOB_PREDICATE_SQL = "status IN (" + ", ".join(f"'{v}'" for v in ACTIVE_JOB_STATUSES) + ")"
 
 type JsonValue = str | int | float | bool | None | list[JsonValue] | dict[str, JsonValue]
 type JsonObject = dict[str, JsonValue]
@@ -549,9 +552,7 @@ class Job(Base):
             "uq_job_dedupe_key_active",
             "dedupe_key",
             unique=True,
-            postgresql_where=text(
-                "status IN (" + ", ".join(f"'{v}'" for v in ACTIVE_JOB_STATUSES) + ")"
-            ),
+            postgresql_where=text(ACTIVE_JOB_PREDICATE_SQL),
         ),
     )
 
