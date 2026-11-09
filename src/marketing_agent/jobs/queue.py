@@ -10,39 +10,19 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import timedelta
 
-from pydantic import ValidationError
 from sqlalchemy import case, select, text, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session, sessionmaker
 
-from marketing_agent.budget.controller import RunCostLimitExceeded
 from marketing_agent.clock import Clock
 from marketing_agent.db.base import new_id
 from marketing_agent.db.models import ACTIVE_JOB_PREDICATE_SQL, ACTIVE_JOB_STATUSES, Job
-from marketing_agent.harness.engine import NeedsHuman, RunLimitExceeded
-from marketing_agent.kb.service import KbError
-from marketing_agent.strategy.service import (
-    MissingPrerequisite,
-    PendingProposal,
-    ProposalInProgress,
-)
 
 GENERATE_POST_JOB = "generate_post"
 RETRY_BACKOFF = timedelta(seconds=30)  # espera = RETRY_BACKOFF x tentativas ja feitas
 MAX_ERROR_CHARS = 200
 _LEASE_EXPIRED_ERROR = "LeaseExpired: lease expirada sem conclusao"
 _ACTIVE_FILTER = text(ACTIVE_JOB_PREDICATE_SQL)
-# Excecoes da aplicacao cuja mensagem e escrita pelo nosso codigo (sem texto de modelo nem de
-# utilizador); so destas `describe_error` guarda a mensagem. Estender aqui, de forma explicita.
-SAFE_MESSAGE_ERRORS: tuple[type[Exception], ...] = (
-    NeedsHuman,
-    RunLimitExceeded,
-    RunCostLimitExceeded,
-    ProposalInProgress,
-    PendingProposal,
-    MissingPrerequisite,
-    KbError,
-)
 # Campos limpos sempre que o job deixa de estar em posse de um worker.
 _RELEASED_LOCK = {"locked_by": None, "locked_until": None, "lease_token": None}
 
@@ -61,22 +41,6 @@ class ClaimedJob:
 def truncate_error(message: str) -> str:
     """Limita `message` a `MAX_ERROR_CHARS` caracteres, numa so linha."""
     return " ".join(message.split())[:MAX_ERROR_CHARS]
-
-
-def describe_error(error: BaseException) -> str:
-    """Resume `error` para `last_error` sem nunca copiar texto de modelo ou de utilizador.
-
-    Por omissao so a classe. Mensagem curta apenas para `SAFE_MESSAGE_ERRORS`; para um
-    `ValidationError` do pydantic, so o numero e os tipos dos erros (nunca `input` nem `msg`).
-    """
-    name = type(error).__name__
-    if isinstance(error, ValidationError):
-        kinds = ", ".join(sorted({str(item["type"]) for item in error.errors(include_input=False)}))
-        return truncate_error(f"{name}: {error.error_count()} erros ({kinds})")
-    message = str(error)
-    if isinstance(error, SAFE_MESSAGE_ERRORS) and message:
-        return truncate_error(f"{name}: {message}")
-    return name
 
 
 def _status_after_failure(job: Job, retry: bool) -> str:

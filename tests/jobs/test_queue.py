@@ -1,23 +1,22 @@
 """Fila de trabalhos: deduplicacao, reclamacao exclusiva, lease, tentativas e cancelamento."""
 
+import subprocess
+import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 
 import pytest
-from pydantic import BaseModel, ValidationError
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from marketing_agent.clock import FixedClock
 from marketing_agent.db.models import ACTIVE_JOB_PREDICATE_SQL, Job
-from marketing_agent.harness.engine import NeedsHuman
 from marketing_agent.jobs.queue import (
     GENERATE_POST_JOB,
     MAX_ERROR_CHARS,
     ClaimedJob,
     JobQueue,
-    describe_error,
 )
 
 Factory = sessionmaker[Session]
@@ -202,36 +201,6 @@ def test_fail_truncates_error(queue: JobQueue, session_factory: Factory) -> None
     assert error is not None and len(error) == MAX_ERROR_CHARS
 
 
-class _Strict(BaseModel):
-    count: int
-
-
-def test_describe_error_default_is_class_name_only() -> None:
-    assert describe_error(KeyError("texto do utilizador")) == "KeyError"
-    assert describe_error(RuntimeError("saida do modelo")) == "RuntimeError"
-    assert describe_error(KeyError()) == "KeyError"
-
-
-def test_describe_error_validation_error_has_no_input() -> None:
-    with pytest.raises(ValidationError) as caught:
-        _Strict.model_validate({"count": "SEGREDO DO MODELO texto gerado pelo LLM"})
-    assert "SEGREDO" in str(caught.value)  # o str() cru vazaria o texto
-    summary = describe_error(caught.value)
-    assert "SEGREDO" not in summary and "LLM" not in summary
-    assert summary == "ValidationError: 1 erros (int_parsing)"
-
-
-def test_describe_error_allow_listed_keeps_message() -> None:
-    assert describe_error(NeedsHuman("motivo")) == "NeedsHuman: motivo"
-
-
-def test_describe_error_allow_listed_is_single_line_and_truncated() -> None:
-    summary = describe_error(NeedsHuman("linha longa\n" * 100))
-    assert "\n" not in summary
-    assert summary.startswith("NeedsHuman: linha longa linha longa")
-    assert len(summary) == MAX_ERROR_CHARS
-
-
 def test_requeue_expired_lease(
     queue: JobQueue, session_factory: Factory, clock: FixedClock
 ) -> None:
@@ -338,3 +307,16 @@ def test_active_predicate_matches_migrated_index(session_factory: Factory) -> No
         session.rollback()
     assert migrated is not None
     assert migrated == expected
+
+
+def test_queue_module_has_no_domain_imports() -> None:
+    """A fila nao importa dominio (evita ciclos quando strategy/planning a importarem)."""
+    code = (
+        "import sys; import marketing_agent.jobs.queue; "
+        "bad = [m for m in sys.modules if m.startswith(("
+        "'marketing_agent.harness', 'marketing_agent.kb', "
+        "'marketing_agent.strategy', 'marketing_agent.budget'))]; "
+        "print(bad); sys.exit(1 if bad else 0)"
+    )
+    result = subprocess.run([sys.executable, "-I", "-c", code], capture_output=True, text=True)
+    assert result.returncode == 0, result.stdout + result.stderr
