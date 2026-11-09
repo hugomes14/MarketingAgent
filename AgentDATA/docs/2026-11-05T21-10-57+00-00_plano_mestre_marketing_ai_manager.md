@@ -731,7 +731,7 @@ Cada etapa só avança com a prova anterior. **Não é uma estimativa garantida.
 | **5** | Triagem: recetor completo, eventos, Triagem, fichas, leads, avisos por email, RGPD mínimo e eliminação transversal | E | Por escrever |
 | **6** | Análise: métricas completas, relatórios, Analista, revisão mensal assistida | F | Por escrever |
 
-O **primeiro lançamento** fecha no fim dos Planos 1 a 4 (etapa D). A revisão mensal da estratégia (W7) entra no Plano 2, com os indicadores mínimos do piloto; o Plano 6 só a enriquece.
+O **primeiro lançamento** fecha no fim dos Planos 1 a 4 (etapa D). A revisão mensal da estratégia (W7) entra **depois do Plano 3** (decisão do responsável, 2026-11-09: depende de métricas de publicações reais), com os indicadores mínimos do piloto; o Plano 6 só a enriquece. O Plano 2 divide-se em 2A (plano semanal e texto), 2B (imagem) e 2C (comparação simples vs. especializado); specs em `AgentDATA/docs/2026-11-09T14-07-58+00-00_spec_plano_02*.md`.
 
 ### 11.3 Esforço
 
