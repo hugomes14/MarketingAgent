@@ -197,7 +197,7 @@ def test_png_with_invalid_idat_checksum_is_rejected() -> None:
         open_bounded(bytes(data), frozenset({"png"}))
 
 
-def test_grayscale_icc_is_converted_before_alpha_composition() -> None:
+def _linear_gray_profile() -> bytes:
     profile = bytearray(_linear_rgb_profile())
     profile[16:20] = b"GRAY"
     count = struct.unpack_from(">I", profile, 128)[0]
@@ -205,6 +205,24 @@ def test_grayscale_icc_is_converted_before_alpha_composition() -> None:
         offset = 132 + 12 * index
         if profile[offset : offset + 4] == b"rTRC":
             profile[offset : offset + 4] = b"kTRC"
+    return bytes(profile)
+
+
+def test_grayscale_icc_is_converted_before_alpha_composition() -> None:
     image = Image.new("LA", (1, 1), (128, 128))
-    image.info["icc_profile"] = bytes(profile)
+    image.info["icc_profile"] = _linear_gray_profile()
     assert to_srgb_rgb(image).getpixel((0, 0)) == pytest.approx((221, 221, 221), abs=1)
+
+
+def test_grayscale_png_trns_keeps_gray_icc_until_conversion() -> None:
+    image = Image.new("L", (2, 1), 0)
+    image.putpixel((1, 0), 128)
+    output = BytesIO()
+    image.save(output, "PNG", transparency=0, icc_profile=_linear_gray_profile())
+    with open_bounded(output.getvalue(), frozenset({"png"})) as decoded:
+        assert decoded.mode == "L"
+        assert decoded.info["transparency"] == 0
+        converted = to_srgb_rgb(decoded)
+    assert converted.mode == "RGB"
+    assert converted.getpixel((0, 0)) == (255, 255, 255)
+    assert converted.getpixel((1, 0)) == pytest.approx((188, 188, 188), abs=1)

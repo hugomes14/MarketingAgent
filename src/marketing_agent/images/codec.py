@@ -75,7 +75,7 @@ def to_srgb_rgb(image: Image.Image) -> Image.Image:
         alpha = image.convert("RGBA").getchannel("A") if has_alpha else None
         # A transformacao ICC recebe apenas a cor; o alfa conserva-se para compor no fim.
         color = image.convert("RGBA").convert("RGB") if has_alpha else image
-        if image.mode == "LA":
+        if image.mode in ("L", "LA"):
             color = image.getchannel("L")
         if color.mode == "P":
             color = color.convert("RGB")
