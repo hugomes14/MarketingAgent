@@ -81,3 +81,15 @@ Por corrida, numa página e exportável em Markdown para `AgentDATA/docs/`:
 - Estatística: o intervalo binomial é correto em casos conhecidos.
 - O relatório tem as limitações sempre presentes.
 - Painel: autenticação, CSRF, escape, e não revela o percurso no HTML (nem em atributos nem nos nomes de ficheiros das imagens).
+
+## 9. Marcos verificáveis
+
+Cada marco fecha com: suite verde, PR fundido e a verificação abaixo feita e registada nas notas de execução do plano. Pré-requisito: o 2B fechado (M7).
+
+| Marco | Entrega | Critério de aceitação | Como se verifica |
+| --- | --- | --- | --- |
+| **M1 Percurso simples** | Papel `simples` e `PacoteSimples` | Usa o mesmo contexto, validadores, renderização e teto que o especializado; nunca cria posts | `uv run pytest tests/evals`; um pacote simples gerado com o Ollama aparece só na corrida de avaliação |
+| **M2 Conjunto e corrida** | `evals/briefs_v1.yaml`, migração `0004`, `marketing-agent eval run` | A corrida gera 8 × 2 pacotes pela fila, com custo e latência gravados; a estimativa de custo aparece antes de começar | `uv run marketing-agent eval run --set briefs_v1` e, no painel, a corrida passa a `ready` com 16 pacotes |
+| **M3 Avaliação cega** | Página "Avaliar" | O HTML não revela o percurso (nem atributos nem nomes de ficheiros); A/B aleatório e reproduzível; respostas imutáveis com rasto | Teste que procura `simples`/`especializado` no HTML; no painel avaliar os 8 pares |
+| **M4 Relatório e decisão** | Relatório e `role_decision` | Vitórias com intervalo de 95 %, erros, minutos, custo e latência por percurso; limitações sempre presentes; a decisão por papel fica registada | Exportar o relatório para `AgentDATA/docs/` e registar a decisão de manter, simplificar ou retirar cada papel |
+| **M5 Fecho do 2C** | Revisão final do ramo e decisão aplicada | Revisão final sem achados Critical/Important em aberto; se um papel for retirado ou simplificado, o pipeline habitual reflete-o | Uma corrida real contigo e o relatório publicado em `AgentDATA/docs/` |
