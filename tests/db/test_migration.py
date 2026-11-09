@@ -26,9 +26,17 @@ CORE_TABLES = {
 }
 
 
+CONTENT_TABLES = {"kb_item", "post", "post_revision", "approval", "feedback_example", "job"}
+
+
 def test_upgrade_head_creates_core_tables(engine: Engine) -> None:
     existing = set(inspect(engine).get_table_names()) - {"alembic_version"}
-    assert existing == CORE_TABLES
+    assert existing >= CORE_TABLES
+
+
+def test_upgrade_head_creates_content_tables(engine: Engine) -> None:
+    existing = set(inspect(engine).get_table_names()) - {"alembic_version"}
+    assert existing == CORE_TABLES | CONTENT_TABLES
 
 
 def test_migration_matches_models(engine: Engine) -> None:

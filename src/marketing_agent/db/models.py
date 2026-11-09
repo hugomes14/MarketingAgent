@@ -8,7 +8,7 @@ Regras transversais:
 - Enums sao `CHECK`s; nao usamos o tipo ENUM do Postgres, para as migracoes serem simples.
 """
 
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 
@@ -16,17 +16,20 @@ from sqlalchemy import (
     BigInteger,
     Boolean,
     CheckConstraint,
+    Date,
     DateTime,
     ForeignKey,
     ForeignKeyConstraint,
     Identity,
+    Index,
     Integer,
     Numeric,
     String,
     Text,
     UniqueConstraint,
+    text,
 )
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from marketing_agent.db.base import Base, new_id
@@ -45,6 +48,20 @@ STEP_ERROR_CLASSES = (
     "limit",
     "unknown_outcome",
 )
+KB_KINDS = ("oferta", "preco", "horario", "contacto", "prova", "politica", "outro")
+SOURCE_KINDS = ("dito_pelo_responsavel", "verificado", "suposto")
+POST_LIFECYCLES = ("planned", "drafting", "in_review", "approved", "rejected", "cancelled")
+CHANNELS = ("facebook", "instagram")
+REVIEW_VERDICTS = ("aprovar", "rever", "rejeitar")
+REVISION_ORIGINS = ("agente", "edicao_responsavel")
+APPROVAL_DECISIONS = ("approved", "rejected", "changes_requested")
+FEEDBACK_KINDS = ("estilo", "correcao_factual", "temporario", "negativo")
+JOB_STATUSES = ("queued", "running", "succeeded", "failed", "dead", "cancelled")
+# Estados em que um job ainda conta para a deduplicacao (ver o indice parcial de `Job`).
+ACTIVE_JOB_STATUSES = ("queued", "running")
+
+type JsonValue = str | int | float | bool | None | list[JsonValue] | dict[str, JsonValue]
+type JsonObject = dict[str, JsonValue]
 
 
 def enum_check(column: str, values: tuple[str, ...], name: str) -> CheckConstraint:
@@ -356,3 +373,199 @@ class InterviewTurn(Base):
     role: Mapped[str] = mapped_column(Text, nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     run_id: Mapped[str | None] = mapped_column(ForeignKey("agent_run.id"))
+
+
+class KbItem(Base):
+    """Facto da base de conhecimento da marca (oferta, preco, horario...) com origem e validade."""
+
+    __tablename__ = "kb_item"
+    __table_args__ = (
+        UniqueConstraint("brand_id", "kind", "key", "valid_from"),
+        enum_check("kind", KB_KINDS, "kind"),
+        enum_check("source_kind", SOURCE_KINDS, "source_kind"),
+        CheckConstraint(
+            "kind <> 'preco' OR (price_amount IS NOT NULL "
+            "AND price_currency IS NOT NULL AND valid_until IS NOT NULL)",
+            name="price_requires_amount_currency_validity",
+        ),
+    )
+
+    id: Mapped[str] = id_column()
+    brand_id: Mapped[str] = brand_fk()
+    kind: Mapped[str] = mapped_column(Text, nullable=False)
+    key: Mapped[str] = mapped_column(Text, nullable=False)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    price_amount: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+    price_currency: Mapped[str | None] = mapped_column(Text)
+    valid_from: Mapped[date] = mapped_column(Date, nullable=False)
+    valid_until: Mapped[date | None] = mapped_column(Date)
+    source_kind: Mapped[str] = mapped_column(Text, nullable=False)
+    # Por exemplo `perfil:<artifact_id>:<topico>`.
+    source_ref: Mapped[str | None] = mapped_column(Text)
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default=text("true")
+    )
+    created_by: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(Timestamp, nullable=False)
+
+
+class Post(Base):
+    """Slot do plano semanal; o texto vive nas `PostRevision`."""
+
+    __tablename__ = "post"
+    __table_args__ = (
+        UniqueConstraint("brand_id", "id"),
+        UniqueConstraint("brand_id", "slot_key"),
+        ForeignKeyConstraint(
+            ["brand_id", "plan_artifact_id"], ["artifact.brand_id", "artifact.id"]
+        ),
+        ForeignKeyConstraint(
+            ["brand_id", "strategy_artifact_id"], ["artifact.brand_id", "artifact.id"]
+        ),
+        enum_check("lifecycle", POST_LIFECYCLES, "lifecycle"),
+        CheckConstraint(
+            "cardinality(channels) >= 1 AND channels <@ ARRAY['facebook', 'instagram']::text[]",
+            name="channels",
+        ),
+        CheckConstraint("review_rounds >= 0", name="non_negative_review_rounds"),
+    )
+
+    id: Mapped[str] = id_column()
+    brand_id: Mapped[str] = brand_fk()
+    plan_artifact_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    # `AAAA-Www-<n>`; estavel dentro da semana (um novo plano substitui por `slot_key`).
+    slot_key: Mapped[str] = mapped_column(Text, nullable=False)
+    strategy_artifact_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    experiment_index: Mapped[int | None] = mapped_column(Integer)
+    channels: Mapped[list[str]] = mapped_column(ARRAY(Text), nullable=False)
+    scheduled_date: Mapped[date] = mapped_column(Date, nullable=False)
+    # tema, pilar, objetivo e `kb_refs`.
+    brief: Mapped[JsonObject] = mapped_column(JSONB, nullable=False)
+    lifecycle: Mapped[str] = mapped_column(Text, nullable=False)
+    review_rounds: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # Motivo curto da ultima falha; nunca conteudo produzido pelo modelo.
+    last_error: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(Timestamp, nullable=False)
+
+
+class PostRevision(Base):
+    """Versao do texto de um post. Imutavel (ver o trigger na migracao)."""
+
+    __tablename__ = "post_revision"
+    __table_args__ = (
+        UniqueConstraint("post_id", "rev_no"),
+        # Permite as aprovacoes e o feedback provarem que revisao e post sao da mesma marca.
+        UniqueConstraint("brand_id", "post_id", "id"),
+        ForeignKeyConstraint(["brand_id", "post_id"], ["post.brand_id", "post.id"]),
+        ForeignKeyConstraint(
+            ["brand_id", "produced_by_run_id"], ["agent_run.brand_id", "agent_run.id"]
+        ),
+        enum_check("review_verdict", REVIEW_VERDICTS, "review_verdict"),
+        enum_check("origin", REVISION_ORIGINS, "origin"),
+    )
+
+    id: Mapped[str] = id_column()
+    brand_id: Mapped[str] = brand_fk()
+    post_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    rev_no: Mapped[int] = mapped_column(Integer, nullable=False)
+    # SHA-256 canonico do texto e dos campos por canal.
+    revision_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    caption: Mapped[str] = mapped_column(Text, nullable=False)
+    hashtags: Mapped[list[str]] = mapped_column(ARRAY(Text), nullable=False)
+    call_to_action: Mapped[str | None] = mapped_column(Text)
+    alt_text: Mapped[str | None] = mapped_column(Text)
+    # Lista de `{texto, kb_ref}`.
+    claims: Mapped[list[dict[str, str | None]]] = mapped_column(JSONB, nullable=False)
+    review_verdict: Mapped[str | None] = mapped_column(Text)
+    review_violations: Mapped[list[str]] = mapped_column(ARRAY(Text), nullable=False)
+    review_notes: Mapped[str | None] = mapped_column(Text)
+    origin: Mapped[str] = mapped_column(Text, nullable=False)
+    produced_by_run_id: Mapped[str | None] = mapped_column(String(36))
+    created_at: Mapped[datetime] = mapped_column(Timestamp, nullable=False)
+
+
+class Approval(Base):
+    """Decisao do responsavel sobre uma revisao; so a mais recente da revisao mais recente vale."""
+
+    __tablename__ = "approval"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["brand_id", "post_id", "revision_id"],
+            ["post_revision.brand_id", "post_revision.post_id", "post_revision.id"],
+        ),
+        enum_check("decision", APPROVAL_DECISIONS, "decision"),
+    )
+
+    id: Mapped[str] = id_column()
+    brand_id: Mapped[str] = brand_fk()
+    post_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    revision_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    revision_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    decision: Mapped[str] = mapped_column(Text, nullable=False)
+    comment: Mapped[str | None] = mapped_column(Text)
+    decided_by: Mapped[str] = mapped_column(Text, nullable=False)
+    decided_at: Mapped[datetime] = mapped_column(Timestamp, nullable=False)
+
+
+class FeedbackExample(Base):
+    """Correcao do responsavel guardada como exemplo para o Copywriter."""
+
+    __tablename__ = "feedback_example"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["brand_id", "post_id", "revision_id"],
+            ["post_revision.brand_id", "post_revision.post_id", "post_revision.id"],
+        ),
+        enum_check("kind", FEEDBACK_KINDS, "kind"),
+        CheckConstraint(
+            "kind <> 'temporario' OR expires_at IS NOT NULL", name="temporario_requires_expiry"
+        ),
+    )
+
+    id: Mapped[str] = id_column()
+    brand_id: Mapped[str] = brand_fk()
+    post_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    revision_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    kind: Mapped[str] = mapped_column(Text, nullable=False)
+    before_text: Mapped[str] = mapped_column(Text, nullable=False)
+    after_text: Mapped[str | None] = mapped_column(Text)
+    note: Mapped[str | None] = mapped_column(Text)
+    expires_at: Mapped[datetime | None] = mapped_column(Timestamp)
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default=text("true")
+    )
+    created_by: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(Timestamp, nullable=False)
+
+
+class Job(Base):
+    """Trabalho da fila global (sem marca). `dedupe_key` so e unica enquanto o job esta ativo."""
+
+    __tablename__ = "job"
+    __table_args__ = (
+        enum_check("status", JOB_STATUSES, "status"),
+        Index(
+            "uq_job_dedupe_key_active",
+            "dedupe_key",
+            unique=True,
+            postgresql_where=text(
+                "status IN (" + ", ".join(f"'{v}'" for v in ACTIVE_JOB_STATUSES) + ")"
+            ),
+        ),
+    )
+
+    id: Mapped[str] = id_column()
+    type: Mapped[str] = mapped_column(Text, nullable=False)
+    payload: Mapped[JsonObject] = mapped_column(JSONB, nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False)
+    run_at: Mapped[datetime] = mapped_column(Timestamp, nullable=False)
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    max_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=3)
+    locked_by: Mapped[str | None] = mapped_column(Text)
+    locked_until: Mapped[datetime | None] = mapped_column(Timestamp)
+    lease_token: Mapped[str | None] = mapped_column(Text)
+    dedupe_key: Mapped[str | None] = mapped_column(Text)
+    last_error: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(Timestamp, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(Timestamp, nullable=False)
