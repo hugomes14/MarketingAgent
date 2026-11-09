@@ -51,7 +51,7 @@ plugins = ["pydantic.mypy"]
 testpaths = ["tests"]
 # panel_rig/panel_fixtures sao partilhados pelos testes do painel e pelos ponta a ponta.
 pythonpath = ["tests/panel"]
-addopts = "-ra --strict-markers -m 'not live'"
+addopts = "-ra --import-mode=importlib --strict-markers -m 'not live'"
 markers = [
     "live: testes que chamam provedores reais (fora da execucao padrao)",
 ]
