@@ -727,11 +727,11 @@ Cada etapa só avança com a prova anterior. **Não é uma estimativa garantida.
 | **1** | Núcleo: esqueleto, dados, artefactos com versão ativa, custo com reservas, motor, LLM com rota por papel, Diretor em entrevista, **diagnóstico e estratégia**, painel base com proteções | A, C | **Reescrito (v2):** `AgentDATA/docs/2026-11-05T21-28-57+00-00_plano_01_v2_nucleo_diretor_estrategia.md`; **em execução:** Tarefa 1 concluída, Tarefas 2 a 15 por fazer (estado no próprio plano) |
 | **2** | Criação: plano semanal derivado da estratégia, experiências, Copywriter, Designer (layout e geração por IA), Revisor com visão, comparação simples vs. especializado, feedback | C | Por escrever |
 | **3** | Publicação: Gestor, scheduler, Publicador, cliente Meta, operação e tentativas, estado por canal, reserva, sessão semanal, reconciliação de publicações, tokens, heartbeat | D | Por escrever |
-| **4** | Interface: oficina 3D essencial, avatares, painel de entregas, revisão em lote, alternativa 2D, desempenho e acessibilidade | D | Por escrever |
+| ~~4~~ | **Passou a ser a parte 2D do Plano 2** (decisão do responsável, 2026-11-09): oficina 3D essencial, avatares, painel de entregas, alternativa 2D, desempenho e acessibilidade. Spec: `2026-11-09T14-07-58+00-00_spec_plano_02d_oficina_3d.md` | D | Spec escrita |
 | **5** | Triagem: recetor completo, eventos, Triagem, fichas, leads, avisos por email, RGPD mínimo e eliminação transversal | E | Por escrever |
 | **6** | Análise: métricas completas, relatórios, Analista, revisão mensal assistida | F | Por escrever |
 
-O **primeiro lançamento** fecha no fim dos Planos 1 a 4 (etapa D). A revisão mensal da estratégia (W7) entra no Plano 2, com os indicadores mínimos do piloto; o Plano 6 só a enriquece.
+O **primeiro lançamento** fecha no fim dos Planos 1 a 3 (etapa D); a oficina 3D é a parte 2D do Plano 2 (ordem: 2A → 2B → 2C → 2D → 3). A revisão mensal da estratégia (W7) entra **depois do Plano 3** (decisão do responsável, 2026-11-09: depende de métricas de publicações reais), com os indicadores mínimos do piloto; o Plano 6 só a enriquece. O Plano 2 divide-se em 2A (plano semanal e texto), 2B (imagem) e 2C (comparação simples vs. especializado); specs em `AgentDATA/docs/2026-11-09T14-07-58+00-00_spec_plano_02*.md`.
 
 ### 11.3 Esforço
 
