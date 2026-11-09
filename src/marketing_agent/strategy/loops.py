@@ -34,10 +34,12 @@ DATA_TAGS: Final = (
 
 # Tolera espacos e as quebras de linha ja escapadas pelo JSON (`\n` literal). Depois do nome
 # aceita uma cauda sem `<` nem `>` (atributos, `/`), para apanhar `</tag x="1">` e `<tag/>`;
-# `\b` evita apanhar nomes mais longos como `<estrategia_extra>`.
+# `\b` evita apanhar nomes mais longos como `<estrategia_extra>`. O `/` e o espaco seguinte
+# formam um grupo opcional unico: dois `_SPACE` seguidos em volta de `/?` tornavam a expressao
+# quadratica em corridas longas de espacos.
 _SPACE = r"(?:\s|\\[nrt])*"
 _TAG_NAMES = "|".join(map(re.escape, DATA_TAGS))
-_DELIMITER_PATTERN = re.compile(rf"<{_SPACE}/?{_SPACE}(?:{_TAG_NAMES})\b[^<>]*>", re.IGNORECASE)
+_DELIMITER_PATTERN = re.compile(rf"<{_SPACE}(?:/{_SPACE})?(?:{_TAG_NAMES})\b[^<>]*>", re.IGNORECASE)
 _NEUTRALIZED = "[etiqueta removida]"
 
 DIAGNOSIS_REQUEST = "Produz agora o diagnostico com base nos dados abaixo."

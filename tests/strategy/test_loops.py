@@ -1,5 +1,7 @@
 """Etiquetas de dados dos ciclos do Diretor: lista unica e neutralizacao."""
 
+import time
+
 import pytest
 
 from marketing_agent.strategy.loops import DATA_TAGS, neutralize, wrap_data
@@ -84,3 +86,25 @@ def test_wrap_data_refuses_unregistered_tag() -> None:
 )
 def test_ordinary_text_is_not_altered(text: str) -> None:
     assert neutralize(text) == text
+
+
+@pytest.mark.parametrize(
+    "hostile",
+    [
+        "<" + " " * 100_000,
+        "<" + "\\n" * 50_000,
+        "<" + " \\n" * 33_000,
+        "<" + " " * 100_000 + "/",
+        ("<" + " " * 100) * 1_000,
+    ],
+    ids=["spaces", "literal-newlines", "mixed", "spaces-then-slash", "many-openers"],
+)
+def test_neutralize_is_linear_on_long_whitespace_runs(hostile: str) -> None:
+    start = time.perf_counter()
+    assert neutralize(hostile) == hostile
+    assert time.perf_counter() - start < 1.0
+
+
+def test_neutralize_long_run_before_a_real_tag_still_works() -> None:
+    result = neutralize("<" + " " * 100_000 + "/ brief >")
+    assert result == "[etiqueta removida]"
