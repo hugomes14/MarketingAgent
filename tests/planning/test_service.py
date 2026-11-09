@@ -2,7 +2,9 @@
 
 import itertools
 import json
+import threading
 from collections.abc import Callable, Mapping
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
@@ -158,6 +160,30 @@ class Rig:
             return list(
                 session.scalars(select(SystemFlag).where(SystemFlag.key.like("proposal:%")))
             )
+
+    def submit_plan(self, week: str, slots: int, label: str) -> str:
+        """Plano `submitted` criado pela loja, com temas proprios de `label`."""
+        [base] = fake_scenarios.weekly_plan(week, slots)
+        assert not isinstance(base, Exception)
+        body = json.loads(base.text)
+        for slot in body["slots"]:
+            slot["tema"] = f"Tema {label} {slot['slot_key']}"
+        created = self.store.create(self.brand_id, ArtifactType.PLANO, body)
+        self.store.submit(created.id, "diretor")
+        return created.id
+
+    def set_job_status(self, post_id: str, status: str) -> None:
+        with self.factory.begin() as session:
+            session.execute(
+                update(Job).where(Job.payload["post_id"].astext == post_id).values(status=status)
+            )
+
+    def set_post(self, slot_key: str, **values: object) -> None:
+        with self.factory.begin() as session:
+            session.execute(update(Post).where(Post.slot_key == slot_key).values(**values))
+
+    def jobs_of(self, post_id: str) -> list[Job]:
+        return [job for job in self.jobs() if job.payload["post_id"] == post_id]
 
     def set_lifecycle(self, slot_key: str, lifecycle: str) -> None:
         with self.factory.begin() as session:
@@ -601,3 +627,139 @@ def test_changed_draft_post_gets_new_brief_and_job(make_rig: Callable[[Script], 
     statuses = {j.dedupe_key: j.status for j in rig.jobs()}
     assert statuses[f"generate_post:{first.id}:plan:{second_id}"] == "queued"
     assert sum(status == "cancelled" for status in statuses.values()) == 1
+
+
+SLOT_1 = f"{WEEK}-1"
+
+
+def reapprove_identical(rig: Rig, status: str, lifecycle: str = "planned") -> tuple[str, str]:
+    """Aprova o plano, estraga o trabalho do slot 1 e reaprova um plano identico."""
+    rig_post_ids = rig.propose_and_approve()[1]
+    first = rig_post_ids[0]
+    rig.set_job_status(first, status)
+    rig.set_post(SLOT_1, last_error="falhou", lifecycle=lifecycle)
+    second_id, _ = rig.propose_and_approve()
+    return first, second_id
+
+
+@pytest.mark.parametrize("status", ["failed", "dead"])
+@pytest.mark.parametrize("lifecycle", ["planned", "drafting"])
+def test_identical_reapproval_regenerates_post_whose_job_ended(
+    make_rig: Callable[[Script], Rig], status: str, lifecycle: str
+) -> None:
+    rig = make_rig(plans(plan_response(WEEK, 3), plan_response(WEEK, 3)))
+    rig.activate_strategy()
+    post_id, second_id = reapprove_identical(rig, status, lifecycle)
+    [new_job] = [j for j in rig.jobs_of(post_id) if j.status == "queued"]
+    assert new_job.dedupe_key == f"generate_post:{post_id}:plan:{second_id}"
+    assert new_job.payload == {"post_id": post_id, "owner_comment": None, "reason": "plan"}
+    post = rig.post_by_key()[SLOT_1]
+    assert post.last_error is None and post.lifecycle == lifecycle  # drafting nao volta a planned
+    assert post.plan_artifact_id == second_id
+    assert rig.count(Job) == 4  # os outros dois posts mantem o trabalho que tinham
+    assert rig.audits("plan.approve")[-1].detail["jobs"] == 1
+
+
+@pytest.mark.parametrize("status", ["queued", "running"])
+def test_identical_reapproval_with_active_job_adds_no_job(
+    make_rig: Callable[[Script], Rig], status: str
+) -> None:
+    rig = make_rig(plans(plan_response(WEEK, 3), plan_response(WEEK, 3)))
+    rig.activate_strategy()
+    post_id, _ = reapprove_identical(rig, status)
+    assert rig.count(Job) == 3
+    assert [j.status for j in rig.jobs_of(post_id)] == [status]
+    assert rig.post_by_key()[SLOT_1].last_error == "falhou"  # nada a regenerar: nao se mexe
+    assert rig.audits("plan.approve")[-1].detail["jobs"] == 0
+
+
+@pytest.mark.parametrize("lifecycle", ["in_review", "approved", "rejected"])
+def test_identical_reapproval_leaves_reviewed_posts_alone(
+    make_rig: Callable[[Script], Rig], lifecycle: str
+) -> None:
+    rig = make_rig(plans(plan_response(WEEK, 3), plan_response(WEEK, 3)))
+    rig.activate_strategy()
+    post_id, _ = reapprove_identical(rig, "failed", lifecycle)
+    assert rig.count(Job) == 3 and [j.status for j in rig.jobs_of(post_id)] == ["failed"]
+    assert rig.post_by_key()[SLOT_1].lifecycle == lifecycle
+
+
+def test_rewritten_post_restarts_review_rounds(make_rig: Callable[[Script], Rig]) -> None:
+    rig = make_rig(plans(plan_response(WEEK, 2), plan_response(WEEK, 2, change_theme(0, "Outro"))))
+    rig.activate_strategy()
+    rig.propose_and_approve()
+    rig.set_post(SLOT_1, review_rounds=2, lifecycle="drafting")
+    rig.set_post(f"{WEEK}-2", review_rounds=2)
+    rig.propose_and_approve()
+    posts = rig.post_by_key()
+    assert posts[SLOT_1].review_rounds == 0  # brief novo: nova geracao
+    assert posts[f"{WEEK}-2"].review_rounds == 2  # igual: conserva
+
+
+def test_revived_post_restarts_review_rounds(make_rig: Callable[[Script], Rig]) -> None:
+    rig = make_rig(plans(plan_response(WEEK, 2), plan_response(WEEK, 1), plan_response(WEEK, 2)))
+    rig.activate_strategy()
+    rig.propose_and_approve()
+    rig.set_post(f"{WEEK}-2", review_rounds=3)
+    rig.propose_and_approve()
+    assert rig.post_by_key()[f"{WEEK}-2"].review_rounds == 3  # cancelado conserva o historico
+    rig.propose_and_approve()
+    assert rig.post_by_key()[f"{WEEK}-2"].review_rounds == 0
+
+
+BARRIER_TIMEOUT_S = 5
+RESULT_TIMEOUT_S = 30
+
+
+def approve_concurrently(rig: Rig, plan_ids: list[str]) -> list[object]:
+    """Aprova cada plano numa thread propria, largando-as juntas; devolve resultado ou erro."""
+    barrier = threading.Barrier(len(plan_ids), timeout=BARRIER_TIMEOUT_S)
+
+    def attempt(plan_id: str) -> object:
+        barrier.wait()
+        try:
+            return rig.service.approve_plan(plan_id, "ana")
+        except Exception as exc:  # o teste classifica o erro
+            return exc
+
+    with ThreadPoolExecutor(max_workers=len(plan_ids)) as pool:
+        futures = [pool.submit(attempt, plan_id) for plan_id in plan_ids]
+        return [future.result(timeout=RESULT_TIMEOUT_S) for future in futures]
+
+
+WEEKS = ["2026-W46", "2026-W47", "2026-W48"]  # uma semana por repeticao: a mesma marca serve
+
+
+def test_same_plan_approved_from_two_threads_succeeds_once(
+    make_rig: Callable[[Script], Rig],
+) -> None:
+    rig = make_rig(plans(*(plan_response(week, 3) for week in WEEKS)))
+    rig.activate_strategy()
+    for repetition, week in enumerate(WEEKS):  # repete para o intercalamento aparecer
+        plan_id = rig.propose(week)
+        results = approve_concurrently(rig, [plan_id, plan_id])
+        failures = [r for r in results if isinstance(r, Exception)]
+        assert len(failures) == 1 and isinstance(failures[0], InvalidTransition), repetition
+        assert len(rig.audits("plan.approve")) == repetition + 1
+        assert rig.count(Post) == 3 * (repetition + 1) and rig.count(Job) == 3 * (repetition + 1)
+
+
+def test_two_plans_of_the_same_week_approved_concurrently_agree_with_the_head(
+    make_rig: Callable[[Script], Rig],
+) -> None:
+    rig = make_rig(plans())
+    rig.activate_strategy()
+    for repetition, week in enumerate(WEEKS):
+        ids = [rig.submit_plan(week, 3, label) for label in ("A", "B")]
+        results = approve_concurrently(rig, ids)
+        assert not [r for r in results if isinstance(r, Exception)], (repetition, results)
+        head = rig.store.active(rig.brand_id, ArtifactType.PLANO, scope=f"week:{week}")
+        assert head is not None and head.id in ids
+        slots = head.payload["slots"]
+        assert isinstance(slots, list)
+        posts = [p for key, p in rig.post_by_key().items() if key.startswith(f"{week}-")]
+        assert len(posts) == 3
+        for post, slot in zip(posts, slots, strict=True):
+            assert isinstance(slot, dict)
+            assert post.plan_artifact_id == head.id and post.brief["tema"] == slot["tema"]
+            assert [j.status for j in rig.jobs_of(post.id)].count("queued") == 1

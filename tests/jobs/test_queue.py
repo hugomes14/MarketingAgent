@@ -7,7 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 
 import pytest
-from sqlalchemy import select, text
+from sqlalchemy import select, text, update
 from sqlalchemy.orm import Session, sessionmaker
 
 from marketing_agent.clock import FixedClock
@@ -241,6 +241,48 @@ def test_cancel_for_post(queue: JobQueue, session_factory: Factory) -> None:
     with session_factory.begin() as session:  # o worker que perdeu o job nao o conclui
         assert queue.complete_in(session, running) is False
         assert queue.cancel_for_post_in(session, "post-1") == 0
+
+
+def has_active(queue: JobQueue, session_factory: Factory, post_id: str) -> bool:
+    with session_factory.begin() as session:
+        return queue.has_active_for_post_in(session, post_id)
+
+
+def test_has_active_for_post_ignores_other_type_and_other_post(
+    queue: JobQueue, session_factory: Factory
+) -> None:
+    assert has_active(queue, session_factory, "post-1") is False
+    enqueue(queue, session_factory, "o1", job_type="outro", post_id="post-1")
+    enqueue(queue, session_factory, "o2", post_id="post-2")
+    assert has_active(queue, session_factory, "post-1") is False
+    assert has_active(queue, session_factory, "post-2") is True
+
+
+def test_has_active_for_post_follows_the_job_status(
+    queue: JobQueue, session_factory: Factory
+) -> None:
+    assert enqueue(queue, session_factory, "q") is not None
+    assert has_active(queue, session_factory, "post-1") is True  # queued
+    claimed = queue.claim("w1")
+    assert claimed is not None and has_active(queue, session_factory, "post-1") is True  # running
+    with session_factory.begin() as session:
+        assert queue.complete_in(session, claimed) is True
+    assert has_active(queue, session_factory, "post-1") is False  # succeeded
+    assert enqueue(queue, session_factory, "c") is not None
+    with session_factory.begin() as session:
+        assert queue.cancel_for_post_in(session, "post-1") == 1
+    assert has_active(queue, session_factory, "post-1") is False  # cancelled
+
+
+def test_has_active_for_post_ignores_failed_and_dead(
+    queue: JobQueue, session_factory: Factory
+) -> None:
+    for status in ("failed", "dead"):
+        job_id = enqueue(queue, session_factory, status, post_id="post-9")
+        with session_factory.begin() as session:
+            session.execute(update(Job).where(Job.id == job_id).values(status=status))
+    with session_factory.begin() as session:
+        assert queue.has_active_for_post_in(session, "post-9") is False
 
 
 JOBS_IN_STRESS = 50

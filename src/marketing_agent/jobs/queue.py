@@ -10,7 +10,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import timedelta
 
-from sqlalchemy import case, select, text, update
+from sqlalchemy import ColumnElement, case, select, text, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -41,6 +41,15 @@ class ClaimedJob:
 def truncate_error(message: str) -> str:
     """Limita `message` a `MAX_ERROR_CHARS` caracteres, numa so linha."""
     return " ".join(message.split())[:MAX_ERROR_CHARS]
+
+
+def _active_generate_post(post_id: str) -> tuple[ColumnElement[bool], ...]:
+    """Condicoes dos `generate_post` ativos de `post_id` (`post_id` segue como parametro)."""
+    return (
+        Job.type == GENERATE_POST_JOB,
+        Job.status.in_(ACTIVE_JOB_STATUSES),
+        Job.payload["post_id"].astext == post_id,
+    )
 
 
 def _status_after_failure(job: Job, retry: bool) -> str:
@@ -161,6 +170,11 @@ class JobQueue:
         with self._session_factory.begin() as session:
             return len(session.execute(statement).all())
 
+    def has_active_for_post_in(self, session: Session, post_id: str) -> bool:
+        """Ha um `generate_post` `queued` ou `running` do post? Leitura na transacao do chamador."""
+        statement = select(Job.id).where(*_active_generate_post(post_id)).limit(1)
+        return session.execute(statement).first() is not None
+
     def cancel_for_post_in(self, session: Session, post_id: str) -> int:
         """Cancela os `generate_post` ativos do post na transacao do chamador; devolve quantos.
 
@@ -168,11 +182,7 @@ class JobQueue:
         """
         statement = (
             update(Job)
-            .where(
-                Job.type == GENERATE_POST_JOB,
-                Job.status.in_(ACTIVE_JOB_STATUSES),
-                Job.payload["post_id"].astext == post_id,
-            )
+            .where(*_active_generate_post(post_id))
             .values(status="cancelled", updated_at=self._clock.now(), **_RELEASED_LOCK)
             .returning(Job.id)
         )

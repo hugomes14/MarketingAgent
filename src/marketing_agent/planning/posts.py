@@ -31,6 +31,7 @@ class _Action(StrEnum):
     CREATED = "created"
     UPDATED = "updated"
     KEPT = "kept"
+    RESTARTED = "restarted"  # igual ao anterior, mas sem trabalho ativo: gera-se de novo
 
 
 @dataclass(frozen=True)
@@ -79,8 +80,10 @@ class PostReconciler:
 
         Slot novo, cancelado ou com brief, canais ou data diferentes: post `planned` com um
         trabalho novo (o trabalho ativo antigo do post e cancelado). Slot igual em `planned` ou
-        `drafting`: so passa a apontar ao plano novo. Slot em `in_review`, `approved` ou
-        `rejected`: intocado. Slot que saiu do plano: `cancelled` e o seu trabalho tambem.
+        `drafting`: passa a apontar ao plano novo e so recebe trabalho novo se nao tem nenhum
+        `generate_post` ativo (o anterior falhou, morreu ou foi cancelado). Slot em `in_review`,
+        `approved` ou `rejected`: intocado. Slot que saiu do plano: `cancelled`, e o seu trabalho
+        tambem.
         """
         existing = self._week_posts(session, plan_record.brand_id, plan.semana)
         outcomes = [
@@ -97,7 +100,7 @@ class PostReconciler:
             post_ids=[post.id for post, _ in outcomes],
             created=counts[_Action.CREATED],
             updated=counts[_Action.UPDATED],
-            kept=counts[_Action.KEPT],
+            kept=counts[_Action.KEPT] + counts[_Action.RESTARTED],
             cancelled=cancelled,
             jobs=len(to_run),
         )
@@ -128,10 +131,21 @@ class PostReconciler:
         post.plan_artifact_id = plan_record.id
         post.strategy_artifact_id = strategy_id
         if post.lifecycle != CANCELLED and not _differs(post, slot):
-            return post, _Action.KEPT
+            return post, self._restart_if_idle(session, post)
         self._queue.cancel_for_post_in(session, post.id)  # nao deixar o brief antigo a correr
         self._rewrite(post, slot)
         return post, _Action.UPDATED
+
+    def _restart_if_idle(self, session: Session, post: Post) -> _Action:
+        """Slot igual: so gera de novo se o trabalho anterior terminou sem sucesso (ou sumiu).
+
+        O post esta bloqueado `FOR UPDATE`, por isso nenhum outro pedido cria o trabalho entre
+        a verificacao e o `enqueue`. O ciclo de vida (`planned` ou `drafting`) nao muda.
+        """
+        if self._queue.has_active_for_post_in(session, post.id):
+            return _Action.KEPT
+        post.last_error = None
+        return _Action.RESTARTED
 
     def _new_post(self, slot: PlanSlot, plan_record: ArtifactRecord, strategy_id: str) -> Post:
         return Post(
@@ -153,6 +167,7 @@ class PostReconciler:
         post.scheduled_date = slot.data
         post.brief = _brief(slot)
         post.lifecycle = PLANNED
+        post.review_rounds = 0  # brief novo ou post revivido: comeca uma geracao nova
         post.last_error = None
 
     def _cancel_removed(
