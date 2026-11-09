@@ -53,12 +53,22 @@ SOURCE_KINDS = ("dito_pelo_responsavel", "verificado", "suposto")
 POST_LIFECYCLES = ("planned", "drafting", "in_review", "approved", "rejected", "cancelled")
 CHANNELS = ("facebook", "instagram")
 REVIEW_VERDICTS = ("aprovar", "rever", "rejeitar")
-REVISION_ORIGINS = ("agente", "edicao_responsavel")
+REVISION_ORIGINS = ("agente", "edicao_responsavel", "upload")
 APPROVAL_DECISIONS = ("approved", "rejected", "changes_requested")
 FEEDBACK_KINDS = ("estilo", "correcao_factual", "temporario", "negativo")
+# Tipos conhecidos pelo pipeline; a fila aceita tambem tipos de outros consumidores.
+JOB_TYPES = ("generate_post", "review_post")
 JOB_STATUSES = ("queued", "running", "succeeded", "failed", "dead", "cancelled")
 # Estados em que um job ainda conta para a deduplicacao (ver o indice parcial de `Job`).
 ACTIVE_JOB_STATUSES = ("queued", "running")
+MEDIA_KINDS = ("foto", "logotipo", "final", "componente_gerado")
+MEDIA_ORIGINS = ("propria", "banco_licenciado", "cliente_autorizado", "gerada", "composta")
+PHOTO_SUBJECTS = ("produto", "instalacao", "pessoas", "ambiente", "outro")
+MEDIA_MIMES = ("image/jpeg", "image/png")
+STORAGE_BACKENDS = ("local",)
+REVISION_LAYOUTS = ("foto_inteira", "foto_titulo", "fundo_ia_titulo", "manual")
+BRAND_FONT_NAMES = ("inter-bold",)
+
 # Predicado SQL unico do indice parcial de `Job`; a migracao 0002 mantem o seu literal e um
 # teste (tests/jobs/test_queue.py) falha se os dois divergirem.
 ACTIVE_JOB_PREDICATE_SQL = "status IN (" + ", ".join(f"'{v}'" for v in ACTIVE_JOB_STATUSES) + ")"
@@ -452,8 +462,84 @@ class Post(Base):
     created_at: Mapped[datetime] = mapped_column(Timestamp, nullable=False)
 
 
+class MediaAsset(Base):
+    """Media da marca com bytes imutaveis identificados por SHA-256."""
+
+    __tablename__ = "media_asset"
+    __table_args__ = (
+        UniqueConstraint("brand_id", "sha256"),
+        UniqueConstraint("brand_id", "id"),
+        enum_check("kind", MEDIA_KINDS, "kind"),
+        enum_check("origem", MEDIA_ORIGINS, "origem"),
+        enum_check("mime", MEDIA_MIMES, "mime"),
+        enum_check("storage_backend", STORAGE_BACKENDS, "storage_backend"),
+        enum_check("mostra", PHOTO_SUBJECTS, "mostra"),
+        # CHECK aceita UNKNOWN; descricao IS NOT NULL fecha o caso da foto sem descricao.
+        CheckConstraint(
+            "kind <> 'foto' OR (mostra IS NOT NULL AND descricao IS NOT NULL "
+            "AND char_length(descricao) BETWEEN 1 AND 300)",
+            name="foto_requires_subject_description",
+        ),
+        CheckConstraint(
+            "mostra IS DISTINCT FROM 'pessoas' OR tem_autorizacao_pessoas",
+            name="pessoas_requires_authorization",
+        ),
+        CheckConstraint("width > 0 AND height > 0 AND bytes > 0", name="positive_dimensions_size"),
+        CheckConstraint("sha256 ~ '^[0-9a-f]{64}$'", name="sha256"),
+    )
+
+    id: Mapped[str] = id_column()
+    brand_id: Mapped[str] = brand_fk()
+    kind: Mapped[str] = mapped_column(Text, nullable=False)
+    storage_backend: Mapped[str] = mapped_column(Text, nullable=False)
+    storage_key: Mapped[str] = mapped_column(Text, nullable=False)
+    mime: Mapped[str] = mapped_column(Text, nullable=False)
+    width: Mapped[int] = mapped_column(Integer, nullable=False)
+    height: Mapped[int] = mapped_column(Integer, nullable=False)
+    bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    mostra: Mapped[str | None] = mapped_column(Text)
+    descricao: Mapped[str | None] = mapped_column(Text)
+    origem: Mapped[str] = mapped_column(Text, nullable=False)
+    licenca_nota: Mapped[str | None] = mapped_column(Text)
+    tem_autorizacao_pessoas: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default=text("true")
+    )
+    created_by: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(Timestamp, nullable=False)
+
+
+class BrandKit(Base):
+    """Kit da marca versionado; a versao mais alta e a ativa."""
+
+    __tablename__ = "brand_kit"
+    __table_args__ = (
+        UniqueConstraint("brand_id", "version"),
+        ForeignKeyConstraint(
+            ["brand_id", "logo_asset_id"], ["media_asset.brand_id", "media_asset.id"]
+        ),
+        CheckConstraint("version > 0", name="positive_version"),
+        CheckConstraint("cor_primaria ~ '^#[0-9A-F]{6}$'", name="cor_primaria"),
+        CheckConstraint("cor_secundaria ~ '^#[0-9A-F]{6}$'", name="cor_secundaria"),
+        enum_check("fonte", BRAND_FONT_NAMES, "fonte"),
+    )
+
+    id: Mapped[str] = id_column()
+    brand_id: Mapped[str] = brand_fk()
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    logo_asset_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    cor_primaria: Mapped[str] = mapped_column(String(7), nullable=False)
+    cor_secundaria: Mapped[str] = mapped_column(String(7), nullable=False)
+    fonte: Mapped[str] = mapped_column(Text, nullable=False)
+    created_by: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(Timestamp, nullable=False)
+
+
 class PostRevision(Base):
-    """Versao do texto de um post. Imutavel (ver o trigger na migracao)."""
+    """Versao do texto e da imagem de um post. Imutavel (ver o trigger na migracao)."""
 
     __tablename__ = "post_revision"
     __table_args__ = (
@@ -466,6 +552,15 @@ class PostRevision(Base):
         ),
         enum_check("review_verdict", REVIEW_VERDICTS, "review_verdict"),
         enum_check("origin", REVISION_ORIGINS, "origin"),
+        ForeignKeyConstraint(
+            ["brand_id", "final_asset_id"], ["media_asset.brand_id", "media_asset.id"]
+        ),
+        enum_check("layout", REVISION_LAYOUTS, "layout"),
+        CheckConstraint(
+            "(final_asset_id IS NULL AND layout IS NULL AND layout_version IS NULL) OR "
+            "(final_asset_id IS NOT NULL AND layout IS NOT NULL AND layout_version IS NOT NULL)",
+            name="image_all_or_nothing",
+        ),
     )
 
     id: Mapped[str] = id_column()
@@ -483,6 +578,24 @@ class PostRevision(Base):
     review_verdict: Mapped[str | None] = mapped_column(Text)
     review_violations: Mapped[list[str]] = mapped_column(ARRAY(Text), nullable=False)
     review_notes: Mapped[str | None] = mapped_column(Text)
+    final_asset_id: Mapped[str | None] = mapped_column(String(36))
+    layout: Mapped[str | None] = mapped_column(Text)
+    layout_version: Mapped[int | None] = mapped_column(Integer)
+    components: Mapped[list[JsonObject]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
+    is_ai_generated: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
+    review_image_checked: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
+    image_cost_usd: Mapped[Decimal] = mapped_column(
+        Money, nullable=False, default=Decimal(0), server_default=text("0")
+    )
+    package_cost_usd: Mapped[Decimal] = mapped_column(
+        Money, nullable=False, default=Decimal(0), server_default=text("0")
+    )
     origin: Mapped[str] = mapped_column(Text, nullable=False)
     produced_by_run_id: Mapped[str | None] = mapped_column(String(36))
     created_at: Mapped[datetime] = mapped_column(Timestamp, nullable=False)
