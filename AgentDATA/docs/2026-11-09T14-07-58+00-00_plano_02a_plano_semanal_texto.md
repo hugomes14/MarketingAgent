@@ -4,7 +4,7 @@
 
 - Timestamp: `2026-11-09T14:07:58+00:00`
 - Autor: `agent`
-- Estado de execução: **Tarefas 1 a 4 concluídas; Tarefas 5 a 12 por fazer.**
+- Estado de execução: **Tarefas 1 a 5 concluídas; Tarefas 6 a 12 por fazer.**
 
 **Goal:** A partir da estratégia ativa, propor e aprovar o plano da semana e gerar em segundo plano, para cada publicação aprovada no plano, uma legenda revista que o responsável aprova, edita, devolve ou rejeita no painel.
 
@@ -228,11 +228,22 @@ tests/{db,kb,jobs,planning,content,feedback,panel,e2e}/...
     - `reject_plan(artifact_id: str, actor: str, reason: str) -> None`.
   - `approve_plan`, **numa transação**: `approve_and_activate_in(..., scope=f"week:{semana}")`; para cada slot, `INSERT … ON CONFLICT (brand_id, slot_key) DO UPDATE` só se o post estiver `planned`/`drafting`/`cancelled` (mantém posts já `in_review`/`approved` com o mesmo `slot_key`); posts da semana cujo `slot_key` saiu do plano → `cancelled` + `cancel_for_post_in`; um job `generate_post` (`dedupe_key = f"generate_post:{post_id}:plan:{artifact_id}"`) por post novo ou alterado; `AuditLog` `plan.approve`.
 
-- [ ] **Step 1: Testes que falham.** `test_propose_requires_active_strategy`, `test_propose_refuses_pending_plan_same_week`, `test_approve_creates_posts_and_jobs_atomically`, `test_approve_twice_no_duplicates` (Foco 2), `test_reject_creates_nothing`, `test_new_plan_replaces_by_slot_key` (slot removido → `cancelled` e job `cancelled`; slot mantido conserva o post), `test_approve_failure_rolls_back_posts_and_jobs`.
-- [ ] **Step 2: Correr e ver falhar.**
-- [ ] **Step 3: Implementar.**
-- [ ] **Step 4: Validação global.**
-- [ ] **Step 5: Commit.** `feat: aprovacao do plano cria posts e trabalhos numa transacao`.
+- [x] **Step 1: Testes que falham.** `test_propose_requires_active_strategy`, `test_propose_refuses_pending_plan_same_week`, `test_approve_creates_posts_and_jobs_atomically`, `test_approve_twice_no_duplicates` (Foco 2), `test_reject_creates_nothing`, `test_new_plan_replaces_by_slot_key` (slot removido → `cancelled` e job `cancelled`; slot mantido conserva o post), `test_approve_failure_rolls_back_posts_and_jobs`.
+- [x] **Step 2: Correr e ver falhar.**
+- [x] **Step 3: Implementar.**
+- [x] **Step 4: Validação global.**
+- [x] **Step 5: Commit.** `feat: aprovacao do plano cria posts e trabalhos numa transacao`.
+
+**Notas de execução (Tarefa 5):**
+
+- Concluída (commits `afb94af`, `1800b6f`, `e7b7243`), em modo subagente: implementação, revisão com modelo mais capaz e uma ronda de correção com re-revisão limpa. 1055 testes passam; `ruff` e `mypy src` limpos. Marco M3 (plano semanal): serviço pronto; as páginas vêm na Tarefa 10.
+- A expressão das etiquetas de dados passou a ser linear (corrigida primeiro, com teste de tempo). A lógica do marcador de pedido em curso foi extraída para `marketing_agent/proposals.py` (`ProposalRunner`), partilhada pelo serviço de estratégia e pelo do plano; as importações antigas de `strategy.service` continuam a funcionar.
+- `PlanningService`: `propose_plan` (semana por omissão = a ISO seguinte, correta nas viragens de ano; ao Diretor e à validação só chegam os itens da base válidos em **todos** os 7 dias da semana); `approve_plan` numa só transação (ativa o plano com âmbito `week:AAAA-Www`, cria ou atualiza um post por slot, cancela os posts de slots removidos e os seus trabalhos, enfileira os trabalhos, uma auditoria `plan.approve` só com contagens); `reject_plan` não cria nada. Aprovar duas vezes falha na segunda e não altera nada (verificado também com duas threads).
+- **Regras dos posts ao aprovar:** posts em `in_review`, `approved` ou `rejected` com o mesmo slot ficam intactos; um post `planned`/`drafting` com o brief alterado, ou reavivado de `cancelled`, é reescrito (cancela os trabalhos ativos antes de enfileirar um novo, e `review_rounds` volta a 0); um post `planned`/`drafting` **idêntico** sem nenhum trabalho de geração ativo ganha um trabalho novo e o `last_error` é limpo (recuperação de trabalhos `failed`/`dead` reaprovando o plano); com trabalho ativo não ganha nenhum. Posts `rejected` cujo slot sai do plano ficam `rejected`.
+- `JobQueue.has_active_for_post_in` (mesmo filtro que `cancel_for_post_in`).
+- **Para as Tarefas 8 e 9:** o worker bloqueia o post **antes** do trabalho (a aprovação bloqueia posts → trabalhos; ordem contrária dá impasse); o teste de "post mudou" do pipeline não pode tratar como mudança o reposicionamento de `plan_artifact_id`/`strategy_artifact_id` dos posts mantidos; o `request_changes` da Tarefa 9 bloqueia o post antes de enfileirar.
+- `PlanningService` ainda não está ligado ao arranque nem ao painel (Tarefa 10).
+- Menores adiados: o id da estratégia é lido fora da transação (guardá-lo no payload do plano); o teste de interseção da base de conhecimento não cobre `valid_from` a meio da semana; o docstring de `queue.py` está desatualizado.
 
 ### Task 6: Feedback
 
