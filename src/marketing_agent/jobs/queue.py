@@ -1,0 +1,186 @@
+"""Fila de trabalhos em Postgres: reclamacao exclusiva, lease, tentativas e cancelamento.
+
+A fila nao conhece o conteudo dos payloads (exceto o `post_id` de `generate_post`, em
+`cancel_for_post_in`). Cada operacao e uma transacao curta; nenhum lock e mantido enquanto o
+worker trabalha. A posse de um job prova-se pelo `lease_token`: quem o perde (lease expirada,
+job cancelado) nao consegue concluir nem falhar o job.
+"""
+
+from collections.abc import Mapping
+from dataclasses import dataclass
+from datetime import timedelta
+
+from sqlalchemy import case, select, text, update
+from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.orm import Session, sessionmaker
+
+from marketing_agent.clock import Clock
+from marketing_agent.db.base import new_id
+from marketing_agent.db.models import ACTIVE_JOB_STATUSES, Job
+
+GENERATE_POST_JOB = "generate_post"
+RETRY_BACKOFF = timedelta(seconds=30)  # espera = RETRY_BACKOFF x tentativas ja feitas
+MAX_ERROR_CHARS = 200
+_LEASE_EXPIRED_ERROR = "LeaseExpired: lease expirada sem conclusao"
+_ACTIVE_FILTER = text("status IN (" + ", ".join(f"'{v}'" for v in ACTIVE_JOB_STATUSES) + ")")
+# Campos limpos sempre que o job deixa de estar em posse de um worker.
+_RELEASED_LOCK = {"locked_by": None, "locked_until": None, "lease_token": None}
+
+
+@dataclass(frozen=True)
+class ClaimedJob:
+    """Job reclamado por um worker; `lease_token` prova a posse nas operacoes seguintes."""
+
+    id: str
+    type: str
+    payload: Mapping[str, object]
+    attempts: int
+    lease_token: str
+
+
+def truncate_error(message: str) -> str:
+    """Limita `message` a `MAX_ERROR_CHARS` caracteres, numa so linha."""
+    return " ".join(message.split())[:MAX_ERROR_CHARS]
+
+
+def describe_error(error: BaseException) -> str:
+    """Resume `error` em 'Classe: mensagem curta', para `last_error` (nunca texto do modelo)."""
+    message = str(error)
+    summary = f"{type(error).__name__}: {message}" if message else type(error).__name__
+    return truncate_error(summary)
+
+
+def _status_after_failure(job: Job, retry: bool) -> str:
+    """`queued` se ainda ha tentativas; `dead` se esgotou; `failed` se a falha nao e repetivel."""
+    if not retry:
+        return "failed"
+    return "queued" if job.attempts < job.max_attempts else "dead"
+
+
+class JobQueue:
+    """Fila de trabalhos; o estado vive todo na tabela `job`."""
+
+    def __init__(
+        self, session_factory: sessionmaker[Session], clock: Clock, lease: timedelta
+    ) -> None:
+        """`lease` e a duracao da posse de um job reclamado; quem chama decide o valor."""
+        self._session_factory = session_factory
+        self._clock = clock
+        self._lease = lease
+
+    def enqueue_in(
+        self, session: Session, type: str, payload: Mapping[str, object], dedupe_key: str
+    ) -> str | None:
+        """Cria um job `queued` na transacao do chamador; `None` se a chave ja tem job ativo."""
+        now = self._clock.now()
+        statement = (
+            insert(Job)
+            .values(
+                id=new_id(),
+                type=type,
+                payload=dict(payload),
+                status="queued",
+                run_at=now,
+                attempts=0,
+                max_attempts=3,
+                dedupe_key=dedupe_key,
+                created_at=now,
+                updated_at=now,
+            )
+            .on_conflict_do_nothing(index_elements=["dedupe_key"], index_where=_ACTIVE_FILTER)
+            .returning(Job.id)
+        )
+        return session.execute(statement).scalar_one_or_none()
+
+    def claim(self, worker_id: str) -> ClaimedJob | None:
+        """Reclama o job `queued` mais antigo com `run_at` vencido; `None` se nao houver."""
+        now = self._clock.now()
+        statement = (
+            select(Job)
+            .where(Job.status == "queued", Job.run_at <= now)
+            .order_by(Job.run_at, Job.created_at)
+            .limit(1)
+            .with_for_update(skip_locked=True)
+        )
+        with self._session_factory.begin() as session:
+            job = session.execute(statement).scalar_one_or_none()
+            if job is None:
+                return None
+            job.status = "running"
+            job.locked_by = worker_id
+            job.locked_until = now + self._lease
+            job.lease_token = new_id()
+            job.attempts += 1
+            job.updated_at = now
+            return ClaimedJob(job.id, job.type, job.payload, job.attempts, job.lease_token)
+
+    def complete_in(self, session: Session, job: ClaimedJob) -> bool:
+        """Marca `succeeded` na transacao do chamador; `False` se o worker perdeu a lease."""
+        statement = (
+            update(Job)
+            .where(Job.id == job.id, Job.lease_token == job.lease_token, Job.status == "running")
+            .values(status="succeeded", updated_at=self._clock.now(), **_RELEASED_LOCK)
+            .returning(Job.id)
+        )
+        return session.execute(statement).first() is not None
+
+    def fail(self, job: ClaimedJob, error: str, retry: bool) -> bool:
+        """Regista a falha: nova tentativa, `dead` (esgotado) ou `failed` (sem `retry`).
+
+        Devolve `False`, sem alterar nada, se o worker perdeu a lease (nao e erro: o job ja
+        pertence a outro worker ou foi cancelado).
+        """
+        now = self._clock.now()
+        statement = (
+            select(Job)
+            .where(Job.id == job.id, Job.lease_token == job.lease_token, Job.status == "running")
+            .with_for_update()
+        )
+        with self._session_factory.begin() as session:
+            row = session.execute(statement).scalar_one_or_none()
+            if row is None:
+                return False
+            row.status = _status_after_failure(row, retry)
+            if row.status == "queued":
+                row.run_at = now + RETRY_BACKOFF * row.attempts
+            row.locked_by = None
+            row.locked_until = None
+            row.lease_token = None
+            row.last_error = truncate_error(error)
+            row.updated_at = now
+            return True
+
+    def requeue_expired(self) -> int:
+        """Devolve a `queued` (ou `dead`, se esgotou) os `running` com lease vencida; conta-os."""
+        now = self._clock.now()
+        exhausted = Job.attempts >= Job.max_attempts
+        statement = (
+            update(Job)
+            .where(Job.status == "running", Job.locked_until < now)
+            .values(
+                status=case((exhausted, "dead"), else_="queued"),
+                last_error=_LEASE_EXPIRED_ERROR,
+                updated_at=now,
+                **_RELEASED_LOCK,
+            )
+            .returning(Job.id)
+        )
+        with self._session_factory.begin() as session:
+            return len(session.execute(statement).all())
+
+    def cancel_for_post_in(self, session: Session, post_id: str) -> int:
+        """Cancela os `generate_post` ativos do post na transacao do chamador; devolve quantos.
+
+        Limpar o `lease_token` impede que um worker a meio do job o conclua depois.
+        """
+        statement = (
+            update(Job)
+            .where(
+                Job.type == GENERATE_POST_JOB,
+                Job.status.in_(ACTIVE_JOB_STATUSES),
+                Job.payload["post_id"].astext == post_id,
+            )
+            .values(status="cancelled", updated_at=self._clock.now(), **_RELEASED_LOCK)
+            .returning(Job.id)
+        )
+        return len(session.execute(statement).all())
