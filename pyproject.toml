@@ -49,9 +49,11 @@ plugins = ["pydantic.mypy"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-# panel_rig/panel_fixtures sao partilhados pelos testes do painel e pelos ponta a ponta.
-pythonpath = ["tests/panel"]
-addopts = "-ra --strict-markers -m 'not live'"
+# panel_rig/panel_fixtures sao partilhados pelos testes do painel e pelos ponta a ponta;
+# content_rig, pelos testes do pipeline, do worker e dos ponta a ponta; planning_rig, pelos
+# testes do plano semanal.
+pythonpath = ["tests/panel", "tests/content", "tests/planning"]
+addopts = "-ra --import-mode=importlib --strict-markers -m 'not live'"
 markers = [
     "live: testes que chamam provedores reais (fora da execucao padrao)",
 ]

@@ -8,7 +8,6 @@ O servidor tem de correr sem reescrita de cabecalhos de proxy (ver `panel.auth`)
 """
 
 import logging
-from datetime import timedelta
 
 from fastapi import FastAPI
 from sqlalchemy.exc import SQLAlchemyError
@@ -25,6 +24,7 @@ from marketing_agent.interview.service import InterviewService
 from marketing_agent.llm.factory import build_llm_router
 from marketing_agent.llm.router import LlmRouter
 from marketing_agent.panel.app import create_app
+from marketing_agent.panel.assembly import build_content_services
 from marketing_agent.panel.context import PanelContext
 from marketing_agent.panel.queries import PanelQueries
 from marketing_agent.secrets import SecretFileError, read_secret_file
@@ -32,8 +32,8 @@ from marketing_agent.startup import (
     StartupError,
     build_budget_controller,
     database_error_message,
-    director_max_duration_s,
     load_settings,
+    worker_stale_after,
 )
 from marketing_agent.strategy.service import StrategyService
 
@@ -84,6 +84,9 @@ def _assemble(
             csrf_secret,
             brand_id=brand_id,
             queries=PanelQueries(session_factory, store),
+            content=build_content_services(
+                settings, session_factory, engine, store, strategy, clock
+            ),
         )
     except ValueError as exc:
         raise StartupError(str(exc)) from exc
@@ -130,7 +133,10 @@ def _single_brand(session_factory: sessionmaker[Session]) -> str:
 
 
 def _recover_stale_reservations(budget: BudgetController) -> None:
-    """Reservas abertas ha mais do que o maior `max_duration_s` pertencem a um processo morto."""
-    older_than = timedelta(seconds=director_max_duration_s())
-    count = budget.recover_stale(older_than)
+    """Reservas abertas ha mais do que `worker_stale_after()` pertencem a um processo morto.
+
+    O mesmo limiar do worker: o painel partilha a base com ele, e uma chamada viva pode passar
+    do `max_duration_s` do spec (a duracao so se verifica entre passos).
+    """
+    count = budget.recover_stale(worker_stale_after())
     logger.info("arranque: %d reserva(s) aberta(s) marcada(s) como unknown_outcome", count)

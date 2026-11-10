@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% import "_macros.html" as ui %}
+{% block title %}Plano semanal{% endblock %}
+{% block content %}
+{% set plan = view.plano %}
+{% set state = view.record.state.value %}
+<h1>Plano da semana {{ plan.semana }} {{ ui.state_badge(state) }}</h1>
+
+{% if state == "submitted" %}
+<p class="aviso importante" role="alert"><strong>Nada acontece até o aprovar:</strong> ler esta página não aprova o plano nem cria publicações. Só o botão «Aprovar» o faz.</p>
+{% elif state == "approved" %}
+<p class="aviso info">Plano aprovado: {{ view.post_count }} {{ "publicação" if view.post_count == 1 else "publicações" }} criada{{ "" if view.post_count == 1 else "s" }} a partir deste plano.</p>
+{% endif %}
+
+{% for slot in plan.slots %}
+<section class="cartao slot" id="slot-{{ loop.index }}">
+  <h2>{{ slot.data.isoformat() }} — {{ slot.tema }}</h2>
+  <p>
+    {% for channel in slot.canais %}<span class="etiqueta">{{ channel|channel_label }}</span> {% endfor %}
+    <span class="etiqueta">Pilar: {{ slot.pilar }}</span>
+  </p>
+  <dl class="detalhes">
+    <dt>Objetivo</dt><dd>{{ slot.objetivo }}</dd>
+    <dt>Justificação</dt><dd>{{ slot.justificacao }}</dd>
+    {% if slot.experiment_index is not none %}
+    <dt>Experiência</dt>
+    <dd>
+      Experiência {{ slot.experiment_index + 1 }}{% if slot.experiment_index in experiments %}: {{ experiments[slot.experiment_index] }}{% endif %}
+      {% if strategy_id %}<a href="/estrategia/{{ strategy_id }}">ver a estratégia</a>{% endif %}
+    </dd>
+    {% endif %}
+    <dt>Itens da base</dt>
+    <dd>
+      {% if slot.kb_refs %}
+      <ul>
+        {% for ref in slot.kb_refs %}
+        {% if ref in view.kb_titles %}<li>{{ view.kb_titles[ref] }}</li>{% else %}<li class="nota">item da base desconhecido</li>{% endif %}
+        {% endfor %}
+      </ul>
+      {% else %}
+      <span class="nota">Sem itens da base citados.</span>
+      {% endif %}
+    </dd>
+  </dl>
+</section>
+{% endfor %}
+
+<section class="cartao">
+  <h2>Suposições</h2>
+  {% if plan.suposicoes %}<ul>{% for item in plan.suposicoes %}<li>{{ item }}</li>{% endfor %}</ul>
+  {% else %}<p class="nota">Sem suposições indicadas.</p>{% endif %}
+</section>
+
+{% if state == "submitted" %}
+{% if preview %}
+<section class="cartao previsao" id="previsao">
+  <h2>Já existem publicações nesta semana</h2>
+  <p>Se aprovar este plano: {{ preview.created }} {{ "nova" if preview.created == 1 else "novas" }}, {{ preview.rewritten }} reescrita{{ "" if preview.rewritten == 1 else "s" }}, {{ preview.kept }} mantida{{ "" if preview.kept == 1 else "s" }}, {{ preview.kept_differs }} mantida{{ "" if preview.kept_differs == 1 else "s" }} com texto antigo, {{ preview.cancelled }} cancelada{{ "" if preview.cancelled == 1 else "s" }}.</p>
+  {% if preview.cancels_decided %}
+  <p class="aviso importante" role="alert"><strong>Atenção:</strong> {{ preview.cancels_decided|length }} {{ "publicação aprovada ou em revisão ficaria cancelada" if preview.cancels_decided|length == 1 else "publicações aprovadas ou em revisão ficariam canceladas" }}, porque o lugar delas já não existe neste plano. O texto delas perde-se.</p>
+  {% endif %}
+  <ul class="historico">
+    {% for entry in preview.entries %}
+    <li>
+      <strong>Lugar {{ entry.slot_key.rsplit("-", 1)[1] }}</strong>, {{ entry.scheduled_date.isoformat() }}:
+      {% if entry.old_theme is not none %}«{{ entry.old_theme }}»{% endif %}{% if entry.old_theme is not none and entry.new_theme is not none %} → {% endif %}{% if entry.new_theme is not none %}«{{ entry.new_theme }}»{% endif %}
+      {% if entry.lifecycle %}<span class="etiqueta etiqueta-{{ entry.lifecycle }}">{{ entry.lifecycle|lifecycle_label }}</span>{% endif %}
+      <span class="nota">{{ entry.outcome.value|outcome_label }}</span>
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+<section class="cartao decisao">
+  <h2>Decisão</h2>
+  {{ ui.approve_form("/plano/" ~ view.record.id ~ "/aprovar", csrf_token, preview and preview.cancels_decided) }}
+  {{ ui.reject_form("/plano/" ~ view.record.id ~ "/rejeitar", csrf_token) }}
+</section>
+{% endif %}
+{% endblock %}

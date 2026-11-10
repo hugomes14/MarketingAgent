@@ -6,29 +6,32 @@ o motor so cria um `draft`, o servico submete-o, e so `approve_*` / `reject_*` d
 A vista ativa da estrategia so contem as propostas de oferta que o responsavel aceitou.
 """
 
-import logging
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import timedelta
 
 from pydantic import BaseModel
-from sqlalchemy import delete, select
-from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 from marketing_agent.agents.diretor import DIRETOR_DIR
 from marketing_agent.agents.diretor.schemas import Diagnostico, Estrategia, PropostaOferta
 from marketing_agent.artifacts.store import (
     ArtifactRecord,
-    ArtifactState,
     ArtifactStore,
     ArtifactType,
 )
 from marketing_agent.clock import Clock
-from marketing_agent.db.base import new_id
-from marketing_agent.db.models import Artifact, AuditLog, StrategyDecision, SystemFlag
-from marketing_agent.harness.engine import AgentEngine, Loop, RunResult, RunStatus
-from marketing_agent.harness.spec import AgentSpec, load_agent_spec
+from marketing_agent.db.models import AuditLog, StrategyDecision
+from marketing_agent.harness.engine import AgentEngine, RunResult
+from marketing_agent.harness.spec import load_agent_spec
+from marketing_agent.proposals import (
+    MissingPrerequisite,
+    PendingProposal,
+    ProposalInProgress,
+    ProposalRunner,
+    require_active,
+    require_type,
+)
 from marketing_agent.strategy.loops import (
     DiagnosisLoop,
     DiagnosisPayload,
@@ -36,26 +39,23 @@ from marketing_agent.strategy.loops import (
     StrategyPayload,
 )
 
-logger = logging.getLogger(__name__)
+# `PendingProposal` e `ProposalInProgress` vivem em `proposals`; reexportados porque os
+# chamadores (painel, fila de trabalhos, testes) sempre os importaram daqui.
+__all__ = [
+    "SCHEMAS",
+    "ActiveStrategy",
+    "IncompleteDecisions",
+    "MissingPrerequisite",
+    "PendingProposal",
+    "ProposalInProgress",
+    "StrategyService",
+]
 
 SCHEMAS: Mapping[str, type[BaseModel]] = {"Diagnostico": Diagnostico, "Estrategia": Estrategia}
-_ACTOR = "diretor"
-
-
-class MissingPrerequisite(Exception):
-    """Falta o artefacto ativo de que a proposta depende."""
 
 
 class IncompleteDecisions(Exception):
     """As decisoes nao cobrem exatamente as propostas de oferta, ou nao sao booleanas."""
-
-
-class PendingProposal(Exception):
-    """Ja existe uma proposta submetida deste tipo, a aguardar decisao do responsavel."""
-
-
-class ProposalInProgress(Exception):
-    """Outra proposta do mesmo tipo e marca esta a ser gerada neste momento."""
 
 
 @dataclass(frozen=True)
@@ -65,17 +65,6 @@ class ActiveStrategy:
     artifact_id: str
     estrategia: Estrategia
     propostas_aceites: list[PropostaOferta]
-
-
-def _marker_key(brand_id: str, type: ArtifactType) -> str:  # noqa: A002
-    return f"proposal:{brand_id}:{type.value}"
-
-
-def _require_type(record: ArtifactRecord, expected: ArtifactType) -> None:
-    if record.type is not expected:
-        raise ValueError(
-            f"o artefacto {record.id} e do tipo {record.type.value}, esperava {expected.value}"
-        )
 
 
 def _check_decisions(decisions: Mapping[int, bool], proposal_count: int) -> None:
@@ -103,18 +92,18 @@ class StrategyService:
     ) -> None:
         """Guarda os colaboradores e carrega os specs de diagnostico e de estrategia."""
         self._session_factory = session_factory
-        self._engine = engine
         self._store = store
         self._clock = clock
+        self._runner = ProposalRunner(session_factory, engine, store, clock)
         self._diagnosis_spec = load_agent_spec(DIRETOR_DIR / "spec_diagnostico.yaml", SCHEMAS)
         self._strategy_spec = load_agent_spec(DIRETOR_DIR / "spec_estrategia.yaml", SCHEMAS)
 
     def propose_diagnosis(self, brand_id: str) -> RunResult:
         """Gera um diagnostico `submitted`; exige `perfil_marca` ativo."""
-        profile = self._require_active(brand_id, ArtifactType.PERFIL_MARCA, "diagnostico")
+        profile = require_active(self._store, brand_id, ArtifactType.PERFIL_MARCA, "diagnostico")
         parent = self._store.active(brand_id, ArtifactType.DIAGNOSTICO)
         payload = DiagnosisPayload(profile.payload, parent.id if parent else None)
-        return self._propose(
+        return self._runner.propose(
             brand_id,
             ArtifactType.DIAGNOSTICO,
             self._diagnosis_spec,
@@ -125,11 +114,11 @@ class StrategyService:
 
     def propose_strategy(self, brand_id: str) -> RunResult:
         """Gera uma estrategia `submitted`; exige `perfil_marca` e `diagnostico` ativos."""
-        profile = self._require_active(brand_id, ArtifactType.PERFIL_MARCA, "estrategia")
-        diagnosis = self._require_active(brand_id, ArtifactType.DIAGNOSTICO, "estrategia")
+        profile = require_active(self._store, brand_id, ArtifactType.PERFIL_MARCA, "estrategia")
+        diagnosis = require_active(self._store, brand_id, ArtifactType.DIAGNOSTICO, "estrategia")
         parent = self._store.active(brand_id, ArtifactType.ESTRATEGIA)
         payload = StrategyPayload(profile.payload, diagnosis.payload, parent.id if parent else None)
-        return self._propose(
+        return self._runner.propose(
             brand_id,
             ArtifactType.ESTRATEGIA,
             self._strategy_spec,
@@ -221,81 +210,5 @@ class StrategyService:
 
     def _require_artifact(self, artifact_id: str, expected: ArtifactType) -> ArtifactRecord:
         record = self._store.get(artifact_id)
-        _require_type(record, expected)
+        require_type(record, expected)
         return record
-
-    def _require_active(self, brand_id: str, type: ArtifactType, wanted: str) -> ArtifactRecord:  # noqa: A002
-        record = self._store.active(brand_id, type)
-        if record is None:
-            raise MissingPrerequisite(
-                f"{wanted}: falta um artefacto {type.value} ativo para a marca {brand_id}"
-            )
-        return record
-
-    def _propose[TIn](
-        self,
-        brand_id: str,
-        type: ArtifactType,  # noqa: A002
-        spec: AgentSpec,
-        trigger: str,
-        loop: Loop[TIn, ArtifactRecord],
-        payload: TIn,
-    ) -> RunResult:
-        """Reclama o marcador, corre o motor fora de transacao e submete o rascunho."""
-        key = _marker_key(brand_id, type)
-        token = self._claim_marker(key, spec)
-        try:
-            # Depois de reclamar: so uma execucao de cada vez ve se ja ha proposta submetida.
-            self._refuse_if_pending(brand_id, type)
-            run = self._engine.run(spec, brand_id, trigger, loop, payload)
-            if run.status is RunStatus.SUCCEEDED:
-                self._submit_output(run)
-            return run
-        finally:
-            self._release_marker(key, token)
-
-    def _submit_output(self, run: RunResult) -> None:
-        if not isinstance(run.output, ArtifactRecord):
-            raise TypeError(f"execucao {run.run_id}: saida inesperada {type(run.output).__name__}")
-        self._store.submit(run.output.id, actor=_ACTOR)
-        logger.info("proposta submetida: artefacto %s (execucao %s)", run.output.id, run.run_id)
-
-    def _refuse_if_pending(self, brand_id: str, type: ArtifactType) -> None:  # noqa: A002
-        with self._session_factory() as session:
-            pending = session.scalar(
-                select(Artifact.id)
-                .where(
-                    Artifact.brand_id == brand_id,
-                    Artifact.type == type.value,
-                    Artifact.state == ArtifactState.SUBMITTED.value,
-                )
-                .limit(1)
-            )
-        if pending is not None:
-            raise PendingProposal(f"ja existe um {type.value} submetido a aguardar decisao")
-
-    def _claim_marker(self, key: str, spec: AgentSpec) -> str:
-        """Reclama `key` se livre ou caducado (mais velho que `max_duration_s`); senao recusa."""
-        now = self._clock.now()
-        token = new_id()
-        insertion = insert(SystemFlag).values(key=key, value=token, set_by=_ACTOR, set_at=now)
-        statement = insertion.on_conflict_do_update(
-            index_elements=["key"],
-            set_={"value": token, "set_by": _ACTOR, "set_at": now},
-            where=SystemFlag.set_at < now - timedelta(seconds=spec.limits.max_duration_s),
-        ).returning(SystemFlag.key)
-        with self._session_factory.begin() as session:
-            claimed = session.execute(statement).scalar_one_or_none()
-        if claimed is None:
-            raise ProposalInProgress(f"ja ha uma proposta em curso ({key})")
-        return token
-
-    def _release_marker(self, key: str, token: str) -> None:
-        """Liberta o marcador so se ainda for deste pedido; falha de limpeza nao mascara o resto."""
-        try:
-            with self._session_factory.begin() as session:
-                session.execute(
-                    delete(SystemFlag).where(SystemFlag.key == key, SystemFlag.value == token)
-                )
-        except Exception as exc:
-            logger.error("proposta: libertar marcador falhou (%s) para %s", type(exc).__name__, key)

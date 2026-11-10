@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% import "_macros.html" as ui %}
+{% block title %}Feedback{% endblock %}
+{% block content %}
+<h1>Feedback guardado</h1>
+<p class="nota">Correções que deu às publicações. Só «Estilo» e «Negativo» ativos e dentro da validade entram nos próximos textos. Desativar nunca apaga. Mostram-se os {{ max_listed }} mais recentes.</p>
+
+{% for example in examples %}
+<section class="cartao" id="feedback-{{ example.id }}">
+  <h2>{{ example.kind|feedback_kind_label }}
+    {% if not example.is_active %}<span class="etiqueta etiqueta-rejected">Desativado</span>
+    {% elif example.expires_at and example.expires_at <= now %}<span class="etiqueta etiqueta-rejected">Expirado</span>
+    {% else %}<span class="etiqueta etiqueta-approved">Ativo</span>{% endif %}
+  </h2>
+  <p class="nota">Criado em {{ example.created_at.strftime("%Y-%m-%d %H:%M") }} UTC{% if example.expires_at %} · válido até {{ example.expires_at.strftime("%Y-%m-%d %H:%M") }} UTC{% endif %}</p>
+  <h3>Antes</h3>
+  <p class="texto">{{ example.before_text }}</p>
+  {% if example.after_text %}<h3>Depois</h3><p class="texto">{{ example.after_text }}</p>{% endif %}
+  {% if example.note %}<h3>Nota</h3><p class="texto">{{ example.note }}</p>{% endif %}
+  {% if example.is_active %}{{ ui.post_button("/feedback/" ~ example.id ~ "/desativar", csrf_token, "Desativar") }}{% endif %}
+</section>
+{% else %}
+<section class="cartao"><p class="nota">Ainda não há feedback guardado.</p></section>
+{% endfor %}
+{% endblock %}

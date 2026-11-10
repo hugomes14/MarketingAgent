@@ -157,6 +157,7 @@ def build_with(
             secret,
             brand_id=rig.brand_id,
             queries=PanelQueries(factory, store),
+            content=rig.content,
         )
 
     return build

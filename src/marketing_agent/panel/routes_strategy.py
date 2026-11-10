@@ -1,40 +1,28 @@
 """Diagnostico e estrategia: propor, rever e decidir (aprovar so por POST explicito)."""
 
-import logging
-
 from fastapi import APIRouter
 from fastapi.responses import HTMLResponse, RedirectResponse
 
-from marketing_agent.artifacts.store import ArtifactRecord, ArtifactType
-from marketing_agent.harness.engine import RunResult, RunStatus
+from marketing_agent.artifacts.store import ArtifactType
 from marketing_agent.panel.context import (
     MUTATION_GUARD,
     CurrentUser,
     Fields,
     Panel,
     RecordId,
+    proposed_id,
     see_other,
 )
-from marketing_agent.panel.errors import UpstreamFailure
 from marketing_agent.panel.inputs import read_decisions, read_reason
 
-logger = logging.getLogger(__name__)
 router = APIRouter()
-
-
-def _proposed_id(run: RunResult) -> str:
-    """Id do artefacto submetido por uma proposta bem-sucedida; senao `UpstreamFailure`."""
-    if run.status is RunStatus.SUCCEEDED and isinstance(run.output, ArtifactRecord):
-        return run.output.id
-    logger.warning("painel: proposta sem sucesso (%s) execucao %s", run.status.value, run.run_id)
-    raise UpstreamFailure(f"execucao {run.run_id} terminou em {run.status.value}")
 
 
 @router.post("/diagnostico", dependencies=[MUTATION_GUARD])
 def propose_diagnosis(panel: Panel) -> RedirectResponse:
     """Pede um diagnostico (exige perfil ativo) e abre a pagina de revisao."""
     run = panel.strategy.propose_diagnosis(panel.brand_id)
-    return see_other(f"/diagnostico/{_proposed_id(run)}")
+    return see_other(f"/diagnostico/{proposed_id(run)}")
 
 
 @router.get("/diagnostico/{artifact_id}")
@@ -66,7 +54,7 @@ def reject_diagnosis(
 def propose_strategy(panel: Panel) -> RedirectResponse:
     """Pede uma estrategia (exige perfil e diagnostico ativos) e abre a revisao."""
     run = panel.strategy.propose_strategy(panel.brand_id)
-    return see_other(f"/estrategia/{_proposed_id(run)}")
+    return see_other(f"/estrategia/{proposed_id(run)}")
 
 
 @router.get("/estrategia/{artifact_id}")

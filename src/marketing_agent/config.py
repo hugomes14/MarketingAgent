@@ -53,6 +53,9 @@ class Settings(BaseSettings):
     # Ficheiro com o segredo CSRF do painel (>= 32 caracteres); obrigatorio para servir o painel.
     panel_csrf_secret_file: Path | None = None
     max_message_chars: int = Field(default=4000, gt=0)
+    # Tetos de publicacoes que o Diretor pode propor num plano semanal.
+    plan_max_posts_per_week: int = Field(5, gt=0)
+    plan_max_posts_per_day: int = Field(1, gt=0)
     model_prices_path: Path = Path("config/model_prices.yaml")
 
     @field_validator(

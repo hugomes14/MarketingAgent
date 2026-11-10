@@ -4,7 +4,7 @@
 
 - Timestamp: `2026-11-09T14:07:58+00:00`
 - Autor: `agent`
-- Estado de execução: **Tarefas 1 a 12 por fazer.**
+- Estado de execução: **Tarefas 1 a 12 concluídas; revisão final do ramo feita e sem achados abertos; PR por abrir.**
 
 **Goal:** A partir da estratégia ativa, propor e aprovar o plano da semana e gerar em segundo plano, para cada publicação aprovada no plano, uma legenda revista que o responsável aprova, edita, devolve ou rejeita no painel.
 
@@ -93,7 +93,7 @@ tests/{db,kb,jobs,planning,content,feedback,panel,e2e}/...
 **Interfaces:**
 - Produces: modelos `KbItem`, `Post`, `PostRevision`, `Approval`, `FeedbackExample`, `Job` com as colunas e restrições da spec, secção 4. Enums como constantes de módulo: `KB_KINDS`, `SOURCE_KINDS`, `POST_LIFECYCLES = ("planned","drafting","in_review","approved","rejected","cancelled")`, `APPROVAL_DECISIONS`, `FEEDBACK_KINDS = ("estilo","correcao_factual","temporario","negativo")`, `JOB_STATUSES`, `CHANNELS = ("facebook","instagram")`. `Post.channels` é `ARRAY(Text)` com `CHECK` de não vazio e valores em `CHANNELS`. `Job.dedupe_key` com índice único parcial `WHERE status IN ('queued','running')`. Além da spec: `post.last_error` (Text NULL, motivo curto sem conteúdo do modelo) e `feedback_example.is_active` (Boolean, por omissão verdadeiro).
 
-- [ ] **Step 1: Escrever os testes que falham.**
+- [x] **Step 1: Escrever os testes que falham.**
   - `test_upgrade_head_creates_content_tables`: as 6 tabelas novas existem.
   - `test_migration_matches_models` (existente) continua sem diferenças.
   - `test_kb_price_requires_amount_currency_and_validity`: `kind='preco'` sem `valid_until` levanta `IntegrityError`.
@@ -103,10 +103,16 @@ tests/{db,kb,jobs,planning,content,feedback,panel,e2e}/...
   - `test_feedback_temporario_requires_expiry`.
   - `test_job_dedupe_key_unique_only_while_active`: dois `queued` com a mesma chave falham; um `succeeded` e um `queued` com a mesma chave convivem.
   - `test_cross_brand_post_revision_rejected` (FK composta).
-- [ ] **Step 2: Correr e ver falhar.** `uv run pytest tests/db -v`.
-- [ ] **Step 3: Implementar** os modelos e a migração `0002` (com `downgrade`).
-- [ ] **Step 4: Validação global.**
-- [ ] **Step 5: Commit.** `feat: tabelas de base de conhecimento, posts, revisoes, aprovacoes, feedback e fila`.
+- [x] **Step 2: Correr e ver falhar.** `uv run pytest tests/db -v`.
+- [x] **Step 3: Implementar** os modelos e a migração `0002` (com `downgrade`).
+- [x] **Step 4: Validação global.**
+- [x] **Step 5: Commit.** `feat: tabelas de base de conhecimento, posts, revisoes, aprovacoes, feedback e fila`.
+
+**Notas de execução (Tarefa 1):**
+
+- Concluída no ramo `agent/2026-11-09_plano02a` (commit `652c943`), em modo subagente: implementação e revisão aprovada sem correções. 666 testes passam; `ruff` e `mypy src` limpos. Marco M1 (dados): `compare_metadata` vazio; `upgrade`, `downgrade 0001` e `upgrade` verificados.
+- Além do plano: *trigger* `post_revision_immutable` (qualquer `UPDATE` a `post_revision` é recusado: as edições criam revisões novas), `CHECK`s de veredicto, origem, decisão, ciclo de vida e `review_rounds >= 0`, e uma FK composta `(brand_id, post_id, revision_id)` em `approval` e `feedback_example`. Colunas acrescentadas: `post.last_error` e `feedback_example.is_active`.
+- Menores adiados: faltam testes de `approval` (decisão, FK entre marcas, várias aprovações por revisão); `test_post_revision_is_immutable` usa `DBAPIError` largo; **o plano do 2B assume `JOB_TYPES`/`REVISION_ORIGINS` que o 2A não define** (acrescentar ao implementar o 2B); os helpers da migração `0002` têm cerca de 48 linhas.
 
 ### Task 2: Base de conhecimento
 
@@ -127,11 +133,17 @@ tests/{db,kb,jobs,planning,content,feedback,panel,e2e}/...
   - `KbError(ValueError)` para tópico inexistente, item de outra marca ou dados inválidos.
 - Cada operação escreve `AuditLog` (`kb.add`, `kb.promote`, `kb.deactivate`; `detail` só com `kind` e `key`).
 
-- [ ] **Step 1: Testes que falham.** `test_add_price_requires_validity`, `test_promote_profile_topic_copies_origin`, `test_promote_unknown_topic_raises`, `test_promote_is_idempotent`, `test_deactivated_item_not_valid`, `test_valid_refs_respects_date_window` (item expirado na data do post não é devolvido), `test_audit_without_text`.
-- [ ] **Step 2: Correr e ver falhar.**
-- [ ] **Step 3: Implementar.**
-- [ ] **Step 4: Validação global.**
-- [ ] **Step 5: Commit.** `feat: base de conhecimento com promocao do perfil e itens manuais`.
+- [x] **Step 1: Testes que falham.** `test_add_price_requires_validity`, `test_promote_profile_topic_copies_origin`, `test_promote_unknown_topic_raises`, `test_promote_is_idempotent`, `test_deactivated_item_not_valid`, `test_valid_refs_respects_date_window` (item expirado na data do post não é devolvido), `test_audit_without_text`.
+- [x] **Step 2: Correr e ver falhar.**
+- [x] **Step 3: Implementar.**
+- [x] **Step 4: Validação global.**
+- [x] **Step 5: Commit.** `feat: base de conhecimento com promocao do perfil e itens manuais`.
+
+**Notas de execução (Tarefa 2):**
+
+- Concluída (commits `6f2fef5` e `00bcdc6`), em modo subagente: implementação, revisão e uma ronda de correção com re-revisão limpa. 695 testes passam. Marco M2 (base de conhecimento): serviço pronto; as páginas vêm na Tarefa 10.
+- Decisões do controlador: um preço exige `valid_until > valid_from`, os outros tipos aceitam `>=`; `price_amount` aceita 0; o `KbError` nunca inclui o valor recebido (só campo e tipo de erro); promover um tópico noutro dia **desativa** a versão anterior (mesmo `kind='outro'` e `key`) na mesma transação.
+- Menores adiados: `__context__` ainda guarda a `ValidationError`; um perfil guardado inválido levantaria `ValidationError` com texto; a substituição também desativa um `outro` manual com a mesma chave; faltam testes negativos da substituição (outra marca, tipo ou chave).
 
 ### Task 3: Fila de trabalhos
 
@@ -151,11 +163,20 @@ tests/{db,kb,jobs,planning,content,feedback,panel,e2e}/...
     - `cancel_for_post_in(session: Session, post_id: str) -> int`.
   - `last_error` guarda só a classe e uma mensagem curta, nunca texto do modelo.
 
-- [ ] **Step 1: Testes que falham.** `test_enqueue_dedupes_active`, `test_claim_two_threads_one_wins` (barreira, 5 repetições), `test_claim_respects_run_at`, `test_complete_with_stale_token_returns_false`, `test_fail_retries_then_dead`, `test_fail_without_retry_is_failed`, `test_requeue_expired_lease`, `test_cancel_for_post`.
-- [ ] **Step 2: Correr e ver falhar.**
-- [ ] **Step 3: Implementar.**
-- [ ] **Step 4: Validação global.**
-- [ ] **Step 5: Commit.** `feat: fila de trabalhos em postgres com lease`.
+- [x] **Step 1: Testes que falham.** `test_enqueue_dedupes_active`, `test_claim_two_threads_one_wins` (barreira, 5 repetições), `test_claim_respects_run_at`, `test_complete_with_stale_token_returns_false`, `test_fail_retries_then_dead`, `test_fail_without_retry_is_failed`, `test_requeue_expired_lease`, `test_cancel_for_post`.
+- [x] **Step 2: Correr e ver falhar.**
+- [x] **Step 3: Implementar.**
+- [x] **Step 4: Validação global.**
+- [x] **Step 5: Commit.** `feat: fila de trabalhos em postgres com lease`.
+
+**Notas de execução (Tarefa 3):**
+
+- Concluída (commits `fde3748`, `8aa739a`, `06f3e98`, `ac238f5`), em modo subagente: implementação, revisão com modelo mais capaz e duas rondas de correção. 717 testes passam. Marco M4 (fila e worker): a fila está pronta; o worker vem na Tarefa 8.
+- **pytest passa a `--import-mode=importlib`** (sem `__init__.py` nas pastas de testes; `pythonpath = ["tests/panel"]` mantém-se).
+- `JobQueue`: reclamar com `SKIP LOCKED`, `lease` e `lease_token` em `complete_in`/`fail` (um worker que perdeu a `lease` não altera o trabalho; devolvem `bool`), espera de 30 s × tentativas, `requeue_expired`, `cancel_for_post_in`. Verificado por experiência: 50 trabalhos × 8 threads, cada um reclamado exatamente uma vez.
+- **`last_error` sem texto de modelos nem do utilizador:** `jobs/errors.py` (`describe_error`) devolve só o nome da classe; só 5 tipos exatos da aplicação (`RunLimitExceeded`, `RunCostLimitExceeded`, `MissingPrerequisite`, `PendingProposal`, `ProposalInProgress`) levam a mensagem. `NeedsHuman` e `KbError` ficam só com o nome: o motivo do `NeedsHuman` inclui chaves e mensagens de validação escolhidas pelo modelo. `jobs/queue.py` não importa módulos de domínio (teste num processo novo).
+- **Para a Tarefa 8 (worker):** o `payload` de `generate_post` é `{"post_id", "owner_comment", "reason": "plan" | "changes"}`; o worker tem de passar sempre `describe_error(exc)` ao `fail` (com teste) e de calcular a `lease` como 3 × (duração máxima do Copywriter + do Revisor) + 60 s a partir dos specs (corrige a regra "`director_max_duration_s()` + 60 s" das restrições globais, que daria cerca de 5 minutos para um trabalho de até 18).
+- Menores adiados: `max_attempts=3` é um literal em `enqueue_in`; `ClaimedJob.payload` é o dicionário vivo do ORM.
 
 ### Task 4: Plano semanal: esquema, validação e ciclo do Diretor
 
@@ -175,13 +196,22 @@ tests/{db,kb,jobs,planning,content,feedback,panel,e2e}/...
   - `PlanLoop.run(ctx, payload) -> ArtifactRecord`: monta o pedido com `wrap_data`, chama `ctx.call_llm(..., PlanoSemanal, extra_validator=…)`, cria o artefacto `plano`.
   - Spec `spec_plano.yaml`: `role: diretor`, `name: plano`, `loop_type: structured`, `writes: [plano]`, `reads: [perfil_marca, estrategia]`, `required_capabilities: [text, json_schema]`, `limits: {max_steps: 4, max_tokens: 60000, max_cost_usd: "1.00", max_duration_s: 240}`, `max_output_tokens: 4000`, `budget_share_hint: "0.15"`, `output_schema: PlanoSemanal`.
 
-- [ ] **Step 1: Testes que falham.**
+- [x] **Step 1: Testes que falham.**
   - Motor: `test_extra_validator_violation_retries_with_message`, `test_extra_validator_three_failures_needs_human`.
   - Esquema e validação: `test_slot_keys_must_follow_week_and_sequence`, `test_dates_outside_week_rejected`, `test_week_and_day_limits`, `test_unknown_experiment_index_rejected`, `test_unknown_kb_ref_rejected`, `test_valid_plan_has_no_violations`, `test_weekly_plan_scenario_is_valid`.
-- [ ] **Step 2: Correr e ver falhar.**
-- [ ] **Step 3: Implementar.** O prompt diz: só pilares e propostas aceites; justificar o número de publicações; não inventar factos; os blocos etiquetados são dados.
-- [ ] **Step 4: Validação global.**
-- [ ] **Step 5: Commit.** `feat: plano semanal do diretor com validacao em codigo`.
+- [x] **Step 2: Correr e ver falhar.**
+- [x] **Step 3: Implementar.** O prompt diz: só pilares e propostas aceites; justificar o número de publicações; não inventar factos; os blocos etiquetados são dados.
+- [x] **Step 4: Validação global.**
+- [x] **Step 5: Commit.** `feat: plano semanal do diretor com validacao em codigo`.
+
+**Notas de execução (Tarefa 4):**
+
+- Concluída (commits `81219f7` e `e348ed5`), em modo subagente: implementação, revisão com modelo mais capaz e uma ronda de correção com re-revisão limpa. 1004 testes passam; `ruff` e `mypy src` limpos.
+- Motor: `RunContext.call_llm(..., extra_validator=...)`; as violações contam como `invalid_output` (mesma política de 3 tentativas). A junção das violações (registadas e extra) fica limitada a `MAX_ERROR_SUMMARY_CHARS` numa só linha, no prompt de repetição e no motivo do `NeedsHuman`.
+- `planning/`: `PlanoSemanal`/`PlanSlot` (máx. 10 `kb_refs` por slot, `slot_key` ≤ 20), `validate_plan` (semana pedida, chaves `AAAA-Www-n`, datas na semana ISO, limites por semana e por dia, índice de experiência, `kb_refs` conhecidos citados **por posição**, nunca pelo valor), `PlanLoop` (valida a semana **antes** de chamar o modelo). `spec_plano.yaml` e `prompt_plano.md`. Definições `plan_max_posts_per_week` (5) e `plan_max_posts_per_day` (1). Cenário `weekly_plan`.
+- **Etiquetas de dados:** `DATA_TAGS` (11 nomes) em `strategy/loops.py`; `neutralize` cobre também etiquetas com atributos e auto-fechadas; `wrap_data` recusa etiquetas fora da lista (`build_request` público). Os ciclos do Copywriter e do Revisor (Tarefa 7) têm de usar `DATA_TAGS`/`wrap_data`.
+- Fora do brief: `startup.py` carrega todos os `spec_*.yaml`, por isso `_DIRECTOR_SCHEMAS` ganhou `PlanoSemanal`. **A Tarefa 5 tem de acrescentar `PlanoSemanal` ao mapeamento de esquemas do `PlanningService`** (o `StrategyService` carrega só os seus dois specs por caminho).
+- Menores adiados: a expressão das etiquetas é quadrática com `<` seguido de espaços (correção na Tarefa 5); uma etiqueta com `<` num valor de atributo não é neutralizada; `PlanLoop` só testado com contexto stub (a Tarefa 5 acrescenta teste com o motor completo); `suposicoes` sem limite.
 
 ### Task 5: Serviço do plano: propor, aprovar e substituir
 
@@ -198,11 +228,22 @@ tests/{db,kb,jobs,planning,content,feedback,panel,e2e}/...
     - `reject_plan(artifact_id: str, actor: str, reason: str) -> None`.
   - `approve_plan`, **numa transação**: `approve_and_activate_in(..., scope=f"week:{semana}")`; para cada slot, `INSERT … ON CONFLICT (brand_id, slot_key) DO UPDATE` só se o post estiver `planned`/`drafting`/`cancelled` (mantém posts já `in_review`/`approved` com o mesmo `slot_key`); posts da semana cujo `slot_key` saiu do plano → `cancelled` + `cancel_for_post_in`; um job `generate_post` (`dedupe_key = f"generate_post:{post_id}:plan:{artifact_id}"`) por post novo ou alterado; `AuditLog` `plan.approve`.
 
-- [ ] **Step 1: Testes que falham.** `test_propose_requires_active_strategy`, `test_propose_refuses_pending_plan_same_week`, `test_approve_creates_posts_and_jobs_atomically`, `test_approve_twice_no_duplicates` (Foco 2), `test_reject_creates_nothing`, `test_new_plan_replaces_by_slot_key` (slot removido → `cancelled` e job `cancelled`; slot mantido conserva o post), `test_approve_failure_rolls_back_posts_and_jobs`.
-- [ ] **Step 2: Correr e ver falhar.**
-- [ ] **Step 3: Implementar.**
-- [ ] **Step 4: Validação global.**
-- [ ] **Step 5: Commit.** `feat: aprovacao do plano cria posts e trabalhos numa transacao`.
+- [x] **Step 1: Testes que falham.** `test_propose_requires_active_strategy`, `test_propose_refuses_pending_plan_same_week`, `test_approve_creates_posts_and_jobs_atomically`, `test_approve_twice_no_duplicates` (Foco 2), `test_reject_creates_nothing`, `test_new_plan_replaces_by_slot_key` (slot removido → `cancelled` e job `cancelled`; slot mantido conserva o post), `test_approve_failure_rolls_back_posts_and_jobs`.
+- [x] **Step 2: Correr e ver falhar.**
+- [x] **Step 3: Implementar.**
+- [x] **Step 4: Validação global.**
+- [x] **Step 5: Commit.** `feat: aprovacao do plano cria posts e trabalhos numa transacao`.
+
+**Notas de execução (Tarefa 5):**
+
+- Concluída (commits `afb94af`, `1800b6f`, `e7b7243`), em modo subagente: implementação, revisão com modelo mais capaz e uma ronda de correção com re-revisão limpa. 1055 testes passam; `ruff` e `mypy src` limpos. Marco M3 (plano semanal): serviço pronto; as páginas vêm na Tarefa 10.
+- A expressão das etiquetas de dados passou a ser linear (corrigida primeiro, com teste de tempo). A lógica do marcador de pedido em curso foi extraída para `marketing_agent/proposals.py` (`ProposalRunner`), partilhada pelo serviço de estratégia e pelo do plano; as importações antigas de `strategy.service` continuam a funcionar.
+- `PlanningService`: `propose_plan` (semana por omissão = a ISO seguinte, correta nas viragens de ano; ao Diretor e à validação só chegam os itens da base válidos em **todos** os 7 dias da semana); `approve_plan` numa só transação (ativa o plano com âmbito `week:AAAA-Www`, cria ou atualiza um post por slot, cancela os posts de slots removidos e os seus trabalhos, enfileira os trabalhos, uma auditoria `plan.approve` só com contagens); `reject_plan` não cria nada. Aprovar duas vezes falha na segunda e não altera nada (verificado também com duas threads).
+- **Regras dos posts ao aprovar:** posts em `in_review`, `approved` ou `rejected` com o mesmo slot ficam intactos; um post `planned`/`drafting` com o brief alterado, ou reavivado de `cancelled`, é reescrito (cancela os trabalhos ativos antes de enfileirar um novo, e `review_rounds` volta a 0); um post `planned`/`drafting` **idêntico** sem nenhum trabalho de geração ativo ganha um trabalho novo e o `last_error` é limpo (recuperação de trabalhos `failed`/`dead` reaprovando o plano); com trabalho ativo não ganha nenhum. Posts `rejected` cujo slot sai do plano ficam `rejected`.
+- `JobQueue.has_active_for_post_in` (mesmo filtro que `cancel_for_post_in`).
+- **Para as Tarefas 8 e 9:** o worker bloqueia o post **antes** do trabalho (a aprovação bloqueia posts → trabalhos; ordem contrária dá impasse); o teste de "post mudou" do pipeline não pode tratar como mudança o reposicionamento de `plan_artifact_id`/`strategy_artifact_id` dos posts mantidos; o `request_changes` da Tarefa 9 bloqueia o post antes de enfileirar.
+- `PlanningService` ainda não está ligado ao arranque nem ao painel (Tarefa 10).
+- Menores adiados: o id da estratégia é lido fora da transação (guardá-lo no payload do plano); o teste de interseção da base de conhecimento não cobre `valid_from` a meio da semana; o docstring de `queue.py` está desatualizado.
 
 ### Task 6: Feedback
 
@@ -220,11 +261,19 @@ tests/{db,kb,jobs,planning,content,feedback,panel,e2e}/...
     - `list_examples(brand_id: str) -> list[FeedbackExampleView]`;
     - `deactivate(brand_id: str, example_id: str, actor: str) -> None`.
 
-- [ ] **Step 1: Testes que falham.** `test_nao_usar_records_nothing`, `test_temporario_requires_future_expiry`, `test_prompt_examples_limits_and_order`, `test_expired_and_inactive_excluded`, `test_correcao_factual_not_in_prompt_examples`.
-- [ ] **Step 2: Correr e ver falhar.**
-- [ ] **Step 3: Implementar.**
-- [ ] **Step 4: Validação global.**
-- [ ] **Step 5: Commit.** `feat: exemplos de feedback com tipo, validade e limites no prompt`.
+- [x] **Step 1: Testes que falham.** `test_nao_usar_records_nothing`, `test_temporario_requires_future_expiry`, `test_prompt_examples_limits_and_order`, `test_expired_and_inactive_excluded`, `test_correcao_factual_not_in_prompt_examples`.
+- [x] **Step 2: Correr e ver falhar.**
+- [x] **Step 3: Implementar.**
+- [x] **Step 4: Validação global.**
+- [x] **Step 5: Commit.** `feat: exemplos de feedback com tipo, validade e limites no prompt`.
+
+**Notas de execução (Tarefa 6):**
+
+- Concluída (commit `bba7df4`), em modo subagente: implementação e revisão sem achados Critical/Important. 1079 testes passam (24 novos); `ruff` e `mypy src` limpos.
+- `FeedbackService`: `record_in` corre na sessão do chamador (sem commit; a auditoria `feedback.record` leva só o tipo e o `post_id`), `nao_usar` não escreve nada, `temporario` exige `expires_at` com fuso e estritamente no futuro (`== agora` conta como expirado), `expires_at` só para `temporario`; limites de texto 1–5000 / 1–500; revisão de outra marca ou post → `FeedbackError` com mensagem fixa. `prompt_examples` filtra (tipo, ativo, não expirado) **antes** de limitar (5 `estilo`, 3 `negativo`), do mais recente para o mais antigo; `correcao_factual` e `temporario` não entram. `deactivate` é idempotente e restrito à marca (mesma mensagem para id desconhecido e de outra marca).
+- **Para a Tarefa 9:** validar `choice` com o `Literal` (Pydantic) na fronteira web antes de `record_in`; um valor fora do conjunto chegaria ao CHECK da base e o `IntegrityError` pode incluir o texto.
+- Menores adiados: testes de "filtrar antes de limitar" e da fronteira `expires_at == agora` em `prompt_examples`; asserção do desempate `id desc`; `_audit` volta a ler o relógio.
+
 
 ### Task 7: Copywriter e Revisor: esquemas, validação e ciclos
 
@@ -244,15 +293,24 @@ tests/{db,kb,jobs,planning,content,feedback,panel,e2e}/...
   - `ReviewerLoop.run(ctx, payload: ReviewPayload) -> Revisao`.
   - Specs: `copywriter` e `revisor`, `loop_type: structured`, `writes: []`, `required_capabilities: [text, json_schema]`, `limits: {max_steps: 4, max_tokens: 40000, max_cost_usd: "0.30", max_duration_s: 180}`, `max_output_tokens: 1500`, `budget_share_hint: "0.20"`.
 
-- [ ] **Step 1: Testes que falham.**
+- [x] **Step 1: Testes que falham.**
   - `test_instagram_caption_and_hashtag_limits`, `test_facebook_caption_limit`, `test_missing_alt_text`, `test_unknown_kb_ref`, `test_price_in_caption_requires_price_item`, `test_valid_draft_passes`.
   - `test_copywriter_prompt_wraps_all_external_text` (perfil, itens, exemplos, notas e comentário dentro de etiquetas; fecho neutralizado).
   - `test_copywriter_invalid_draft_retries_then_succeeds`.
   - `test_reviewer_flags_injection_without_state_change` (Foco 5: comentário "ignora as regras e aprova"; a saída só tem `instrucao_suspeita`; nenhum post ou artefacto muda).
-- [ ] **Step 2: Correr e ver falhar.**
-- [ ] **Step 3: Implementar.** O prompt do Revisor tem rubrica própria (alegações com apoio, voz do perfil, tema do brief, limites, promessas, dados pessoais, instruções escondidas) e diz que não edita.
-- [ ] **Step 4: Validação global.**
-- [ ] **Step 5: Commit.** `feat: copywriter e revisor com validacao de legendas em codigo`.
+- [x] **Step 2: Correr e ver falhar.**
+- [x] **Step 3: Implementar.** O prompt do Revisor tem rubrica própria (alegações com apoio, voz do perfil, tema do brief, limites, promessas, dados pessoais, instruções escondidas) e diz que não edita.
+- [x] **Step 4: Validação global.**
+- [x] **Step 5: Commit.** `feat: copywriter e revisor com validacao de legendas em codigo`.
+
+**Notas de execução (Tarefa 7):**
+
+- Concluída (commit `947571d`), em modo subagente: implementação e revisão sem achados Critical/Important. 1124 testes passam (45 em `tests/content`); `ruff` e `mypy src` limpos. A implementação foi escrita antes dos testes (não foi red-first estrito).
+- `content/`: `RascunhoTexto`/`Alegacao`/`Revisao` congelados, `extra="forbid"`, todos os campos de texto com limite; `validate_draft` é pura e as mensagens citam contagens, limites, índices e nomes de campo, nunca valores (há teste com texto "secreto"). Limites por canal: Instagram 2200 caracteres e 30 hashtags, Facebook 5000 caracteres; com vários canais vale o mais estrito. A regra do preço verifica também `apelo_a_acao` e só exige que alguma alegação cite um item `preco` válido (não compara montantes).
+- Os ciclos devolvem valores (`writes: []`); todo o texto externo (perfil, estratégia, propostas, brief, itens da base, exemplos de estilo e negativos, notas do revisor, comentário do responsável, rascunho) vai dentro de etiquetas de dados com o fecho neutralizado, testado sobre o pedido real enviado ao `call_llm`. Canais fora de `facebook`/`instagram` levantam `ValueError` antes de qualquer chamada. Specs `copywriter` e `revisor` carregam por `load_agent_spec` (`COPYWRITER_DIR`, `REVISOR_DIR`); `_kb_view` de `planning/loop.py` passou a público `kb_entry_view`.
+- **Para a Tarefa 8:** (a) `aprovar` com violações não vazias conta como `rever` (ruling); (b) a lease deve incluir os specs do Copywriter e do Revisor (`director_max_duration_s()` só lê os do Diretor); (c) `kb_entries` chega já filtrado (ativo e válido na data do post) e os exemplos de feedback filtrados antes de `CopyPayload`; (d) é a Tarefa 8 que grava a `post_revision`.
+- Menores adiados: regex do preço não cobre "dez euros", `R$`, `£`, "euro 5" nem preços em hashtags/`alt_text` (o Revisor é a rede); teste de injeção do Revisor corre em BD vazia; sem teste multibyte nos limites; `note` do exemplo sem tentativa de injeção no teste.
+
 
 ### Task 8: Pipeline de geração e worker
 
@@ -268,7 +326,7 @@ tests/{db,kb,jobs,planning,content,feedback,panel,e2e}/...
   - `Worker(queue, pipeline, worker_id, sleep)`: `run_once() -> bool`, `run_forever(stop: threading.Event) -> None` (espera 2 s quando a fila está vazia); no arranque `queue.requeue_expired()` e `recover_stale` das reservas.
   - CLI: `marketing-agent worker` (sai com 0 em `SIGINT`/`SIGTERM`, sem traceback).
 
-- [ ] **Step 1: Testes que falham.**
+- [x] **Step 1: Testes que falham.**
   - `test_generate_happy_path_creates_revision_in_review`.
   - `test_reviewer_rever_twice_then_goes_to_owner_with_notes` (3 rascunhos, 2 voltas, revisão final com as notas).
   - `test_needs_human_leaves_post_drafting_with_reason`.
@@ -276,10 +334,20 @@ tests/{db,kb,jobs,planning,content,feedback,panel,e2e}/...
   - `test_cancelled_post_job_completes_without_writing`.
   - `test_worker_killed_mid_job_requeued_once` (Foco 4: job `running` com `lease` expirada volta a `queued`; a segunda execução cria uma só revisão).
   - `test_worker_cli_stops_cleanly`.
-- [ ] **Step 2: Correr e ver falhar.**
-- [ ] **Step 3: Implementar.**
-- [ ] **Step 4: Validação global.**
-- [ ] **Step 5: Commit.** `feat: pipeline copywriter-revisor no worker com protecao contra gravacoes obsoletas`.
+- [x] **Step 2: Correr e ver falhar.**
+- [x] **Step 3: Implementar.**
+- [x] **Step 4: Validação global.**
+- [x] **Step 5: Commit.** `feat: pipeline copywriter-revisor no worker com protecao contra gravacoes obsoletas`.
+
+**Notas de execução (Tarefa 8):**
+
+- Concluída (commits `bc2ccf6` e `e2d118b`), em modo subagente: implementação, revisão com modelo mais capaz (concorrência) e uma ronda de correção com re-revisão limpa. 1209 testes passam; `ruff` e `mypy src` limpos.
+- `ContentPipeline.generate`: o post é bloqueado (`FOR UPDATE`) antes do job, nunca há transação nem lock aberto durante as chamadas ao LLM, e a gravação final (revisão `origin='agente'`, veredicto, notas, `lifecycle='in_review'`, `review_rounds`, `last_error` limpo) corre na mesma transação que `queue.complete_in`; se a lease se perdeu, tudo é revertido sem erro. **Obsoleto (`stale`)** = post `cancelled`, já não `drafting`, `rev_no` máximo diferente do do início da tentativa, ou `brief`/`channels`/`scheduled_date` diferentes; o reposicionamento de `plan_artifact_id`/`strategy_artifact_id` é ignorado. `aprovar` com violações conta como `rever`; no máximo 2 voltas; `rejeitar` segue para o responsável com esse veredicto. Todas as falhas passam por `describe_error`/`describe_stop` (só nomes de classe); um job `dead` deixa `last_error` no post que ainda está `drafting`.
+- **Lease (emenda a R2):** a verificação de limites do motor só corre entre passos, por isso uma chamada pode durar até ao timeout do adaptador. `LLM_CALL_TIMEOUT_S = 120` (em `llm/types.py`, usado pelos adaptadores) e lease = 3 × (180 + 180 + 2 × 120) + 60 = **1860 s**; `worker_stale_after()` = 360 s. `requeue_expired` corre no arranque e nas iterações ociosas.
+- `Worker` (`jobs/worker.py`), `marketing-agent worker` (sai com 0 em SIGINT/SIGTERM; um segundo sinal força a saída), módulos `content/{pipeline,rounds,revision_store,specs}.py`, hash canónico com normalização NFC. `RunResult` ganhou o campo opcional `limit` (alteração mínima ao Plano 1). `ContentPipeline` leva também `store` e `strategy`.
+- **Contrato para a Tarefa 9 (vinculativo):** tudo numa transação que bloqueia o post primeiro (`lock_post`) e só depois jobs/revisões. `request_changes`: exige `in_review`, recusa se há job ativo, põe `drafting` e `last_error=None`, enfileira `{post_id, owner_comment, reason:"changes"}` (dedupe `generate_post:<post>:changes:<max rev_no>`). `edit`: `cancel_for_post_in`, `rev_no=max+1`, `origin='edicao_responsavel'`, `in_review`. `approve`: `in_review` e hash igual ao da revisão mais recente, `cancel_for_post_in`. `reject`: `cancel_for_post_in`. Não inventar estados.
+- Menores adiados: `stop_on_signals` atribui `previous` depois de instalar o handler; falha de infraestrutura antes de `_begin` pode deixar o job `dead` com o post `planned` sem motivo; o timeout do cliente HTTP é por fase, não total; testes dos itens 2 a 8 da ronda de correção escritos depois do código. Para a Tarefa 9: `planning/posts._week_posts` deve bloquear por `Post.id` (evita impasse com `requeue_expired`).
+
 
 ### Task 9: Revisão do responsável
 
@@ -298,11 +366,21 @@ tests/{db,kb,jobs,planning,content,feedback,panel,e2e}/...
   - Exceções: `StaleRevision`, `PostNotFound`, `InvalidPostState`.
   - Comentários do responsável: 1 a `settings.max_message_chars` caracteres.
 
-- [ ] **Step 1: Testes que falham.** `test_approve_only_latest_revision`, `test_edit_creates_revision_and_invalidates_approval`, `test_edit_on_stale_base_raises`, `test_edit_validates_limits`, `test_request_changes_enqueues_with_comment`, `test_reject_records_feedback`, `test_other_brand_post_not_found`, `test_decisions_audited_with_actor`.
-- [ ] **Step 2: Correr e ver falhar.**
-- [ ] **Step 3: Implementar.**
-- [ ] **Step 4: Validação global.**
-- [ ] **Step 5: Commit.** `feat: aprovacao, edicao, pedido de alteracoes e rejeicao por publicacao`.
+- [x] **Step 1: Testes que falham.** `test_approve_only_latest_revision`, `test_edit_creates_revision_and_invalidates_approval`, `test_edit_on_stale_base_raises`, `test_edit_validates_limits`, `test_request_changes_enqueues_with_comment`, `test_reject_records_feedback`, `test_other_brand_post_not_found`, `test_decisions_audited_with_actor`.
+- [x] **Step 2: Correr e ver falhar.**
+- [x] **Step 3: Implementar.**
+- [x] **Step 4: Validação global.**
+- [x] **Step 5: Commit.** `feat: aprovacao, edicao, pedido de alteracoes e rejeicao por publicacao`.
+
+**Notas de execução (Tarefa 9):**
+
+- Concluída (commits `17e8113` e `45bb4b5`), em modo subagente: implementação, revisão e uma ronda de correção. 1268 testes passam; `ruff` e `mypy src` limpos.
+- `ReviewService(session_factory, feedback, queue, kb, clock, max_comment_chars=settings.max_message_chars)` (o último argumento, só por nome, não estava no plano), em `content/review.py` com `review_errors.py`, `review_edit.py` e `review_records.py`. Cada ação é **uma transação que bloqueia o post primeiro** (`lock_post`) e só depois toca em jobs e revisões. `approve`/`reject`/`request_changes` exigem `in_review` e a revisão mais recente (`StaleRevision` caso contrário); `edit` aceita `in_review`, ou `drafting` com `last_error` e sem job ativo, cancela os jobs do post, cria a revisão `edicao_responsavel` (alegações da base mantidas, `validate_draft` com a mesma seleção da base que o pipeline) e recusa edições sem alterações. Uma aprovação só vale para a revisão mais recente (nada é apagado). `request_changes` põe o post em `drafting` e enfileira `generate_post` com `reason="changes"`.
+- Mensagens de erro e auditoria só levam campos, contagens e estados; `PostNotFound` tem a mesma mensagem para id desconhecido e de outra marca; `FeedbackChoice` é verificado também em tempo de execução. `CaptionEdit.from_form` é o construtor seguro para o painel (sem o valor recebido em nenhum sítio). `planning/posts._week_posts` bloqueia por `Post.id`.
+- Limite do texto de feedback subiu de 2500 para 5000 caracteres (a legenda de Facebook chega a 5000).
+- **Contrato do painel (Tarefas 10 e 11):** `PostNotFound` → 404; `StaleRevision` e `InvalidPostState` → 409 (recarregar); `InvalidComment`, `FeedbackError`, `InvalidEdit` → 422 (mostrar `exc.violations`, nunca `str(ValidationError)`); POST com CSRF e o `actor` derivado da sessão, nunca do formulário; cada formulário leva o `revision_id` mostrado na página (e `base_revision_id` na edição); um post sem revisão não oferece ações.
+- Menores adiados: edição de texto idêntico recusada a partir de `drafting` com erro; `kb.valid_refs` abre uma segunda sessão durante o lock; alegações herdadas com item da base expirado bloqueiam a edição (saída: pedir alterações).
+
 
 ### Task 10: Painel: base de conhecimento e plano
 
@@ -314,11 +392,20 @@ tests/{db,kb,jobs,planning,content,feedback,panel,e2e}/...
 - Consumes: `KbService` (T2), `PlanningService` (T5).
 - Produces rotas (todas autenticadas; POST com `MUTATION_GUARD`): `GET /base`, `POST /base` (formulário), `POST /base/{id}/desativar`, `POST /perfil/{id}/promover` (campo `topic`), `POST /plano` (propor; `Idempotency-Key` não é precisa: o marcador e `PendingProposal` protegem), `GET /plano/{id}`, `POST /plano/{id}/aprovar`, `POST /plano/{id}/rejeitar`. Erros: `KbError` 422; `PendingProposal`/`ProposalInProgress`/`MissingPrerequisite` 409; RunResult não-SUCCEEDED → 502 genérico.
 
-- [ ] **Step 1: Testes que falham.** `test_every_new_route_requires_auth_and_csrf` (derivado da app), `test_add_price_item_form`, `test_promote_topic_button`, `test_propose_and_approve_plan_creates_posts`, `test_plan_page_escapes_model_text`, `test_home_links_plan_and_pending`.
-- [ ] **Step 2: Correr e ver falhar.**
-- [ ] **Step 3: Implementar.**
-- [ ] **Step 4: Validação global.**
-- [ ] **Step 5: Commit.** `feat: painel da base de conhecimento e do plano semanal`.
+- [x] **Step 1: Testes que falham.** `test_every_new_route_requires_auth_and_csrf` (derivado da app), `test_add_price_item_form`, `test_promote_topic_button`, `test_propose_and_approve_plan_creates_posts`, `test_plan_page_escapes_model_text`, `test_home_links_plan_and_pending`.
+- [x] **Step 2: Correr e ver falhar.**
+- [x] **Step 3: Implementar.**
+- [x] **Step 4: Validação global.**
+- [x] **Step 5: Commit.** `feat: painel da base de conhecimento e do plano semanal`.
+
+**Notas de execução (Tarefa 10):**
+
+- Concluída (commit `d810e4f`), em modo subagente: implementação e revisão com modelo mais capaz (autenticação/CSRF/Host) sem achados Critical/Important. 1321 testes passam; `ruff` e `mypy src` limpos.
+- Rotas (`panel/routes_kb.py`, `panel/routes_plan.py`): `GET/POST /base`, `POST /base/{id}/desativar`, `POST /perfil/{id}/promover` (exige o perfil ativo e um tópico existente), `POST /plano`, `GET /plano/{id}`, `POST /plano/{id}/aprovar|rejeitar`. Todas autenticadas, os POST com `MUTATION_GUARD`, o `actor` vem sempre da sessão, outra marca ou outro tipo de artefacto dá 404, aprovar duas vezes dá 409 e não cria nada. `KbError` → 422 com uma mensagem fixa; `PendingProposal`/`ProposalInProgress`/`MissingPrerequisite` → 409; execução falhada → 502 genérico. O texto do modelo e do utilizador só aparece escapado.
+- Montagem num só sítio: `panel/assembly.py` (`build_content_services(settings, session_factory, engine, store, strategy, clock)` → `ContentServices(kb, planning, review, feedback)`), usada por `panel/main.py` e pelos fixtures; `create_app(..., content=...)` é obrigatório. O teste `test_every_new_route_requires_auth_and_csrf` deriva as rotas de `app.openapi()` (esta versão do FastAPI esconde as rotas em `app.routes`).
+- **Para a Tarefa 11:** (a) trocar o redireccionamento de `approve_plan` para `/lote/<semana>`; (b) ligar a home (`#por-rever`) e a navegação a `/lote`; (c) mapear `ReviewError` e os erros do feedback em `errors.py` com mensagens fixas; (d) o teste de guarda deve cruzar a lista do OpenAPI com a tabela real de rotas (routers dos módulos) e falhar se diferirem; (e) uma mensagem fixa própria para "perfil não ativo" em vez de "falta um passo anterior"; (f) usar `panel.content.review`/`feedback`, sem construir serviços novos.
+- Menores adiados: qualquer semana ISO pode ser proposta, incluindo semanas passadas (decisão de produto, a registar no PR); desativar um item inexistente dá 422 e não 404; `/base` sem limite nem rótulo "expirado"; o plano submetido aparece duas vezes na home.
+
 
 ### Task 11: Painel: lote semanal e feedback
 
@@ -331,11 +418,20 @@ tests/{db,kb,jobs,planning,content,feedback,panel,e2e}/...
 - Produces rotas: `GET /lote/{semana}`, `GET /lote/{semana}/estado` (parcial HTMX com `hx-trigger="every 5s"` só enquanto houver posts `planned`/`drafting`), `POST /post/{id}/aprovar`, `POST /post/{id}/editar`, `POST /post/{id}/alteracoes`, `POST /post/{id}/rejeitar`, `GET /feedback`, `POST /feedback/{id}/desativar`. `{semana}` validado por `^\d{4}-W\d{2}$`. Cada cartão mostra legenda, hashtags, apelo, alegações com a origem (item da base) ou **"sem apoio válido em <data>"** quando o `kb_ref` não é válido na data do post (Foco 3), veredicto, violações, notas e voltas usadas. Editar e rejeitar exigem a escolha do tipo de feedback (rádios sem pré-seleção).
 - Erros: `StaleRevision`/`InvalidPostState` 409; `PostNotFound` 404; validação 422.
 
-- [ ] **Step 1: Testes que falham.** `test_batch_shows_cards_and_reviewer_verdict`, `test_expired_price_item_flagged_on_card` (Foco 3), `test_approve_edit_changes_reject_flows`, `test_edit_requires_feedback_choice`, `test_polling_only_while_drafting`, `test_model_and_owner_text_escaped`, `test_feedback_page_and_deactivate`.
-- [ ] **Step 2: Correr e ver falhar.**
-- [ ] **Step 3: Implementar.**
-- [ ] **Step 4: Validação global.**
-- [ ] **Step 5: Commit.** `feat: lote semanal e feedback no painel`.
+- [x] **Step 1: Testes que falham.** `test_batch_shows_cards_and_reviewer_verdict`, `test_expired_price_item_flagged_on_card` (Foco 3), `test_approve_edit_changes_reject_flows`, `test_edit_requires_feedback_choice`, `test_polling_only_while_drafting`, `test_model_and_owner_text_escaped`, `test_feedback_page_and_deactivate`.
+- [x] **Step 2: Correr e ver falhar.**
+- [x] **Step 3: Implementar.**
+- [x] **Step 4: Validação global.**
+- [x] **Step 5: Commit.** `feat: lote semanal e feedback no painel`.
+
+**Notas de execução (Tarefa 11):**
+
+- Concluída (commit `1cbfa78`), em modo subagente: implementação e revisão com modelo mais capaz (aprovação humana, autenticação/CSRF, XSS) sem achados Critical/Important. 1383 testes passam (311 no painel); `ruff` e `mypy src` limpos. A implementação foi escrita antes dos testes; duas mutações (alegação expirada, bloqueio de "pedir alterações" com job ativo) confirmam que os testes falham quando o código falha.
+- Rotas: `GET /lote`, `GET /lote/{week}` (o parâmetro chama-se `week`), `GET /lote/{week}/estado` (parcial HTMX sem efeitos, `hx-trigger="every 5s"` só enquanto houver posts `planned`/`drafting`; o `panel.js` não troca o conteúdo se houver um `details` aberto ou um campo alterado), `POST /post/{id}/aprovar|editar|alteracoes|rejeitar`, `GET /feedback`, `POST /feedback/{id}/desativar`. Código em `panel/routes_batch.py`, `routes_feedback.py`, `queries_batch.py`, `inputs_review.py`, `labels.py` (em vez do `routes_content.py` do plano).
+- Cartões: legenda, hashtags, apelo, alt text, alegações com a origem (título do item da base) ou **"sem apoio válido em <data>"**, calculado com a data da publicação (não a de hoje) e a mesma seleção da base que o pipeline; parecer, violações e notas só nas revisões do agente; voltas; histórico de decisões. Os botões só aparecem quando o serviço aceita a ação; cada formulário leva o `revision_id` mostrado (`base_revision_id` na edição) e um id desatualizado dá 409. Tipo de feedback em rádios sem pré-seleção; `temporario` pede uma data `AAAA-MM-DD` (fim desse dia, 23:59:59 UTC) e só existe na edição (`ReviewService.reject` não recebe validade).
+- Teste de guarda reforçado: o conjunto de rotas do OpenAPI tem de ser igual ao da tabela real de rotas (falha em qualquer diferença), com um teste que prova que uma rota escondida seria apanhada. `approve_plan` redireciona para `/lote/<semana>`; mensagem 409 própria para "perfil não ativo" (`InactiveProfile`). `ContentServices` ganhou `clock` e `FeedbackService.list_examples` um `limit` opcional.
+- Menores adiados: o texto de uma edição inválida perde-se num 422 (página de erro genérica); nota enganadora para alegações válidas mas fora do brief; `reject` forjado com `temporario` dá uma mensagem confusa; a derivação de rotas ignora `WebSocketRoute`/`Host`; a proteção do polling só tem teste de texto (cobrir no e2e de browser); sem teste HTTP de edição de um post `drafting` falhado; sem limite superior para a data de `temporario` (23:59:59 UTC ≠ meia-noite em Lisboa).
+
 
 ### Task 12: Ponta a ponta, configuração local e documentação
 
@@ -346,8 +442,28 @@ tests/{db,kb,jobs,planning,content,feedback,panel,e2e}/...
 **Interfaces:**
 - Consumes: tudo o anterior.
 
-- [ ] **Step 1: Teste que falha.** `test_weekly_text_flow`: com `FakeLlmClient` (cenários `weekly_plan`, `caption_draft`, `review`): estratégia ativa (fixture), item de preço válido, propor e aprovar o plano pelo painel, `Worker.run_once()` até a fila esvaziar, lote com todos os posts `in_review`, aprovar um, editar outro (feedback `estilo`), pedir alterações num terceiro e correr o worker de novo; verificar: cada revisão tem `cost_entry` nas suas execuções, o exemplo de estilo entra no pedido seguinte do Copywriter (`llm.requests`), auditoria com o login.
-- [ ] **Step 2: Correr e ver falhar.**
-- [ ] **Step 3: Implementar** o que faltar; atualizar README e configuração.
-- [ ] **Step 4: Validação completa.** Validação global; `scripts/smoke_ollama.py` contra o Ollama local e registo do resultado (tempos por passo, voltas do Revisor, saídas inválidas).
-- [ ] **Step 5: Commit.** `feat: fluxo semanal de texto de ponta a ponta e execucao local com worker`.
+- [x] **Step 1: Teste que falha.** `test_weekly_text_flow`: com `FakeLlmClient` (cenários `weekly_plan`, `caption_draft`, `review`): estratégia ativa (fixture), item de preço válido, propor e aprovar o plano pelo painel, `Worker.run_once()` até a fila esvaziar, lote com todos os posts `in_review`, aprovar um, editar outro (feedback `estilo`), pedir alterações num terceiro e correr o worker de novo; verificar: cada revisão tem `cost_entry` nas suas execuções, o exemplo de estilo entra no pedido seguinte do Copywriter (`llm.requests`), auditoria com o login.
+- [x] **Step 2: Correr e ver falhar.**
+- [x] **Step 3: Implementar** o que faltar; atualizar README e configuração.
+- [x] **Step 4: Validação completa.** Validação global; `scripts/smoke_ollama.py` contra o Ollama local e registo do resultado (tempos por passo, voltas do Revisor, saídas inválidas).
+- [x] **Step 5: Commit.** `feat: fluxo semanal de texto de ponta a ponta e execucao local com worker`.
+
+**Notas de execução (Tarefa 12):**
+
+- Concluída (commit `0d8b5f5`), em modo subagente, com revisão sem achados Critical/Important. 1425 testes passam; `ruff` e `mypy src scripts` limpos.
+- `tests/e2e/test_weekly_text_flow.py` (dois testes: o fluxo semanal completo e a sinalização do preço expirado) passou à primeira, por isso foi validado por seis mutações deliberadas (exemplos vazios, polling sempre ligado, comentário removido, `is_supported=True`, verificação de revisão desatualizada removida, ator fixo), todas apanhadas. Verifica `cost_entry` por execução, o exemplo de estilo só no pedido seguinte do Copywriter, o ator da auditoria, o comentário no job de alterações, o 409 de separador antigo, a execução exatamente uma vez e o fim do polling.
+- `scripts/smoke_ollama.py` reescrito: usa a montagem de produção, cria e apaga uma base descartável no contentor de testes (porta 5433), recusa a base de desenvolvimento (5434) e os nomes `marketing_agent`/`marketing_agent_test`, não descarrega modelos e sai com código 3 e mensagem fixa se o Ollama ou o modelo faltam. 25 testes puros em `tests/test_smoke_ollama.py`.
+- **Execução real contra o Ollama local** (a 5.ª tentativa, as 4 anteriores falharam no plano, no perfil e no Copywriter): 3 publicações chegaram a `in_review` em 235 s, 0 voltas do Revisor, 1 saída inválida do Diretor, 1 `unknown_outcome` do Copywriter que passou na repetição. Registo em `AgentDATA/Knowledge/2026-11-10T10-00-00+00-00_ollama_teste_de_fumo_texto_semanal_e_gramatica_json_schema.md`.
+- **Dois defeitos reais encontrados pelo fumo e corrigidos:** o runner do Ollama rebenta com HTTP 500 quando o `json_schema` leva um `pattern` (`\d{4}`) ou um `maxLength` grande. `PlanoSemanal.semana` e `RascunhoTexto.legenda` passaram a validadores em código (mensagens sem o valor, com nova tentativa do motor) e `tests/llm/test_output_schema_limits.py` impede o regresso. O passo do plano nunca tinha funcionado contra o Ollama antes disto.
+- Configuração e documentação: `.env.local.example` (três papéis), README (worker como terceiro processo, ecrãs, regras de feedback, lease, limitações), `AgentDATA/tools/smoke_ollama.md`, `marketing_agent_cli.md` corrigido (lease 1860 s), registo de estado com os marcos M1 a M8.
+- Menores adiados: a janela de contexto de 4096 tokens do `qwen2.5:14b` (documentar `OLLAMA_CONTEXT_LENGTH`); o `--database-url` explícito só é filtrado por nome; o teste de esquemas usa uma lista manual; `test_weekly_text_flow` tem cerca de 170 linhas.
+
+**Notas da revisão final do ramo (2A):**
+
+- Revisão final com modelo mais capaz sobre as 12 tarefas (commit `a3e4aaa`): sem achados Critical; 1425 testes passavam. Três achados Important, corrigidos numa onda única (`9e4faaf`, `0e52dd7`, `e127e77`) e re-revistos sem achados abertos (1495 testes; `ruff` e `mypy src scripts` limpos):
+  1. **Reaprovar o plano de uma semana com publicações decididas** divergia em silêncio do plano e cancelava publicações `approved`/`in_review` cujo lugar posicional desaparecia. Agora a página do plano mostra uma pré-visualização (a mesma função de decisão do reconciliador) e aprovar um plano que cancelaria publicações aprovadas ou em revisão exige a confirmação explícita `confirm_cancel`, recalculada na própria transação sob os bloqueios (`ConfirmationRequired` → 409, sem escrever nada).
+  2. **Geração falhada sem revisão** não tinha saída no painel. Novo `POST /post/{id}/gerar` (`ReviewService.retry_generation`): bloqueia o post, aceita `planned` ou `drafting` com `last_error` sem job ativo, enfileira um job novo (reaproveita o comentário do último job de alterações) e audita só ids. Um post `planned` sem job deixou de fazer polling.
+  3. **Exemplos de feedback no prompt do Copywriter** sem teto (até cerca de 19k tokens): cada campo é cortado a 1500 caracteres só no prompt (antes de neutralizar), e `OLLAMA_CONTEXT_LENGTH=8192` ficou documentado.
+- Também: o painel usa `worker_stale_after()` (360 s) como o worker; o script de fumo só aceita bases com o prefixo `marketing_agent_smoke_`; o README corrige a recuperação de um job morto (quando a lease de ~31 min expira, com um só worker por base de dados) e lista as limitações conhecidas.
+- **Para decidir ou fazer a seguir (fora do 2A):** alimentar o Diretor com as publicações já decididas da semana (um `rejected` nunca é regenerado por um plano novo, as chaves de lugar são posicionais); indicador de que o worker não está a correr; edição de itens da base (re-adicionar no mesmo dia colide com `UNIQUE`); o Instagram conta legenda + hashtags (a validação soma-as em separado); datas em UTC; `Idempotency-Key` da spec (secção 7) substituído por idempotência por estado; semanas passadas podem ser propostas; texto de uma edição inválida perde-se num 422; `pytest-randomly` não está instalado (a ordem dos testes não é aleatorizada).
+- **Verificação do responsável (marcos M2 a M8):** a verificação no browser e a semana real com o Ollama ficam contigo; ver a tabela em `AgentDATA/context/` e o README.

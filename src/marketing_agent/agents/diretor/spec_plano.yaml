@@ -1,0 +1,23 @@
+# Spec do Diretor ao produzir o plano semanal a partir da estrategia ativa.
+# Valores monetarios SEMPRE como texto entre aspas (o carregador recusa numeros).
+# Sem `validators`: a semana, os tetos, as experiencias e a base dependem de contexto da
+# chamada e verificam-se em `planning.validation` via `extra_validator` do motor.
+role: diretor
+name: plano
+version: 1
+loop_type: structured
+prompt_file: prompt_plano.md
+output_schema: PlanoSemanal
+required_capabilities: [text, json_schema]
+tools: []
+reads: [perfil_marca, estrategia]
+writes: [plano]
+validators: []
+limits:
+  max_steps: 4
+  max_tokens: 60000
+  max_cost_usd: "1.00"
+  max_duration_s: 240
+max_output_tokens: 4000
+budget_share_hint: "0.15"
+escalation: Sem saida valida ou limite atingido, o pedido de plano falha e o responsavel pode repeti-lo.

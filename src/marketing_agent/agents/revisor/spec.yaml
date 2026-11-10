@@ -1,0 +1,22 @@
+# Spec do Revisor de texto: parecer independente sobre o rascunho; nunca o edita.
+# Valores monetarios SEMPRE como texto entre aspas (o carregador recusa numeros).
+# `writes: []`: o parecer e um valor devolvido ao chamador, nunca muda estado de posts ou artefactos.
+role: revisor
+name: revisor
+version: 1
+loop_type: structured
+prompt_file: prompt.md
+output_schema: Revisao
+required_capabilities: [text, json_schema]
+tools: []
+reads: [perfil_marca, kb]
+writes: []
+validators: []
+limits:
+  max_steps: 4
+  max_tokens: 40000
+  max_cost_usd: "0.30"
+  max_duration_s: 180
+max_output_tokens: 1500
+budget_share_hint: "0.20"
+escalation: Sem parecer valido ou limite atingido, a publicacao fica em geracao com o motivo visivel.

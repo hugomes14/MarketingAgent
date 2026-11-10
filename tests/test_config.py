@@ -68,6 +68,20 @@ def test_budget_reference_must_be_positive(monkeypatch: pytest.MonkeyPatch, valu
     assert loc == ("monthly_budget_reference_usd",)
 
 
+def test_plan_limits_default_to_five_per_week_and_one_per_day(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("PLAN_MAX_POSTS_PER_WEEK", raising=False)
+    monkeypatch.delenv("PLAN_MAX_POSTS_PER_DAY", raising=False)
+    settings = Settings(_env_file=None)  # type: ignore[call-arg]
+    assert (settings.plan_max_posts_per_week, settings.plan_max_posts_per_day) == (5, 1)
+
+
+@pytest.mark.parametrize("name", ["PLAN_MAX_POSTS_PER_WEEK", "PLAN_MAX_POSTS_PER_DAY"])
+def test_plan_limits_must_be_positive(monkeypatch: pytest.MonkeyPatch, name: str) -> None:
+    assert _first_error_loc(monkeypatch, name, "0") == (name.lower(),)
+
+
 def test_max_message_chars_must_be_positive(monkeypatch: pytest.MonkeyPatch) -> None:
     assert _first_error_loc(monkeypatch, "MAX_MESSAGE_CHARS", "0") == ("max_message_chars",)
 
@@ -176,6 +190,7 @@ def test_example_env_files_are_valid_settings(name: str, monkeypatch: pytest.Mon
     settings = Settings(_env_file=path)  # type: ignore[call-arg]
     assert settings.panel_csrf_secret_file == Path("AgentDATA/secrets/panel_csrf_secret")
     assert "diretor" in settings.role_routes
+    assert (settings.plan_max_posts_per_week, settings.plan_max_posts_per_day) == (5, 1)
 
 
 def test_local_example_uses_ollama_route_and_local_prices(

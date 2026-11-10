@@ -1,0 +1,16 @@
+{# Fragmento do lote. So volta a pedir a si mesmo (HTMX) enquanto houver publicacoes por gerar. #}
+<div id="lote"{% if view.is_polling %} hx-get="/lote/{{ week }}/estado" hx-trigger="every 5s" hx-swap="outerHTML"{% endif %}>
+  {% if view.cards %}
+  <p class="resumo">
+    {% for state, number in view.counts %}<span class="etiqueta etiqueta-{{ state }}">{{ number }} {{ state|lifecycle_label|lower }}</span> {% endfor %}
+  </p>
+  {% if view.is_polling %}<p class="aviso info">Há publicações a ser geradas; esta lista atualiza-se sozinha.</p>{% endif %}
+  {% for card in view.cards %}
+  {% include "_post_card.html" %}
+  {% endfor %}
+  {% else %}
+  <section class="cartao">
+    <p class="nota">Não há publicações nesta semana. Aprove um plano semanal para as criar.</p>
+  </section>
+  {% endif %}
+</div>

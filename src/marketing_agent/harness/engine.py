@@ -49,6 +49,9 @@ NETWORK_BACKOFF_S = (1.0, 2.0)  # uma repeticao por espera
 MAX_ERROR_SUMMARY_CHARS = 500
 CHARS_PER_TOKEN = 3  # estimativa conservadora de tokens de entrada
 
+# Validador de contexto passado por quem chama: saida tipada -> violacoes (vazio = ok).
+type ExtraValidator[M: BaseModel] = Callable[[M], list[str]]
+
 StepError = Literal["invalid_output", "refusal", "truncated", "network", "limit", "unknown_outcome"]
 
 
@@ -63,12 +66,17 @@ class RunStatus(StrEnum):
 
 @dataclass(frozen=True)
 class RunResult:
-    """Resultado de `AgentEngine.run`; `run_id` e vazio se a execucao nem chegou a ser criada."""
+    """Resultado de `AgentEngine.run`; `run_id` e vazio se a execucao nem chegou a ser criada.
+
+    `limit` so existe em `BLOCKED_LIMIT`: a classe do limite que parou a execucao (passos,
+    tokens ou duracao vs. custo), para quem precisa de a distinguir sem ler `message`.
+    """
 
     status: RunStatus
     run_id: str
     output: object | None
     message: str | None
+    limit: type[Exception] | None = None
 
 
 class RunLimitExceeded(Exception):
@@ -139,6 +147,15 @@ def _summarize_validation(exc: ValidationError) -> str:
     return "; ".join(parts)[:MAX_ERROR_SUMMARY_CHARS]
 
 
+def _join_violations(violations: list[str]) -> str:
+    """Junta as violacoes numa so linha, limitada a `MAX_ERROR_SUMMARY_CHARS`.
+
+    Quem escreve as mensagens pode citar texto do modelo; o limite impede que uma saida enorme
+    volte inteira no pedido seguinte ou no motivo de `NeedsHuman`.
+    """
+    return " ".join("; ".join(violations).split())[:MAX_ERROR_SUMMARY_CHARS]
+
+
 class RunContext:
     """Contexto de uma execucao entregue ao Loop: chamadas ao LLM e criacao de artefactos."""
 
@@ -159,16 +176,25 @@ class RunContext:
         self._steps_done = 0
         self._tokens_used = 0
 
-    def call_llm[M: BaseModel](self, system: str, messages: list[Message], schema: type[M]) -> M:
+    def call_llm[M: BaseModel](
+        self,
+        system: str,
+        messages: list[Message],
+        schema: type[M],
+        extra_validator: ExtraValidator[M] | None = None,
+    ) -> M:
         """Chama o LLM e devolve a saida validada por `schema` e pelos `spec.validators`.
 
-        Repete saidas invalidas (ate 3 tentativas) e falhas de rede (ate 2 repeticoes);
-        recusa, truncagem e desfecho desconhecido levantam `NeedsHuman` sem repetir.
+        `extra_validator` e para verificacoes que dependem de contexto que so o chamador tem
+        (nao e registado): as suas violacoes somam-se as dos validadores do spec e contam
+        como `invalid_output`. Repete saidas invalidas (ate 3 tentativas) e falhas de rede
+        (ate 2 repeticoes); recusa, truncagem e desfecho desconhecido levantam `NeedsHuman`
+        sem repetir.
         """
         state = _RetryState()
         history = list(messages)
         while True:
-            result = self._attempt(system, history, schema)
+            result = self._attempt(system, history, schema, extra_validator)
             if not isinstance(result, _Retry):
                 return result
             history = self._retry_policy(result, state, history)
@@ -186,7 +212,11 @@ class RunContext:
         )
 
     def _attempt[M: BaseModel](
-        self, system: str, messages: list[Message], schema: type[M]
+        self,
+        system: str,
+        messages: list[Message],
+        schema: type[M],
+        extra_validator: ExtraValidator[M] | None,
     ) -> M | _Retry:
         self._check_limits()
         estimate = _estimate_input_tokens(system, messages)
@@ -204,11 +234,13 @@ class RunContext:
             return response
         with self._unknown_if_unsettled(step_id, reservation_id):
             self._settle(reservation_id, response)
-        verdict = self._classify_or_close(step_id, response, schema)
+        verdict = self._classify_or_close(step_id, response, schema, extra_validator)
         self._close_step(step_id, verdict.error_class)
         return self._outcome(verdict, response)
 
-    def _classify[M: BaseModel](self, response: LlmResponse, schema: type[M]) -> _Verdict[M]:
+    def _classify[M: BaseModel](
+        self, response: LlmResponse, schema: type[M], extra_validator: ExtraValidator[M] | None
+    ) -> _Verdict[M]:
         if response.stop_reason is StopReason.refusal:
             return _Verdict("refusal", "o modelo recusou responder", None)
         if response.stop_reason is StopReason.max_tokens:
@@ -218,8 +250,10 @@ class RunContext:
         except ValidationError as exc:
             return _Verdict("invalid_output", _summarize_validation(exc), None)
         violations = [v for name in self.spec.validators for v in VALIDATORS[name](parsed)]
+        if extra_validator is not None:
+            violations += extra_validator(parsed)
         if violations:
-            return _Verdict("invalid_output", "; ".join(violations), None)
+            return _Verdict("invalid_output", _join_violations(violations), None)
         return _Verdict(None, "", parsed)
 
     @staticmethod
@@ -346,11 +380,15 @@ class RunContext:
             logger.error("execucao %s: fecho do passo falhou (%s)", self.run_id, type(exc).__name__)
 
     def _classify_or_close[M: BaseModel](
-        self, step_id: str, response: LlmResponse, schema: type[M]
+        self,
+        step_id: str,
+        response: LlmResponse,
+        schema: type[M],
+        extra_validator: ExtraValidator[M] | None,
     ) -> _Verdict[M]:
         """Classifica; se o codigo de validacao levantar, a reserva ja foi acertada."""
         try:
-            return self._classify(response, schema)
+            return self._classify(response, schema, extra_validator)
         except Exception:
             self._close_step_quietly(step_id, "invalid_output")
             raise
@@ -423,7 +461,7 @@ class AgentEngine:
         try:
             output = loop.run(ctx, payload)
         except (RunLimitExceeded, RunCostLimitExceeded) as exc:
-            return RunResult(RunStatus.BLOCKED_LIMIT, run_id, None, str(exc))
+            return RunResult(RunStatus.BLOCKED_LIMIT, run_id, None, str(exc), type(exc))
         except NeedsHuman as exc:
             return RunResult(RunStatus.NEEDS_HUMAN, run_id, None, exc.reason)
         except Exception as exc:

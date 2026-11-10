@@ -30,6 +30,7 @@ from marketing_agent.interview.service import InterviewService
 from marketing_agent.llm.fake import FakeLlmClient
 from marketing_agent.llm.router import LlmRouter
 from marketing_agent.panel.app import create_app
+from marketing_agent.panel.assembly import build_content_services
 from marketing_agent.panel.queries import PanelQueries
 from marketing_agent.strategy.service import StrategyService
 
@@ -55,7 +56,7 @@ def make_panel(
         store = ArtifactStore(session_factory, clock)
         engine = AgentEngine(
             session_factory,
-            LlmRouter({"diretor": route}, {"fake": llm}),
+            LlmRouter({"diretor": route, "copywriter": route, "revisor": route}, {"fake": llm}),
             budget,
             store,
             clock,
@@ -63,6 +64,7 @@ def make_panel(
         )
         interview = InterviewService(session_factory, engine, store, settings, clock)
         strategy = StrategyService(session_factory, engine, store, clock)
+        content = build_content_services(settings, session_factory, engine, store, strategy, clock)
         app = create_app(
             settings,
             interview,
@@ -71,6 +73,7 @@ def make_panel(
             SECRET,
             brand_id=brand_id,
             queries=PanelQueries(session_factory, store),
+            content=content,
         )
         client = TestClient(app, client=(peer, 5000))
         return PanelRig(
@@ -85,6 +88,8 @@ def make_panel(
             clock,
             brand_id,
             settings,
+            content,
+            engine,
         )
 
     return make
