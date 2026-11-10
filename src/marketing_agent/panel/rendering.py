@@ -9,6 +9,7 @@ from jinja2 import Environment, FileSystemLoader, StrictUndefined, select_autoes
 
 from marketing_agent.panel.auth import TailscaleUser
 from marketing_agent.panel.csrf import csrf_token_for
+from marketing_agent.panel.labels import install_label_filters
 
 PANEL_DIR: Final = Path(__file__).resolve().parent
 TEMPLATES_DIR: Final = PANEL_DIR / "templates"
@@ -113,6 +114,7 @@ def build_environment() -> Environment:
     environment.filters["channel_label"] = _channel_label
     environment.filters["gap_status"] = _gap_status
     environment.filters["origin_label"] = _origin_label
+    install_label_filters(environment)
     return environment
 
 

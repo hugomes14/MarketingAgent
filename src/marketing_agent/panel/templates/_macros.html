@@ -19,3 +19,19 @@
 {% endmacro %}
 
 {% macro state_badge(state) %}<span class="etiqueta etiqueta-{{ state }}">{{ state|state_label }}</span>{% endmacro %}
+
+{# Tipo de feedback: rádios sem opção pré-escolhida. A validade só existe onde o serviço a aceita. #}
+{% macro feedback_fields(post_id, form, choices, has_expiry) %}
+<fieldset class="feedback">
+  <legend>Que tipo de feedback é este?</legend>
+  {% for choice in choices %}
+  <label><input type="radio" name="feedback" value="{{ choice }}" required> {{ choice|feedback_label }}</label>
+  {% endfor %}
+  {% if has_expiry %}
+  <label for="expira-{{ form }}-{{ post_id }}">Válido até (só para «Temporário»)</label>
+  <input type="date" id="expira-{{ form }}-{{ post_id }}" name="expira_em">
+  {% endif %}
+  <label for="nota-{{ form }}-{{ post_id }}">Nota (opcional)</label>
+  <input type="text" id="nota-{{ form }}-{{ post_id }}" name="nota" maxlength="500" autocomplete="off">
+</fieldset>
+{% endmacro %}

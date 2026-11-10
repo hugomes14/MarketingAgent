@@ -45,3 +45,25 @@
     });
   });
 })();
+
+// O lote atualiza-se sozinho enquanto ha publicacoes a gerar; nao pode apagar o que o
+// responsavel esta a escrever (ou um painel de edicao aberto). Nesse caso salta-se esse ciclo.
+(function () {
+  "use strict";
+
+  function isUserEditing(batch) {
+    if (batch.querySelector("details[open]") !== null) {
+      return true;
+    }
+    return Array.from(batch.querySelectorAll("textarea, input")).some(function (field) {
+      return field.value !== field.defaultValue && field.type !== "hidden";
+    });
+  }
+
+  document.body.addEventListener("htmx:beforeSwap", function (event) {
+    const target = event.detail.target;
+    if (target && target.id === "lote" && isUserEditing(target)) {
+      event.detail.shouldSwap = false;
+    }
+  });
+})();

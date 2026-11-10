@@ -1,8 +1,7 @@
 """Plano semanal: propor, rever os slots e decidir (aprovar so por POST explicito).
 
-Aprovar cria as publicacoes e os trabalhos numa so transacao (`PlanningService.approve_plan`).
-Por agora volta-se a pagina do plano, que mostra quantas publicacoes ja existem; a pagina do
-lote semanal passa a ser o destino quando existir.
+Aprovar cria as publicacoes e os trabalhos numa so transacao (`PlanningService.approve_plan`) e
+leva ao lote da semana do plano, onde as publicacoes vao aparecendo a medida que sao geradas.
 """
 
 from fastapi import APIRouter
@@ -50,9 +49,9 @@ def show_plan(artifact_id: RecordId, user: CurrentUser, panel: Panel) -> HTMLRes
 @router.post("/plano/{artifact_id}/aprovar", dependencies=[MUTATION_GUARD])
 def approve_plan(artifact_id: RecordId, user: CurrentUser, panel: Panel) -> RedirectResponse:
     """Aprova o plano e cria as publicacoes e os trabalhos; um plano ja decidido da 409."""
-    panel.queries.require_artifact(panel.brand_id, artifact_id, ArtifactType.PLANO)
+    record = panel.queries.require_artifact(panel.brand_id, artifact_id, ArtifactType.PLANO)
     panel.content.planning.approve_plan(artifact_id, user.login)
-    return see_other(f"/plano/{artifact_id}")
+    return see_other(f"/lote/{record.payload['semana']}")
 
 
 @router.post("/plano/{artifact_id}/rejeitar", dependencies=[MUTATION_GUARD])

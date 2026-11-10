@@ -135,3 +135,13 @@ def count_in_review(session: Session, brand_id: str) -> int:
         .where(Post.brand_id == brand_id, Post.lifecycle == IN_REVIEW)
     )
     return session.scalar(statement) or 0
+
+
+def earliest_review_week(session: Session, brand_id: str) -> str | None:
+    """Semana ISO mais antiga com publicacoes por rever (as `slot_key` ordenam por semana)."""
+    slot_key = session.scalar(
+        select(func.min(Post.slot_key)).where(
+            Post.brand_id == brand_id, Post.lifecycle == IN_REVIEW
+        )
+    )
+    return None if slot_key is None else slot_key.rsplit("-", 1)[0]

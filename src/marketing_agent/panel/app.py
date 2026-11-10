@@ -13,6 +13,8 @@ from marketing_agent.budget.controller import BudgetController
 from marketing_agent.config import Settings
 from marketing_agent.interview.service import InterviewService
 from marketing_agent.panel import (
+    routes_batch,
+    routes_feedback,
     routes_home,
     routes_interview,
     routes_kb,
@@ -70,7 +72,15 @@ def create_app(
     app.add_middleware(AllowedHostsMiddleware, allowed_hosts=settings.panel_allowed_hosts)
     app.add_middleware(SecurityHeadersMiddleware)
     install_error_handlers(app, renderer)
-    for module in (routes_home, routes_interview, routes_strategy, routes_kb, routes_plan):
+    for module in (
+        routes_home,
+        routes_interview,
+        routes_strategy,
+        routes_kb,
+        routes_plan,
+        routes_batch,
+        routes_feedback,
+    ):
         app.include_router(module.router)
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
     return app

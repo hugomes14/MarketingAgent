@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block title %}Lote {{ week }}{% endblock %}
+{% block content %}
+<h1>Lote da semana {{ week }}</h1>
+<p class="navegacao-semana">
+  <a href="/lote/{{ previous_week }}">&larr; {{ previous_week }}</a>
+  <a href="/lote/{{ next_week }}">{{ next_week }} &rarr;</a>
+</p>
+<p class="nota">Ler esta página não aprova nada: cada publicação só muda com o botão da respetiva ação. Aprovar vale só para o texto que está à vista.</p>
+{% include "_batch_cards.html" %}
+{% endblock %}

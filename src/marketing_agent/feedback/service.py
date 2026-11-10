@@ -137,11 +137,16 @@ class FeedbackService:
             negatives = self._usable(session, brand_id, "negativo", _NEGATIVE_LIMIT)
         return styles, negatives
 
-    def list_examples(self, brand_id: str) -> list[FeedbackExampleView]:
-        """Todos os exemplos da marca (ativos ou nao, de qualquer tipo), dos mais recentes."""
+    def list_examples(self, brand_id: str, limit: int | None = None) -> list[FeedbackExampleView]:
+        """Exemplos da marca (ativos ou nao, de qualquer tipo), dos mais recentes.
+
+        `limit` (opcional) corta a lista nos mais recentes; sem ele devolve todos.
+        """
         statement = _newest_first(
             select(FeedbackExample).where(FeedbackExample.brand_id == brand_id)
         )
+        if limit is not None:
+            statement = statement.limit(limit)
         with self._session_factory() as session:
             return [_to_view(row) for row in session.scalars(statement)]
 

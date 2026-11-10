@@ -49,6 +49,7 @@
     <h2>Publicações</h2>
     {% if snapshot.in_review_count %}
     <p>{{ snapshot.in_review_count }} {{ "publicação" if snapshot.in_review_count == 1 else "publicações" }} por rever</p>
+    {% if snapshot.review_week %}<p><a href="/lote/{{ snapshot.review_week }}">Rever publicações</a> <span class="nota">(semana {{ snapshot.review_week }})</span></p>{% endif %}
     {% else %}
     <p class="nota">Nenhuma publicação por rever.</p>
     {% endif %}

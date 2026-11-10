@@ -22,6 +22,7 @@ from marketing_agent.artifacts.store import (
     ArtifactStore,
     ArtifactType,
 )
+from marketing_agent.content.review_errors import PostNotFound
 from marketing_agent.db.models import (
     AgentRun,
     Artifact,
@@ -30,10 +31,11 @@ from marketing_agent.db.models import (
     StrategyDecision,
 )
 from marketing_agent.interview.service import SessionNotFound
-from marketing_agent.panel import queries_content
+from marketing_agent.panel import queries_batch, queries_content
+from marketing_agent.panel.errors import InactiveProfile
+from marketing_agent.panel.queries_batch import BatchView, ValidRefs
 from marketing_agent.panel.queries_content import KbGroup, PlanLink, PlanView
 from marketing_agent.planning.schemas import PlanoSemanal
-from marketing_agent.proposals import MissingPrerequisite
 
 MAX_LISTED_SESSIONS: Final = 20
 
@@ -83,6 +85,7 @@ class HomeSnapshot:
     pending: list[PendingArtifact]
     latest_plan: PlanLink | None
     in_review_count: int
+    review_week: str | None  # semana mais antiga com publicacoes por rever
 
 
 @dataclass(frozen=True)
@@ -147,6 +150,7 @@ class PanelQueries:
             pending=self._pending(brand_id),
             latest_plan=self._read(queries_content.latest_plan_link, brand_id),
             in_review_count=self._read(queries_content.count_in_review, brand_id),
+            review_week=self._read(queries_content.earliest_review_week, brand_id),
         )
 
     def require_session(self, brand_id: str, session_id: str) -> None:
@@ -184,11 +188,11 @@ class PanelQueries:
     def require_active_profile(self, brand_id: str, artifact_id: str) -> PerfilMarca:
         """Perfil ativo com este id; `ArtifactNotFound` se for outro tipo ou marca.
 
-        Levanta `MissingPrerequisite` se o perfil existe mas nao e o ativo: so o ativo se promove.
+        Levanta `InactiveProfile` se o perfil existe mas nao e o ativo: so o ativo se promove.
         """
         record = self.require_artifact(brand_id, artifact_id, ArtifactType.PERFIL_MARCA)
         if not self._is_active(brand_id, record):
-            raise MissingPrerequisite(f"o perfil {artifact_id} nao e o perfil ativo")
+            raise InactiveProfile(f"o perfil {artifact_id} nao e o perfil ativo")
         return PerfilMarca.model_validate(record.payload)
 
     def plan_view(self, brand_id: str, artifact_id: str) -> PlanView:
@@ -200,6 +204,28 @@ class PanelQueries:
             titles = queries_content.kb_titles(session, brand_id, refs)
             posts = queries_content.count_plan_posts(session, artifact_id)
         return PlanView(record, plano, titles, posts)
+
+    def batch_view(self, brand_id: str, week: str, valid_refs: ValidRefs) -> BatchView:
+        """Lote da semana: publicacoes desta marca com a ultima revisao e o historico.
+
+        `valid_refs` (`KbService.valid_refs`) decide que alegacoes tem apoio valido na data de
+        cada publicacao; as consultas sao em numero fixo (so a validade e uma por publicacao).
+        """
+        with self._session_factory() as session:
+            rows = queries_batch.load_week(session, brand_id, week)
+        return queries_batch.build_batch(brand_id, week, rows, valid_refs)
+
+    def review_week(self, brand_id: str) -> str | None:
+        """Semana mais antiga com publicacoes por rever, ou `None`."""
+        return self._read(queries_content.earliest_review_week, brand_id)
+
+    def post_week(self, brand_id: str, post_id: str) -> str:
+        """Semana ISO da publicacao desta marca; `PostNotFound` se nao existe ou e de outra."""
+        with self._session_factory() as session:
+            week = queries_batch.post_week(session, brand_id, post_id)
+        if week is None:
+            raise PostNotFound
+        return week
 
     def kb_view(self, brand_id: str) -> list[KbGroup]:
         """Itens ativos da base agrupados por tipo."""

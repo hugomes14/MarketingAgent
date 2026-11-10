@@ -1,0 +1,70 @@
+{# Um cartao do lote. Todo o texto do modelo e do responsavel passa pelo autoescape do Jinja. #}
+{% set rev = card.revision %}
+<article class="cartao publicacao" id="post-{{ card.id }}">
+  <h2>{{ card.scheduled_date.isoformat() }} — {{ card.theme }}</h2>
+  <p>
+    {% for channel in card.channels %}<span class="etiqueta">{{ channel|channel_label }}</span> {% endfor %}
+    <span class="etiqueta etiqueta-{{ card.lifecycle }}">{{ card.lifecycle|lifecycle_label }}</span>
+    {% if rev %}<span class="etiqueta">Revisão {{ rev.rev_no }}, {{ rev.origin|revision_origin_label }}</span>{% endif %}
+    <span class="etiqueta">Voltas do revisor: {{ card.review_rounds }}</span>
+  </p>
+
+  {% if rev %}
+  <h3>Legenda</h3>
+  <p class="texto">{{ rev.caption }}</p>
+  {% if rev.hashtags %}<h3>Hashtags</h3><p class="texto">{{ rev.hashtags|join(" ") }}</p>{% endif %}
+  {% if rev.call_to_action %}<h3>Apelo à ação</h3><p class="texto">{{ rev.call_to_action }}</p>{% endif %}
+  {% if rev.alt_text %}<h3>Texto alternativo</h3><p class="texto">{{ rev.alt_text }}</p>{% endif %}
+  <h3>Alegações</h3>
+  {% if rev.claims %}
+  <ul class="alegacoes">
+    {% for claim in rev.claims %}
+    <li{% if claim.is_cited and not claim.is_supported %} class="sem-apoio"{% endif %}>
+      {{ claim.text }}
+      {% if not claim.is_cited %}
+      <span class="nota">(sem item da base citado)</span>
+      {% elif claim.is_supported %}
+      <span class="etiqueta">Origem: {{ claim.kb_title }}</span>
+      {% else %}
+      <strong class="alerta">sem apoio válido em {{ card.scheduled_date.isoformat() }}</strong>
+      {% if claim.kb_title %}<span class="nota">(item «{{ claim.kb_title }}» fora de validade ou desativado)</span>{% endif %}
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="nota">Sem alegações.</p>
+  {% endif %}
+
+  {% if rev.origin == "agente" %}
+  <h3>Parecer do revisor</h3>
+  <p>
+    {% if rev.verdict %}<span class="etiqueta">{{ rev.verdict|verdict_label }}</span>{% endif %}
+    {% for violation in rev.violations %}<span class="etiqueta etiqueta-rejected">{{ violation|violation_label }}</span> {% endfor %}
+  </p>
+  {% if rev.notes %}<p class="texto">{{ rev.notes }}</p>{% endif %}
+  {% endif %}
+  {% elif card.lifecycle == "in_review" or card.lifecycle == "approved" or card.lifecycle == "rejected" %}
+  <p class="aviso atencao">Esta publicação não tem nenhum texto gerado, por isso não há nada para decidir.</p>
+  {% endif %}
+
+  {% if card.lifecycle == "planned" %}
+  <p class="nota">{% if card.is_generating %}Por gerar: o texto aparece aqui quando estiver pronto.{% else %}Por gerar.{% endif %}</p>
+  {% elif card.lifecycle == "drafting" and card.is_generating %}
+  <p class="nota">Em geração: o texto aparece aqui quando estiver pronto.</p>
+  {% endif %}
+  {% if card.last_error %}
+  <p class="aviso erro" role="alert">A geração falhou ({{ card.last_error }}).{% if not rev %} Não há texto para editar.{% endif %}</p>
+  {% endif %}
+
+  {% if card.decisions %}
+  <h3>Histórico de decisões</h3>
+  <ul class="historico">
+    {% for decision in card.decisions %}
+    <li>Revisão {{ decision.rev_no }}: {{ decision.decided_by }} {{ decision.decision|decision_label }} em {{ decision.decided_at.strftime("%Y-%m-%d %H:%M") }} UTC{% if decision.comment %} — <span class="texto">{{ decision.comment }}</span>{% endif %}</li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+
+  {% include "_post_actions.html" %}
+</article>

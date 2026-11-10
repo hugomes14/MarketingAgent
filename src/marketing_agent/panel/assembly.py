@@ -44,4 +44,4 @@ def build_content_services(
     review = ReviewService(
         session_factory, feedback, queue, kb, clock, max_comment_chars=settings.max_message_chars
     )
-    return ContentServices(kb=kb, planning=planning, review=review, feedback=feedback)
+    return ContentServices(kb=kb, planning=planning, review=review, feedback=feedback, clock=clock)

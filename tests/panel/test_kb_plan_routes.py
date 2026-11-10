@@ -2,18 +2,22 @@
 
 import re
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from datetime import date
 from decimal import Decimal
 
 import pytest
+from fastapi import APIRouter, FastAPI
+from fastapi.routing import APIRoute
 from panel_rig import LOGIN, PanelRig, Script, json_response
 from sqlalchemy import func, select, update
+from starlette.routing import BaseRoute, Mount, Route
 
 from marketing_agent.artifacts.store import ArtifactState, ArtifactType
 from marketing_agent.db.models import AuditLog, Job, KbItem, Post
 from marketing_agent.kb.service import NewKbEntry
 from marketing_agent.llm import fake_scenarios
+from marketing_agent.panel import routes_batch, routes_feedback, routes_kb, routes_plan
 from marketing_agent.proposals import ProposalInProgress
 
 MakePanel = Callable[..., PanelRig]
@@ -72,22 +76,109 @@ def add_item(rig: PanelRig, title: str = "Oferta de outono", key: str = "outono"
 # ---------------------------------------------------------------- auth, CSRF e Host
 
 
-def app_endpoints(rig: PanelRig) -> list[tuple[str, str]]:
-    """(metodo, caminho) de todas as rotas da app, lidos do esquema OpenAPI gerado por ela.
+# Rotas servidas que nao entram na verificacao por-rota: so montagens de ficheiros estaticos.
+# Qualquer outra montagem (sub-app) ou rota fora do esquema OpenAPI faz o teste falhar.
+ALLOWED_MOUNTS = frozenset({"/static"})
+Endpoint = tuple[str, str]
 
-    Nao depende da estrutura interna de `app.routes` (o FastAPI mudou-a): qualquer rota nova,
-    de qualquer modulo, entra aqui sem alterar o teste.
-    """
-    schema = rig.app.openapi()
-    return [
+
+def openapi_endpoints(app: FastAPI) -> set[Endpoint]:
+    """(metodo, caminho) das rotas que o esquema OpenAPI gerado pela app declara."""
+    schema = app.openapi()
+    return {
         (method.upper(), path)
         for path, operations in schema["paths"].items()
         for method in operations
-    ]
+    }
+
+
+def route_table_endpoints(routes: Iterable[BaseRoute], prefix: str = "") -> set[Endpoint]:
+    """(metodo, caminho) lidos da tabela real de rotas, incluindo as `include_in_schema=False`.
+
+    Percorre as rotas simples e os routers incluidos (`_IncludedRouter.original_router`). Uma
+    montagem (`Mount`) fora de `ALLOWED_MOUNTS` falha ruidosamente: nao se sabe o que serve.
+    """
+    found: set[Endpoint] = set()
+    for route in routes:
+        original = getattr(route, "original_router", None)
+        if original is not None:
+            context_prefix = getattr(getattr(route, "include_context", None), "prefix", "")
+            found |= route_table_endpoints(original.routes, prefix + (context_prefix or ""))
+        elif isinstance(route, Mount):
+            assert route.path in ALLOWED_MOUNTS, f"montagem nao prevista: {route.path}"
+        elif isinstance(route, APIRoute | Route):
+            methods = route.methods or set()
+            found |= {(m, prefix + route.path) for m in methods if m not in ("HEAD", "OPTIONS")}
+    return found
+
+
+def served_endpoints(app: FastAPI) -> list[Endpoint]:
+    """Todas as rotas da app; falha se o esquema OpenAPI e a tabela real de rotas divergirem.
+
+    O OpenAPI nao ve rotas com `include_in_schema=False`; a tabela real nao e afetada por isso.
+    Exigir que os dois conjuntos coincidam impede que uma rota escondida escape ao teste de
+    autenticacao e CSRF.
+    """
+    declared, served = openapi_endpoints(app), route_table_endpoints(app.routes)
+    hidden, missing = sorted(served - declared), sorted(declared - served)
+    assert not hidden and not missing, (
+        f"rotas servidas fora do esquema OpenAPI: {hidden}; no esquema mas nao servidas: {missing}"
+    )
+    return sorted(served)
+
+
+def app_endpoints(rig: PanelRig) -> list[Endpoint]:
+    return served_endpoints(rig.app)
 
 
 def concrete_path(template: str) -> str:
-    return re.sub(r"\{[^}]+\}", lambda _: str(uuid.uuid4()), template)
+    def value(match: re.Match[str]) -> str:
+        return "2026-W46" if match.group(0) == "{week}" else str(uuid.uuid4())
+
+    return re.sub(r"\{[^}]+\}", value, template)
+
+
+def test_guard_derivation_catches_hidden_routes_and_mounts() -> None:
+    """A derivacao tem de falhar quando ha uma rota fora do esquema ou uma montagem estranha."""
+    router = APIRouter()
+
+    @router.get("/visivel")
+    def visible() -> None: ...
+
+    @router.post("/escondida", include_in_schema=False)
+    def hidden() -> None: ...
+
+    tiny = FastAPI()
+    tiny.include_router(router)
+    assert openapi_endpoints(tiny) == {("GET", "/visivel")}
+    assert ("POST", "/escondida") in route_table_endpoints(tiny.routes)
+    with pytest.raises(AssertionError, match="escondida"):
+        served_endpoints(tiny)
+
+    mounted = FastAPI()
+    mounted.mount("/outra", FastAPI())
+    with pytest.raises(AssertionError, match="/outra"):
+        served_endpoints(mounted)
+
+
+def test_real_app_exposes_no_hidden_route(make_panel: MakePanel) -> None:
+    rig = make_panel([])
+    endpoints = app_endpoints(rig)
+    assert len(endpoints) == len(set(endpoints))
+    paths = {path for _, path in endpoints}
+    # as rotas de cada modulo (routes_*) estao todas na tabela servida
+    for module in (routes_batch, routes_feedback, routes_kb, routes_plan):
+        assert route_table_endpoints(module.router.routes) <= set(endpoints), module.__name__
+    assert {
+        "/lote/{week}",
+        "/lote/{week}/estado",
+        "/post/{post_id}/aprovar",
+        "/post/{post_id}/editar",
+        "/post/{post_id}/alteracoes",
+        "/post/{post_id}/rejeitar",
+        "/feedback",
+        "/feedback/{example_id}/desativar",
+    } <= paths
 
 
 def test_every_new_route_requires_auth_and_csrf(make_panel: MakePanel) -> None:
@@ -103,6 +194,7 @@ def test_every_new_route_requires_auth_and_csrf(make_panel: MakePanel) -> None:
         anonymous = rig.client.request(method, path, follow_redirects=False)
         assert anonymous.status_code == 401, label
         if method == "GET":
+            assert rig.get(path, {"Host": "evil.example"}).status_code == 400, label
             continue
         assert rig.post(path, with_token=False).status_code == 403, label
         wrong = rig.post(path, {"csrf_token": "x" * 64}, with_token=False)
@@ -302,6 +394,8 @@ def test_promote_requires_the_active_profile(make_panel: MakePanel) -> None:
     assert "/promover" not in page  # so o perfil ativo tem o botao
     response = rig.post(f"/perfil/{submitted_id}/promover", {"topic": "o_que_vende"})
     assert response.status_code == 409
+    assert "não é o perfil ativo" in response.text
+    assert "Falta um passo anterior" not in response.text
     assert kb_items(rig) == []
 
 
@@ -327,7 +421,7 @@ def test_propose_and_approve_plan_creates_posts(make_panel: MakePanel) -> None:
     assert f"/plano/{plan_id}/aprovar" in page and f"/plano/{plan_id}/rejeitar" in page
     assert count_rows(rig, Post) == 0  # ler a pagina nao aprova
     response = rig.post(f"/plano/{plan_id}/aprovar")
-    assert response.status_code == 303 and response.headers["location"] == f"/plano/{plan_id}"
+    assert response.status_code == 303 and response.headers["location"] == f"/lote/{WEEK}"
     assert rig.store.get(plan_id).state is ArtifactState.APPROVED
     assert count_rows(rig, Post) == 3 and count_rows(rig, Job) == 3
     with rig.factory() as session:

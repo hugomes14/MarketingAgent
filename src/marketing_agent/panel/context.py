@@ -9,6 +9,7 @@ from fastapi.responses import RedirectResponse
 
 from marketing_agent.artifacts.store import ArtifactRecord
 from marketing_agent.budget.controller import BudgetController
+from marketing_agent.clock import Clock
 from marketing_agent.content.review import ReviewService
 from marketing_agent.feedback.service import FeedbackService
 from marketing_agent.harness.engine import RunResult, RunStatus
@@ -25,16 +26,18 @@ from marketing_agent.strategy.service import StrategyService
 
 logger = logging.getLogger(__name__)
 UUID_PATTERN = r"^[0-9a-fA-F-]{36}$"
+WEEK_PATTERN = r"^\d{4}-W\d{2}$"
 
 
 @dataclass(frozen=True)
 class ContentServices:
-    """Servicos do texto semanal: base de conhecimento, plano, revisao e feedback."""
+    """Servicos do texto semanal (base, plano, revisao, feedback) e o relogio das paginas."""
 
     kb: KbService
     planning: PlanningService
     review: ReviewService
     feedback: FeedbackService
+    clock: Clock
 
 
 @dataclass(frozen=True)
@@ -61,6 +64,8 @@ Panel = Annotated[PanelContext, Depends(get_panel)]
 CurrentUser = Annotated[TailscaleUser, Depends(require_tailscale_user)]
 Fields = Annotated[FormFields, Depends(read_form)]
 RecordId = Annotated[str, Path(pattern=UUID_PATTERN)]
+# Semana ISO `AAAA-Www`; que exista no calendario verifica-se a seguir (`require_week`).
+WeekId = Annotated[str, Path(pattern=WEEK_PATTERN)]
 # Toda a rota que muda estado declara isto em `dependencies=[...]`.
 MUTATION_GUARD = Depends(require_same_origin_and_csrf)
 

@@ -36,3 +36,5 @@ atributos `style`, por isso todo o aspeto vive aqui.
 Script proprio (ES2020, sem dependencias) carregado por `base.html`. Impede o duplo envio dos
 formularios simples (nao-HTMX): o segundo `submit` e cancelado e os botoes ficam desativados.
 Repoe o estado em `pageshow` quando a pagina vem da cache de retrocesso do browser.
+Tambem salta a substituicao periodica do lote (`#lote`, evento `htmx:beforeSwap`) quando ha um
+painel de edicao aberto ou um campo alterado, para nao apagar o que o responsavel escreve.
