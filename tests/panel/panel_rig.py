@@ -28,6 +28,7 @@ from marketing_agent.db.models import (
     InterviewSession,
     InterviewSubmission,
 )
+from marketing_agent.harness.engine import AgentEngine
 from marketing_agent.interview.service import InterviewService
 from marketing_agent.llm.fake import FakeLlmClient
 from marketing_agent.llm.types import LlmResponse, StopReason
@@ -117,6 +118,7 @@ class PanelRig:
     brand_id: str
     settings: Settings
     content: ContentServices
+    engine: AgentEngine
 
     def token(self, login: str = LOGIN) -> str:
         return csrf_token_for(TailscaleUser(login=login, name=None), SECRET)

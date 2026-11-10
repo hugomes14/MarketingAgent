@@ -56,7 +56,7 @@ def make_panel(
         store = ArtifactStore(session_factory, clock)
         engine = AgentEngine(
             session_factory,
-            LlmRouter({"diretor": route}, {"fake": llm}),
+            LlmRouter({"diretor": route, "copywriter": route, "revisor": route}, {"fake": llm}),
             budget,
             store,
             clock,
@@ -89,6 +89,7 @@ def make_panel(
             brand_id,
             settings,
             content,
+            engine,
         )
 
     return make

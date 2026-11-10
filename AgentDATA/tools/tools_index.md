@@ -6,4 +6,5 @@ Liste aqui as CLI tools esperadas, disponiveis ou desejadas pelo projeto.
 
 | Tool | Status | Comando | Quando usar | Registro |
 | --- | --- | --- | --- | --- |
-| marketing-agent | disponivel | `uv run marketing-agent --help` | Marca, precos, reservas, migracoes, painel e proxy de desenvolvimento. | `marketing_agent_cli.md` |
+| marketing-agent | disponivel | `uv run marketing-agent --help` | Marca, precos, reservas, migracoes, painel, worker de texto e proxy de desenvolvimento. | `marketing_agent_cli.md` |
+| smoke_ollama | disponivel | `uv run python scripts/smoke_ollama.py --help` | Teste de fumo do texto semanal contra o Ollama, numa base descartavel. | `smoke_ollama.md` |
