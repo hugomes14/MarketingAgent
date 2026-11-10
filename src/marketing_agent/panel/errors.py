@@ -15,6 +15,14 @@ from fastapi.responses import Response
 from starlette.exceptions import HTTPException
 
 from marketing_agent.artifacts.store import ArtifactNotFound, InvalidTransition
+from marketing_agent.content.review_errors import (
+    InvalidComment,
+    InvalidEdit,
+    InvalidPostState,
+    PostNotFound,
+    StaleRevision,
+)
+from marketing_agent.feedback.service import FeedbackError
 from marketing_agent.images.codec import ImageRejected
 from marketing_agent.interview.service import (
     InterviewStartFailed,
@@ -25,9 +33,11 @@ from marketing_agent.interview.service import (
     SessionNotFound,
     SubmissionConflict,
 )
+from marketing_agent.kb.service import KbError
 from marketing_agent.media.library import AssetNotFound, MediaError
 from marketing_agent.panel.rendering import Renderer
 from marketing_agent.panel.security import apply_security_headers
+from marketing_agent.planning.errors import ConfirmationRequired
 from marketing_agent.strategy.service import (
     IncompleteDecisions,
     MissingPrerequisite,
@@ -43,10 +53,17 @@ NOT_FOUND_MESSAGE: Final = "Não encontrado."
 INVALID_REQUEST_MESSAGE: Final = "Pedido inválido."
 INTERNAL_MESSAGE: Final = "Ocorreu um erro interno. Tente novamente."
 STATUS_AREA: Final = "#estado"
+MAX_EDIT_MESSAGE_CHARS: Final = 500
+EDIT_REFUSED_MESSAGE: Final = "A edição não altera o texto ou não é válida."
+RELOAD_HINT: Final = "Recarregue a página."
 
 
 class InvalidForm(Exception):
     """Campo de formulario invalido; a mensagem e fixa e segura para mostrar ao utilizador."""
+
+
+class InactiveProfile(MissingPrerequisite):
+    """O perfil pedido existe mas nao e o ativo; tem mensagem propria (nao e um passo em falta)."""
 
 
 class UpstreamFailure(Exception):
@@ -66,7 +83,30 @@ _RESPONSES: Final[dict[type[Exception], tuple[int, str]]] = {
     PendingProposal: (409, "Já existe uma proposta deste tipo à espera da sua decisão."),
     ProposalInProgress: (409, "Já há uma proposta em curso. Aguarde."),
     InvalidSessionState: (409, "Esta entrevista já não aceita esta ação."),
+    # Fixa: as mensagens do `KbError` citam chaves e ids da base, que podem ser texto do utilizador.
+    KbError: (
+        422,
+        "Não foi possível guardar na base de conhecimento: o item já existe ou não foi encontrado.",
+    ),
+    ConfirmationRequired: (
+        409,
+        "Este plano cancelaria publicações aprovadas ou em revisão. "
+        "Reveja a previsão, marque a confirmação e aprove de novo.",
+    ),
+    InactiveProfile: (409, f"O perfil indicado não é o perfil ativo. {RELOAD_HINT}"),
     InvalidTransition: (409, "Este item já foi decidido ou já não aceita esta ação."),
+    # Revisao do responsavel: mensagens fixas; o texto das excecoes nunca chega ao utilizador.
+    PostNotFound: (404, NOT_FOUND_MESSAGE),
+    StaleRevision: (
+        409,
+        f"Esta publicação mudou entretanto (outra aba ou uma geração nova). {RELOAD_HINT}",
+    ),
+    InvalidPostState: (409, f"Esta publicação já não aceita esta ação. {RELOAD_HINT}"),
+    InvalidComment: (422, "O comentário está vazio ou é demasiado longo."),
+    FeedbackError: (
+        422,
+        "Não foi possível guardar o feedback: confira o tipo, a data de validade e a nota.",
+    ),
     SessionNotFound: (404, NOT_FOUND_MESSAGE),
     ArtifactNotFound: (404, NOT_FOUND_MESSAGE),
     AssetNotFound: (404, NOT_FOUND_MESSAGE),
@@ -106,6 +146,12 @@ class _ErrorHandlers:
         logger.info("painel: formulario invalido %s", request.url.path)
         return self.respond(request, 422, str(exc))
 
+    async def invalid_edit(self, request: Request, exc: Exception) -> Response:
+        """Edicao recusada: mostra so os campos e tipos de erro (`violations`), nunca o texto."""
+        assert isinstance(exc, InvalidEdit)
+        logger.info("painel: edicao invalida %s", request.url.path)
+        return self.respond(request, 422, _edit_message(exc))
+
     async def validation(self, request: Request, exc: Exception) -> Response:
         """Parametros do pedido invalidos (ex.: id mal formado), sem detalhes."""
         return self.respond(request, 422, INVALID_REQUEST_MESSAGE)
@@ -130,6 +176,7 @@ def install_error_handlers(app: FastAPI, renderer: Renderer) -> None:
         app.add_exception_handler(exception_type, handlers.domain_error)
     app.add_exception_handler(InvalidForm, handlers.invalid_form)
     app.add_exception_handler(ImageRejected, handlers.invalid_form)
+    app.add_exception_handler(InvalidEdit, handlers.invalid_edit)
     app.add_exception_handler(RequestValidationError, handlers.validation)
     app.add_exception_handler(HTTPException, handlers.http)
     app.add_exception_handler(Exception, handlers.unexpected)
@@ -141,6 +188,14 @@ def _lookup(exc: Exception) -> tuple[int, str]:
         if exception_type in _RESPONSES:
             return _RESPONSES[exception_type]
     return 500, INTERNAL_MESSAGE
+
+
+def _edit_message(exc: InvalidEdit) -> str:
+    """`InvalidEdit.violations` cita so campos, tipos e contagens; sem violacoes, texto fixo."""
+    if not exc.violations:
+        return EDIT_REFUSED_MESSAGE
+    message = "A edição não é válida: " + "; ".join(exc.violations)
+    return message[:MAX_EDIT_MESSAGE_CHARS]
 
 
 def _http_message(exc: HTTPException) -> str:

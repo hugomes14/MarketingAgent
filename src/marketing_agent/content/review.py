@@ -29,6 +29,7 @@ from marketing_agent.content.review_records import (
     audit_edit,
     record_decision,
 )
+from marketing_agent.content.review_retry import retry_generation_in
 from marketing_agent.content.revision_store import kb_ref_ids, latest_revision, lock_post
 from marketing_agent.db.models import Post, PostRevision
 from marketing_agent.feedback.service import FeedbackChoice, FeedbackError, FeedbackService
@@ -204,6 +205,17 @@ class ReviewService:
                 now=self._clock.now(),
             )
             return revision.id
+
+    def retry_generation(self, brand_id: str, post_id: str, actor: str) -> None:
+        """Repete a geracao falhada (ou perdida) de uma publicacao, num so trabalho novo.
+
+        `PostNotFound` ou `InvalidPostState` (ver `retry_generation_in`); nada e gravado se recusa.
+        """
+        with self._session_factory.begin() as session:
+            post = lock_post(session, post_id)
+            if post is None or post.brand_id != brand_id:
+                raise PostNotFound
+            retry_generation_in(session, self._queue, post, actor, self._clock.now())
 
     def _open(
         self,

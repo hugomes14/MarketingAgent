@@ -1,11 +1,14 @@
 # Contexto de execucao
 
-- Timestamp: `2026-11-06T10:09:27+00:00` (reescrito; criado em `2026-11-02T12:25:40+00:00`)
+- Timestamp: `2026-11-10T10:00:00+00:00` (atualizado; reescrito em `2026-11-06T10:09:27+00:00`; criado em `2026-11-02T12:25:40+00:00`)
 - Autor: `agent`
 - Escopo: Estado atual do projeto Marketing AI Manager. A fonte de verdade e o plano mestre v2; este registo so aponta para ele e para o que falta.
 
 ## Estado observado
 
+- **Plano 02a (plano semanal de texto) implementado (Tarefas 1 a 12)** no ramo `agent/2026-11-09_plano02a` (um commit por tarefa; BASE `79abf24`), **a aguardar a revisao final do ramo e o PR unico**. Acrescenta: base de conhecimento (`kb`), plano semanal do Diretor (`planning`), fila Postgres e `marketing-agent worker` (`jobs`), pipeline Copywriter e Revisor (`content`), feedback (`feedback`) e as paginas `/base`, `/plano`, `/lote` e `/feedback`. Terceiro processo: o worker (painel + worker + Ollama). 1425 testes passam (`ruff`, `mypy src scripts` limpos); notas de execucao em `AgentDATA/docs/2026-11-09T14-07-58+00-00_plano_02a_plano_semanal_texto.md`. O fumo com o Ollama passou (registo em `AgentDATA/Knowledge/2026-11-10T10-00-00+00-00_ollama_teste_de_fumo_texto_semanal_e_gramatica_json_schema.md`) depois de corrigir dois limites do `json_schema` que faziam o Ollama cair. README, `.env.local.example` (rotas `diretor`, `copywriter` = `qwen2.5:14b`, `revisor` = `llama3.1:8b`) e `scripts/smoke_ollama.py` (base descartavel; ver `AgentDATA/tools/smoke_ollama.md`) atualizados na Tarefa 12.
+  - Limitacoes conhecidas (README): texto de uma edicao perdido num 422; semanas ISO passadas podem ser propostas (decisao de produto por tomar); `temporario` expira as 23:59:59 UTC; um so worker por base.
+  - O responsavel ainda tem de fazer a **semana real no browser** (M8), do plano a aprovacao.
 - **Tarefa 1 do Plano 01 concluida e integrada em `main`** (commits `2cf36ff`, `87aa100`, `a9b5563`). Remoto `origin` = `git@github.com:hugomes14/MarketingAgent.git` (SSH); `main` sincronizado com `origin/main`.
   - Contem: projeto Python 3.12 com `uv`, `config.py` (`Settings`, `RoleRoute`), `clock.py`, `secrets.py`, `compose.test.yaml`, `.env.example`, e a seccao "Desenvolvimento" do README.
   - Teve revisao da tarefa, re-revisao e revisao final do ramo, todas fechadas.
@@ -70,8 +73,24 @@ Resultado das revisoes; nenhum bloqueia a Tarefa 2. Quem os trata:
   - `.env.example` nao avisa que o python-dotenv altera caminhos Windows entre aspas duplas;
   - README sem `docker compose up -d --wait` nem nota sobre `UV_LINK_MODE=copy`.
 
+## Plano 02a: marcos (spec seccao 11) e como o responsavel verifica cada um
+
+Todos fecham com a suite verde (`uv run ruff check . && uv run ruff format --check . && uv run mypy src && uv run pytest`, com `TEST_DATABASE_URL` exportado).
+
+| Marco | Verificacao do responsavel |
+| --- | --- |
+| M1 Dados (migracao `0002`) | `uv run pytest tests/db`; `uv run marketing-agent migrate` na base de desenvolvimento termina sem erro |
+| M2 Base de conhecimento | `/base`: promover um topico do perfil, criar um preco com validade, tentar um sem validade (422), desativar um item |
+| M3 Plano semanal | `/plano`: propor com o Ollama, ver os slots e aprovar; `select count(*) from post` = numero de slots; repetir a aprovacao nao muda a contagem |
+| M4 Fila e worker | `uv run pytest tests/jobs`; matar o worker (`kill -9`) durante uma geracao, reiniciar e verificar uma so revisao por post |
+| M5 Texto revisto | Com o Ollama: aprovar um plano de 3 slots, correr o worker e ver 3 cartoes em `/lote/<semana>`; `uv run python scripts/smoke_ollama.py` regista tempos, voltas e saidas invalidas |
+| M6 Sessao semanal | `/lote/<semana>`: aprovar um, editar outro (estilo), pedir alteracoes num terceiro e ver a nova revisao gerada |
+| M7 Feedback em uso | `uv run pytest tests/e2e/test_weekly_text_flow.py` (o exemplo de estilo aparece em `llm.requests`); `/feedback`: desativar um exemplo |
+| M8 Fecho do 2A | `uv run pytest tests/e2e`; uma semana real feita no browser, do plano a aprovacao; revisao final do ramo sem achados Critical/Important em aberto |
+
 ## Proxima acao sugerida
 
+0. Plano 02a executado (a aguardar revisao final e PR): fazer M8 no browser e abrir o PR. Proximos planos: 02b (imagem), 02c (comparacao), 02d (oficina 3D).
 1. Plano 01 executado. Proximos passos: (a) passagem manual no browser (HTMX, `panel.js`, formularios; o ambiente dos agentes nao tem browser); (b) revisao final do ramo; (c) escrever o Plano 4 (3D) e depois o 2 (criacao) e o 3 (publicacao); (d) Plano 0 (Pi, Tailscale, backups) e executar o checklist de autenticacao. Pendentes do responsavel: validador aceita `facto` com origem `suposto`; validar adaptadores Anthropic e OpenAI com chaves reais; ajustar o prompt da entrevista (perguntas repetidas, `summary` vazio, criterio de "pronto para perfil").
 2. Notas a levar para as tarefas seguintes (resultado das revisoes da Tarefa 1):
    - Em Windows, despachos que instalem pacotes levam `UV_LINK_MODE=copy`. Em WSL2 nao e preciso.

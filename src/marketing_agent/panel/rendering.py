@@ -9,6 +9,7 @@ from jinja2 import Environment, FileSystemLoader, StrictUndefined, select_autoes
 
 from marketing_agent.panel.auth import TailscaleUser
 from marketing_agent.panel.csrf import csrf_token_for
+from marketing_agent.panel.labels import install_label_filters
 
 PANEL_DIR: Final = Path(__file__).resolve().parent
 TEMPLATES_DIR: Final = PANEL_DIR / "templates"
@@ -38,6 +39,18 @@ _ORIGIN_LABELS: Final = {
     "verificado": "Verificado",
     "suposto": "Suposto",
 }
+
+
+_KIND_LABELS: Final = {
+    "oferta": "Ofertas",
+    "preco": "Preços",
+    "horario": "Horários",
+    "contacto": "Contactos",
+    "prova": "Provas",
+    "politica": "Políticas",
+    "outro": "Outros",
+}
+_CHANNEL_LABELS: Final = {"facebook": "Facebook", "instagram": "Instagram"}
 
 
 _TOPIC_LABELS: Final = {
@@ -74,6 +87,14 @@ def _origin_label(origin: str) -> str:
     return _ORIGIN_LABELS.get(origin, origin)
 
 
+def _kind_label(kind: str) -> str:
+    return _KIND_LABELS.get(kind, kind)
+
+
+def _channel_label(channel: str) -> str:
+    return _CHANNEL_LABELS.get(channel, channel)
+
+
 def _topic_label(topic: str) -> str:
     """Etiqueta em portugues de um topico do mapa; um desconhecido mostra-se sem sublinhados."""
     return _TOPIC_LABELS.get(topic) or topic.replace("_", " ").capitalize()
@@ -89,8 +110,11 @@ def build_environment() -> Environment:
     environment.filters["usd"] = _usd
     environment.filters["state_label"] = _state_label
     environment.filters["topic_label"] = _topic_label
+    environment.filters["kind_label"] = _kind_label
+    environment.filters["channel_label"] = _channel_label
     environment.filters["gap_status"] = _gap_status
     environment.filters["origin_label"] = _origin_label
+    install_label_filters(environment)
     return environment
 
 

@@ -1,5 +1,6 @@
 """Esquema de saida do plano semanal: slots de publicacao com tema, pilar e justificacao."""
 
+import re
 from datetime import date
 from typing import Annotated, Literal
 
@@ -7,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 Canal = Literal["facebook", "instagram"]
 WEEK_PATTERN = r"^\d{4}-W\d{2}$"
+_WEEK_RE = re.compile(WEEK_PATTERN)
 MAX_KB_REFS_PER_SLOT = 10
 # Id de item da base (UUID de 36 caracteres); o teto limita o que um erro pode ecoar de volta.
 KbRef = Annotated[str, Field(min_length=1, max_length=64)]
@@ -40,6 +42,15 @@ class PlanoSemanal(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    semana: str = Field(pattern=WEEK_PATTERN)
+    semana: str
     slots: list[PlanSlot] = Field(min_length=1, max_length=14)
     suposicoes: list[str]
+
+    @field_validator("semana")
+    @classmethod
+    def _week_has_iso_shape(cls, value: str) -> str:
+        # Validador em codigo e nao `Field(pattern=...)`: o `\d` do `pattern` vai para o esquema
+        # JSON enviado ao modelo e faz o runner do Ollama (llama.cpp) cair com um 500.
+        if not _WEEK_RE.fullmatch(value):
+            raise ValueError("semana fora do formato AAAA-Www")
+        return value

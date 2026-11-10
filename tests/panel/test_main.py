@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from marketing_agent.db.models import AgentRun, Brand, CostReservation
 from marketing_agent.panel.main import create_app_from_env
-from marketing_agent.startup import StartupError, director_max_duration_s
+from marketing_agent.startup import StartupError, director_max_duration_s, worker_stale_after
 
 Factory = sessionmaker[Session]
 LOGIN = "dono@local"
@@ -72,6 +72,17 @@ def test_app_answers_401_without_header_and_200_with_it(
     assert client.get("/").status_code == 401
     assert client.get("/", headers={"Tailscale-User-Login": LOGIN}).status_code == 200
     assert client.get("/", headers={"Tailscale-User-Login": "outro@x"}).status_code == 403
+
+
+def test_factory_wires_the_content_pages_to_real_services(
+    environment: Path, session_factory: Factory
+) -> None:
+    add_brand(session_factory)
+    client = TestClient(create_app_from_env(), client=("127.0.0.1", 5000))
+    headers = {"Tailscale-User-Login": LOGIN}
+    assert client.get("/base", headers=headers).status_code == 200
+    assert "Ainda não há itens" in client.get("/base", headers=headers).text
+    assert "Propor plano" in client.get("/", headers=headers).text
 
 
 def test_untrusted_peer_is_denied_even_with_forged_forwarding(
@@ -195,14 +206,21 @@ def test_no_error_message_contains_secret_contents(
     assert KEY_SECRET not in error_text(exc_info) and CSRF_SECRET not in error_text(exc_info)
 
 
-def test_startup_runs_recover_stale_with_largest_spec_duration(
+def test_startup_recovers_reservations_older_than_the_shared_worker_threshold(
     environment: Path, session_factory: Factory, caplog: pytest.LogCaptureFixture
 ) -> None:
     brand_id = add_brand(session_factory)
     now = datetime.now(UTC)
+    stale_after = worker_stale_after()  # o mesmo limiar do worker: um so valor para os dois
+    assert stale_after > timedelta(seconds=director_max_duration_s())
     ids = {
-        "old": seed_reservation(session_factory, brand_id, now - timedelta(seconds=241)),
-        "recent": seed_reservation(session_factory, brand_id, now - timedelta(seconds=200)),
+        "old": seed_reservation(
+            session_factory, brand_id, now - stale_after - timedelta(seconds=5)
+        ),
+        # Mais velha que a duracao maxima do Diretor, mas ainda pode ser de uma chamada viva.
+        "recent": seed_reservation(
+            session_factory, brand_id, now - timedelta(seconds=director_max_duration_s() + 30)
+        ),
     }
     with caplog.at_level("INFO"):
         create_app_from_env()

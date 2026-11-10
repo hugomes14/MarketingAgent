@@ -8,6 +8,17 @@
 </form>
 {% endmacro %}
 
+{# Aprovar o plano; com `needs_confirmation`, a caixa e obrigatoria (o servico volta a exigi-la). #}
+{% macro approve_form(url, token, needs_confirmation) %}
+<form method="post" action="{{ url }}" class="em-linha">
+  {{ csrf_field(token) }}
+  {% if needs_confirmation %}
+  <label><input type="checkbox" name="confirm_cancel" value="1" required> Confirmo que as publicações aprovadas ou em revisão listadas acima ficam canceladas.</label>
+  {% endif %}
+  <button type="submit">Aprovar</button>
+</form>
+{% endmacro %}
+
 {% macro reject_form(url, token) %}
 <form method="post" action="{{ url }}" class="rejeitar">
   {{ csrf_field(token) }}
@@ -19,3 +30,19 @@
 {% endmacro %}
 
 {% macro state_badge(state) %}<span class="etiqueta etiqueta-{{ state }}">{{ state|state_label }}</span>{% endmacro %}
+
+{# Tipo de feedback: rádios sem opção pré-escolhida. A validade só existe onde o serviço a aceita. #}
+{% macro feedback_fields(post_id, form, choices, has_expiry) %}
+<fieldset class="feedback">
+  <legend>Que tipo de feedback é este?</legend>
+  {% for choice in choices %}
+  <label><input type="radio" name="feedback" value="{{ choice }}" required> {{ choice|feedback_label }}</label>
+  {% endfor %}
+  {% if has_expiry %}
+  <label for="expira-{{ form }}-{{ post_id }}">Válido até (só para «Temporário»)</label>
+  <input type="date" id="expira-{{ form }}-{{ post_id }}" name="expira_em">
+  {% endif %}
+  <label for="nota-{{ form }}-{{ post_id }}">Nota (opcional)</label>
+  <input type="text" id="nota-{{ form }}-{{ post_id }}" name="nota" maxlength="500" autocomplete="off">
+</fieldset>
+{% endmacro %}

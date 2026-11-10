@@ -59,9 +59,13 @@ Escreve na base de `DATABASE_URL` (marca, precos, reservas, esquema); `serve` e 
 portas em loopback; o arranque do painel marca reservas antigas como `unknown_outcome`. O `worker`
 grava `post_revision`, `agent_run` e custos; ao arrancar devolve a `queued` os jobs `running` com
 lease vencida e marca como `unknown_outcome` as reservas abertas ha mais do que o maior
-`max_duration_s` dos specs. Um job em curso termina antes de o worker sair (a lease dos jobs e
-3 x (Copywriter + Revisor) + 60 s = 19 min com os specs atuais); se o processo for morto a meio,
-o job volta a fila no arranque seguinte e nao ha revisao duplicada.
+`max_duration_s` dos specs (o limiar do worker e o maior `max_duration_s` mais uma chamada LLM:
+360 s). Um job em curso termina antes de o worker sair (a lease dos jobs e
+3 x (Copywriter 180 + Revisor 180 + 2 x 120 s de timeout de uma chamada LLM) + 60 s = 1860 s,
+31 min: o motor so verifica a duracao antes de cada passo, por isso uma chamada pode exceder o
+`max_duration_s`); se o processo for morto a meio, o job volta a fila quando a lease vence (no
+arranque ou numa iteracao ociosa) e nao ha revisao duplicada; um job `dead` deixa o motivo
+(`last_error`, so a classe do erro) no post.
 
 ## Dependencias
 

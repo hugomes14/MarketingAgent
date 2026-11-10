@@ -1,0 +1,60 @@
+{# Acoes de um cartao: so as que o servico aceitaria. Cada formulario leva a revisao que se ve. #}
+{% import "_macros.html" as ui %}
+{% set rev = card.revision %}
+{% if card.can_decide or card.can_edit %}
+<div class="acoes">
+  {% if card.can_decide %}
+  <form method="post" action="/post/{{ card.id }}/aprovar" class="em-linha">
+    {{ ui.csrf_field(csrf_token) }}
+    <input type="hidden" name="revision_id" value="{{ rev.id }}">
+    <button type="submit">Aprovar</button>
+  </form>
+  {% endif %}
+
+  {% if card.can_edit %}
+  <details>
+    <summary>Editar</summary>
+    <form method="post" action="/post/{{ card.id }}/editar">
+      {{ ui.csrf_field(csrf_token) }}
+      <input type="hidden" name="base_revision_id" value="{{ rev.id }}">
+      <label for="legenda-{{ card.id }}">Legenda</label>
+      <textarea id="legenda-{{ card.id }}" name="legenda" rows="6" maxlength="10000" required>{{ rev.caption }}</textarea>
+      <label for="hashtags-{{ card.id }}">Hashtags (separadas por espaços)</label>
+      <input type="text" id="hashtags-{{ card.id }}" name="hashtags" value="{{ rev.hashtags|join(' ') }}" autocomplete="off">
+      <label for="apelo-{{ card.id }}">Apelo à ação</label>
+      <input type="text" id="apelo-{{ card.id }}" name="apelo_a_acao" value="{{ rev.call_to_action or '' }}" maxlength="300" autocomplete="off">
+      <label for="alt-{{ card.id }}">Texto alternativo</label>
+      <input type="text" id="alt-{{ card.id }}" name="alt_text" value="{{ rev.alt_text or '' }}" maxlength="500" autocomplete="off">
+      <p class="nota">As alegações mantêm-se as desta revisão.</p>
+      {{ ui.feedback_fields(card.id, "editar", edit_choices, true) }}
+      <button type="submit">Guardar edição</button>
+    </form>
+  </details>
+  {% endif %}
+
+  {% if card.can_request_changes %}
+  <details>
+    <summary>Pedir alterações</summary>
+    <form method="post" action="/post/{{ card.id }}/alteracoes">
+      {{ ui.csrf_field(csrf_token) }}
+      <input type="hidden" name="revision_id" value="{{ rev.id }}">
+      <label for="comentario-{{ card.id }}">O que deve mudar?</label>
+      <textarea id="comentario-{{ card.id }}" name="comentario" rows="3" maxlength="{{ max_comment_chars }}" required></textarea>
+      <button type="submit">Pedir nova versão</button>
+    </form>
+  </details>
+  {% endif %}
+
+  {% if card.can_decide %}
+  <details>
+    <summary>Rejeitar</summary>
+    <form method="post" action="/post/{{ card.id }}/rejeitar">
+      {{ ui.csrf_field(csrf_token) }}
+      <input type="hidden" name="revision_id" value="{{ rev.id }}">
+      {{ ui.feedback_fields(card.id, "rejeitar", reject_choices, false) }}
+      <button type="submit" class="perigo">Rejeitar</button>
+    </form>
+  </details>
+  {% endif %}
+</div>
+{% endif %}

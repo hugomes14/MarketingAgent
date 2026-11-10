@@ -12,9 +12,18 @@ from fastapi.staticfiles import StaticFiles
 from marketing_agent.budget.controller import BudgetController
 from marketing_agent.config import Settings
 from marketing_agent.interview.service import InterviewService
-from marketing_agent.panel import routes_home, routes_interview, routes_media, routes_strategy
+from marketing_agent.panel import (
+    routes_batch,
+    routes_feedback,
+    routes_home,
+    routes_interview,
+    routes_kb,
+    routes_media,
+    routes_plan,
+    routes_strategy,
+)
 from marketing_agent.panel.auth import _parse_networks
-from marketing_agent.panel.context import MediaServices, PanelContext
+from marketing_agent.panel.context import ContentServices, MediaServices, PanelContext
 from marketing_agent.panel.csrf import MIN_SECRET_BYTES
 from marketing_agent.panel.errors import install_error_handlers
 from marketing_agent.panel.hosts import AllowedHostsMiddleware, normalize_allowed_hosts
@@ -33,6 +42,7 @@ def create_app(
     *,
     brand_id: str,
     queries: PanelQueries,
+    content: ContentServices,
     media: MediaServices,
 ) -> FastAPI:
     """Monta o painel; falha no arranque se a configuracao de seguranca for invalida.
@@ -50,14 +60,31 @@ def create_app(
     app.state.csrf_secret = csrf_secret
     renderer = Renderer(csrf_secret)
     app.state.panel = PanelContext(
-        interview, strategy, budget, queries, renderer, brand_id, settings.max_message_chars, media
+        interview,
+        strategy,
+        budget,
+        queries,
+        renderer,
+        brand_id,
+        settings.max_message_chars,
+        content,
+        media,
     )
     # Ordem: o ultimo adicionado e o mais externo. Os cabecalhos de seguranca envolvem o filtro
     # de Host, para tambem cobrirem as suas respostas 400.
     app.add_middleware(AllowedHostsMiddleware, allowed_hosts=settings.panel_allowed_hosts)
     app.add_middleware(SecurityHeadersMiddleware)
     install_error_handlers(app, renderer)
-    for module in (routes_home, routes_interview, routes_media, routes_strategy):
+    for module in (
+        routes_home,
+        routes_interview,
+        routes_media,
+        routes_strategy,
+        routes_kb,
+        routes_plan,
+        routes_batch,
+        routes_feedback,
+    ):
         app.include_router(module.router)
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
     return app

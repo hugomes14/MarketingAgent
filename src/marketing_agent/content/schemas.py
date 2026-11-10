@@ -6,7 +6,7 @@ contexto da chamada) verificam-se em `content.validation`.
 
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field
 
 from marketing_agent.planning.schemas import KbRef
 
@@ -33,6 +33,15 @@ MAX_CALL_TO_ACTION_CHARS = 300
 MAX_ALT_TEXT_CHARS = 500
 
 
+def _check_caption_length(value: str) -> str:
+    # Validador em codigo e nao `max_length`: um `maxLength` de milhares no esquema JSON enviado
+    # ao modelo faz o runner do Ollama (llama.cpp) cair com um 500 ao montar a gramatica (com
+    # 1500 funciona, com 2200 nao). Os limites por canal sao verificados em `validate_draft`.
+    if len(value) > MAX_SCHEMA_CAPTION_CHARS:
+        raise ValueError("legenda acima do teto do esquema")
+    return value
+
+
 class Alegacao(BaseModel):
     """Afirmacao factual da legenda e o item da base que a apoia (`None` = sem apoio)."""
 
@@ -47,7 +56,7 @@ class RascunhoTexto(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    legenda: str = Field(min_length=1, max_length=MAX_SCHEMA_CAPTION_CHARS)
+    legenda: Annotated[str, Field(min_length=1), AfterValidator(_check_caption_length)]
     hashtags: list[Hashtag] = Field(max_length=MAX_SCHEMA_HASHTAGS)
     apelo_a_acao: str = Field(max_length=MAX_CALL_TO_ACTION_CHARS)
     alt_text: str = Field(max_length=MAX_ALT_TEXT_CHARS)

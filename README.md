@@ -1,9 +1,13 @@
 # Marketing AI Manager
 
 Agente de marketing para uso interno que planeia, executa e audita trabalho de marketing com
-orçamento controlado. Esta primeira fase (Plano 01) entrega o **núcleo**: o Diretor conduz uma
-entrevista de descoberta, gera o perfil da marca, propõe um diagnóstico e uma estratégia, e cada
-decisão fica à espera da aprovação explícita do responsável no painel web.
+orçamento controlado. O **núcleo** (Plano 01): o Diretor conduz uma entrevista de descoberta,
+gera o perfil da marca, propõe um diagnóstico e uma estratégia, e cada decisão fica à espera da
+aprovação explícita do responsável no painel web. O **plano semanal de texto** (Plano 02a): uma
+base de conhecimento, um plano semanal proposto pelo Diretor, a geração do texto de cada
+publicação em segundo plano (Copywriter e Revisor, num processo `worker`) e uma sessão semanal
+de revisão no painel (aprovar, editar, pedir alterações, rejeitar), com feedback que volta aos
+prompts seguintes. Ainda **não publica** nada nem gera imagens.
 
 Princípios: o texto do utilizador é dado, nunca instrução; só o código decide estados de
 artefactos; todo o custo de LLM passa por um registo único (reserva, acerto e auditoria); o
@@ -14,20 +18,21 @@ nunca em logs, mensagens de erro ou no `.env`.
 
 - Python 3.12 e [uv](https://docs.astral.sh/uv/).
 - Docker (ou um Postgres 17 próprio) para a base de dados.
-- Para correr com um modelo local: [Ollama](https://ollama.com) com o modelo `qwen2.5:14b`
-  (ou `llama3.1:8b`). Para usar modelos na nuvem: ficheiros com chaves da Anthropic e/ou da OpenAI.
+- Para correr com modelos locais: [Ollama](https://ollama.com) com `qwen2.5:14b` (Diretor e
+  Copywriter) e `llama3.1:8b` (Revisor, modelo distinto de propósito). Para usar modelos na
+  nuvem: ficheiros com chaves da Anthropic e/ou da OpenAI.
 
 ## Estrutura do repositório
 
 | Caminho | Conteúdo |
 | --- | --- |
-| `src/marketing_agent/` | Código: `config`, `secrets`, `clock`, `db`, `budget`, `llm`, `harness`, `artifacts`, `interview`, `strategy`, `agents/diretor`, `panel`, `cli` |
+| `src/marketing_agent/` | Código: `config`, `secrets`, `clock`, `db`, `budget`, `llm`, `harness`, `artifacts`, `interview`, `strategy`, `kb`, `planning`, `jobs` (fila e worker), `content` (pipeline Copywriter e Revisor), `feedback`, `agents/{diretor,copywriter,revisor}`, `panel`, `cli` |
 | `src/marketing_agent/panel/` | Painel FastAPI (autenticação por proxy, CSRF, páginas) e a fábrica `panel.main` |
 | `migrations/`, `alembic.ini` | Migrações da base (Alembic) |
 | `config/` | Preços dos modelos (`model_prices.yaml` e `model_prices.local.yaml`) |
 | `compose.test.yaml`, `compose.dev.yaml` | Postgres de teste (efémero) e de desenvolvimento (persistente) |
 | `.env.example`, `.env.local.example` | Modelos de configuração (valores fictícios) |
-| `scripts/smoke_ollama.py` | Teste de fumo do Diretor contra o Ollama |
+| `scripts/smoke_ollama.py` | Teste de fumo do texto semanal contra o Ollama (base descartável; ver "Teste de fumo") |
 | `tests/` | Testes unitários, do painel e ponta a ponta (`tests/e2e/`) |
 | `AGENTS.md`, `AgentDATA/` | Regras de trabalho do agente de código, procedimentos, conhecimento e contexto |
 
@@ -66,8 +71,17 @@ Tudo corre em `127.0.0.1`. Execute a partir da raiz do repositório.
    uv run python -c "import secrets; print(secrets.token_urlsafe(48))" > AgentDATA/secrets/panel_csrf_secret
    ```
 
-4. **Ollama**: confirme que está a servir em `http://127.0.0.1:11434` e que o modelo existe
-   (`ollama pull qwen2.5:14b`).
+4. **Ollama**: confirme que está a servir em `http://127.0.0.1:11434` e que os dois modelos
+   existem (`ollama pull qwen2.5:14b` e `ollama pull llama3.1:8b`). O `.env.local.example` liga
+   `diretor` e `copywriter` ao primeiro e `revisor` ao segundo.
+
+   **Contexto do Ollama**: o contexto por omissão é de 4096 tokens e o Ollama **trunca em
+   silêncio** os prompts mais longos (perfil, base, exemplos e brief juntos podem ultrapassá-lo).
+   O adaptador usa o endpoint compatível com a OpenAI, onde não é possível definir `num_ctx` por
+   pedido; defina-o no servidor, por exemplo `OLLAMA_CONTEXT_LENGTH=8192 ollama serve`, ou num
+   `Modelfile` com `PARAMETER num_ctx 8192` (`ollama create`). Do lado do painel, cada campo dos
+   exemplos de feedback entra no prompt do Copywriter com no máximo 1500 caracteres
+   (`…[truncado]`); o que está guardado não muda.
 
 5. **Migrações, preços e marca**:
 
@@ -86,7 +100,20 @@ Tudo corre em `127.0.0.1`. Execute a partir da raiz do repositório.
    uv run marketing-agent serve
    ```
 
-7. **Proxy de desenvolvimento** (noutro terminal), que faz o papel do `tailscale serve`:
+7. **Worker** (outro terminal; é o terceiro processo, a par do painel e do Ollama): gera o texto
+   das publicações do plano aprovado, um trabalho de cada vez. Sem ele o plano aprova-se, mas
+   nenhuma publicação sai de "por gerar".
+
+   ```bash
+   uv run marketing-agent worker
+   ```
+
+   Pára com Ctrl+C ou `SIGTERM` (o trabalho em curso termina primeiro; um segundo Ctrl+C
+   interrompe-o). Um trabalho interrompido **não** volta à fila logo: recupera-se quando a sua
+   lease vence (1860 s, cerca de 31 min, depois de reclamado), no arranque seguinte do worker ou
+   numa iteração ociosa (`requeue_expired`). Corra **um** worker (um só processo) por base.
+
+8. **Proxy de desenvolvimento** (noutro terminal), que faz o papel do `tailscale serve`:
 
    ```bash
    uv run marketing-agent dev-proxy --login dono@local
@@ -95,11 +122,103 @@ Tudo corre em `127.0.0.1`. Execute a partir da raiz do repositório.
    O painel só responde a pedidos cujo `Host` esteja em `PANEL_ALLOWED_HOSTS` (por omissão
    `127.0.0.1` e `localhost`, sem porta); o `dev-proxy` só aceita `Host` de loopback (421).
 
-8. Abra <http://127.0.0.1:8001>. O login `dono@local` tem de estar em `PANEL_ALLOWED_LOGINS`.
+9. Abra <http://127.0.0.1:8001>. O login `dono@local` tem de estar em `PANEL_ALLOWED_LOGINS`.
 
-A primeira pergunta e cada resposta chamam o modelo local, por isso podem demorar. Se o
+A primeira pergunta e cada resposta chamam o modelo local, por isso podem demorar (a geração de
+um texto, com Copywriter e Revisor, pode levar vários minutos por publicação num CPU). Se o
 processo morrer a meio de uma chamada, a reserva fica `unknown_outcome` (conta no orçamento como
 desfecho desconhecido) e a mesma chave de formulário nunca repete a chamada.
+
+## Sessão semanal de texto (do plano à aprovação)
+
+Percurso no painel, depois de ter o perfil, o diagnóstico e a estratégia aprovados:
+
+1. **`/base`** (base de conhecimento): promova tópicos do perfil, ou crie itens manuais (preços,
+   ofertas, horários, provas...). Um **preço exige validade** (`valid_until` depois de
+   `valid_from`) e moeda; sem validade o painel responde 422. Desativar um item faz com que
+   deixe de contar. Só entram no texto os itens ativos e válidos na data da publicação.
+2. **`/plano`**: "Propor plano da semana" corre o Diretor (por omissão para a semana ISO
+   seguinte; o campo `semana` aceita `AAAA-Www`). O plano respeita `PLAN_MAX_POSTS_PER_WEEK` e
+   `PLAN_MAX_POSTS_PER_DAY`, as datas da semana e a base de conhecimento; uma violação conta
+   como saída inválida e o Diretor repete (até 3 vezes). **`/plano/{id}`** mostra os slots.
+   Aprovar cria, numa só transação, uma publicação e um trabalho por slot e redireciona para o
+   lote; aprovar o mesmo plano outra vez dá 409 e não duplica nada.
+
+   Se a semana **já tem publicações**, a página do plano submetido mostra primeiro uma
+   **previsão** (lugar a lugar: tema antigo → novo, estado e o que acontece: nova, reescrita,
+   mantida, mantida com o texto antigo porque o plano mostra outro conteúdo, ou cancelada). Os
+   lugares são posicionais (`AAAA-Www-N`): um plano mais curto cancela as publicações dos lugares
+   que saem. Cancelar publicações **aprovadas ou por rever** exige marcar a caixa de confirmação
+   (`confirm_cancel`); sem ela o servidor responde 409 e não grava nada. A verificação repete-se
+   na própria transação da aprovação, por isso a previsão nunca autoriza nada por si.
+3. **O worker gera o texto** de cada publicação: Copywriter, validação em código (limite do
+   canal, preços, alegações ligadas à base) e Revisor, com no máximo 2 voltas de correção.
+   No fim a publicação fica "por rever" (`in_review`).
+4. **`/lote/{semana}`** (`/lote` leva à semana com publicações por rever): um cartão por
+   publicação, com o texto, as alegações e a origem na base, o parecer do Revisor e as voltas.
+
+Em cada cartão há quatro ações de revisão (mais «Gerar de novo», abaixo); todas dizem sobre que
+revisão decidem e, se entretanto surgiu outra (uma edição noutra aba, uma geração nova), recusam
+com 409 ("Recarregue a página"):
+
+- **Aprovar** (`POST /post/{id}/aprovar`): só vale para a revisão **mais recente**. Nada no
+  sistema aprova uma publicação sem este pedido do responsável.
+- **Editar** (`POST /post/{id}/editar`): cria uma revisão nova do responsável (a aprovação da
+  anterior deixa de valer) e **exige o tipo de feedback**, sem valor por omissão.
+- **Pedir alterações** (`POST /post/{id}/alteracoes`): o comentário vai para o Copywriter como
+  dado (nunca como instrução) e o worker gera uma revisão nova; fica indisponível enquanto há
+  uma geração em curso.
+- **Rejeitar** (`POST /post/{id}/rejeitar`): estado final; também exige o tipo de feedback.
+- **Gerar de novo** (`POST /post/{id}/gerar`): só quando a geração falhou ou se perdeu (por
+  gerar, ou em geração com motivo de falha) e não há trabalho ativo. Enfileira um trabalho novo
+  (um pedido de alterações que falhou repete-se com o mesmo comentário) e limpa o motivo da
+  falha; dois cliques seguidos geram um só trabalho.
+
+### Feedback
+
+| Tipo | Efeito |
+| --- | --- |
+| `estilo` | O par antes/depois entra nos prompts seguintes do Copywriter (até 5, os mais recentes) |
+| `negativo` | O texto entra como exemplo a evitar (até 3) |
+| `correcao_factual` | Fica guardado (para sugerir um item da base); não entra no prompt |
+| `temporario` | Fica guardado com validade; **só existe ao editar** (rejeitar não o oferece). Expira às **23:59:59 UTC** do dia escolhido (que não é a meia-noite de Lisboa) |
+| `nao_usar` | Não grava nada |
+
+Só entram nos prompts os exemplos ativos e não expirados. **`/feedback`** lista-os e permite
+desativar (`POST /feedback/{id}/desativar`; um id desconhecido ou de outra marca dá 422).
+
+### Atualização automática do lote
+
+Enquanto houver publicações por gerar ou a gerar, o lote pede `/lote/{semana}/estado` de 5 em
+5 segundos (HTMX) e troca os cartões. Quando nada está a ser gerado o fragmento deixa de levar
+`hx-trigger` e a atualização para sozinha. Para não apagar o que o responsável escreve, a troca
+é **saltada** (e tenta-se no ciclo seguinte) se houver um painel de edição aberto ou um campo
+alterado.
+
+### O que o cartão sinaliza
+
+- **"sem apoio válido em AAAA-MM-DD"**: a alegação cita um item da base que, nessa data da
+  publicação, já não está ativo, já caducou ou nem fazia parte da seleção do plano. O texto foi
+  gerado com um item válido; reveja o preço antes de aprovar, ou peça alterações.
+- **"A geração falhou (Classe)"**: o trabalho esgotou as 3 tentativas (`dead`) e o motivo (só o
+  nome da classe do erro, nunca texto do modelo) ficou em `last_error` na publicação, que
+  continua "em geração" sem polling. Use **«Gerar de novo»** no cartão para repetir só essa
+  publicação (também aparece numa publicação "por gerar" cujo trabalho se perdeu); se já existe
+  texto, pode-se editá-lo. Reaprovar o plano da semana também regenera as publicações iguais sem
+  trabalho ativo, mas passa pela previsão acima.
+
+### Fila, worker e leases
+
+O trabalho `generate_post` é reclamado com uma **lease de 1860 s (31 min)** =
+3 × (Copywriter 180 s + Revisor 180 s + 2 × 120 s de tempo máximo de uma chamada LLM) + 60 s:
+um trabalho faz até 3 passagens Copywriter+Revisor, e o motor só verifica a duração máxima
+**antes** de cada passo, por isso uma chamada que começa perto do limite ainda pode correr mais
+120 s. Com uma lease mais curta outro worker reclamaria um trabalho ainda vivo. Se o worker for
+morto a meio, o trabalho fica como estava até a lease vencer (31 min) e só então volta à fila,
+no arranque seguinte do worker ou numa iteração ociosa (`requeue_expired`); não há revisão
+duplicada. Use **um** worker (um só processo) por base. O worker e o painel marcam como
+`unknown_outcome`, ao arrancar, as reservas abertas há mais de 360 s (`worker_stale_after()`, o
+mesmo limiar nos dois processos).
 
 ## Comandos
 
@@ -110,10 +229,11 @@ desfecho desconhecido) e a mesma chave de formulário nunca repete a chamada.
 | `recover-reservations --older-than-minutes N` | Marca como `unknown_outcome` as reservas abertas há mais de N minutos |
 | `migrate` | Aplica as migrações (`upgrade head`) na base de `DATABASE_URL` |
 | `serve [--host 127.0.0.1] [--port 8000]` | Serve o painel com o uvicorn (recusa `FORWARDED_ALLOW_IPS` e hosts fora do loopback) |
+| `worker` | Processa a fila de geração de texto (Copywriter e Revisor) até `SIGINT`/`SIGTERM`; exige as rotas `copywriter` e `revisor` e recusa o fornecedor `fake` |
 | `dev-proxy --login LOGIN [--name NOME] [--listen 127.0.0.1:8001] [--upstream 127.0.0.1:8000]` | Só desenvolvimento: proxy local que injeta a identidade |
 
-Códigos de saída: `0` sucesso, `2` erro de uso ou de configuração (uma linha em stderr), `1`
-erro inesperado. O arranque do painel marca como `unknown_outcome` as reservas abertas há mais
+Códigos de saída: `0` sucesso (também no `worker` parado por sinal), `2` erro de uso ou de
+configuração (uma linha em stderr), `1` erro inesperado. O arranque do painel marca como `unknown_outcome` as reservas abertas há mais
 do que o maior `max_duration_s` dos specs do Diretor. Equivalente direto ao `serve`:
 `uvicorn --factory marketing_agent.panel.main:create_app_from_env --no-proxy-headers`.
 
@@ -122,7 +242,10 @@ do que o maior `max_duration_s` dos specs do Diretor. Equivalente direto ao `ser
 Copie `.env.example` (ou `.env.local.example`) para `.env`. O `.env` contém apenas campos de
 `Settings`: uma chave desconhecida (por exemplo `ANTHROPIC_API_KEY` ou `TEST_DATABASE_URL`) faz o
 arranque falhar, sem repetir o valor. `DATABASE_URL` é obrigatório e não tem valor por omissão.
-Campos compostos (`ROLE_ROUTES`, `BUDGET_WARN_PERCENTS`, `PANEL_*`) são JSON. As chaves de API e
+Campos compostos (`ROLE_ROUTES`, `BUDGET_WARN_PERCENTS`, `PANEL_*`) são JSON. `ROLE_ROUTES`
+tem uma rota por papel: `diretor` (painel), e `copywriter` e `revisor` (worker). O Revisor deve
+usar um modelo diferente do Copywriter. `PLAN_MAX_POSTS_PER_WEEK` (5) e `PLAN_MAX_POSTS_PER_DAY`
+(1) limitam o plano do Diretor. As chaves de API e
 o segredo CSRF vão em ficheiros apontados por `ANTHROPIC_API_KEY_FILE`, `OPENAI_API_KEY_FILE` e
 `PANEL_CSRF_SECRET_FILE` (o segredo CSRF exige pelo menos 32 caracteres). A rota `fake` só existe
 nos testes e o `serve` recusa-a.
@@ -144,7 +267,23 @@ uv run ruff check . && uv run ruff format --check . && uv run mypy src && uv run
 ```
 
 `tests/e2e/` cobre o percurso completo pelo painel (entrevista até estratégia ativa), a
-referência mensal e a recuperação após uma morte do processo.
+referência mensal, a recuperação após uma morte do processo e o **fluxo semanal de texto**
+(`test_weekly_text_flow.py`: plano, worker, lote, aprovar, editar com feedback e pedir alterações,
+com um LLM falso).
+
+### Teste de fumo com o Ollama (fora da suite)
+
+```bash
+uv run python scripts/smoke_ollama.py --posts 3     # --help descreve todas as opções
+```
+
+Corre o percurso real (entrevista, estratégia, item de preço, plano, worker uma vez, lote) contra
+o Ollama e imprime o tempo de cada passo, as voltas do Revisor e as saídas inválidas por papel.
+**Usa uma base descartável** (`marketing_agent_smoke_<aleatório>`) criada e apagada no Postgres de
+teste (porta 5433) e recusa as bases de desenvolvimento (porta 5434, base `marketing_agent`) e
+do pytest. Com `--database-url` só aceita uma base cujo **nome** comece por
+`marketing_agent_smoke_` (nunca a apaga e não assume que está vazia). Se o Ollama estiver em baixo ou faltar um modelo, termina com código 3 e uma mensagem
+fixa; nunca descarrega modelos. Pode levar bastante tempo com modelos locais.
 
 ## Segurança
 
@@ -172,8 +311,27 @@ conhecimento, contexto e registos ficam em [`AgentDATA/`](AgentDATA/). Detalhes 
 
 ## O que ainda não está feito
 
-- Oficina 3D (Plano 4), publicação (Plano 3), revisão mensal, KB e plano semanal (Plano 2) e
-  triagem (Plano 5).
+- Imagem (Plano 02b), comparação de variantes (02c), oficina 3D (02d/Plano 4), publicação
+  (Plano 3), revisão mensal e triagem (Plano 5). O 2A só produz e aprova **texto**.
 - Verificação no browser: as páginas do painel só foram exercitadas por testes de HTTP.
+- Limitações conhecidas do plano semanal de texto:
+  - se uma edição for recusada com 422 (por exemplo, hashtags a mais), o texto escrito perde-se
+    (a página de erro é genérica); o botão Voltar do browser recupera-o;
+  - o painel deixa propor semanas ISO já passadas (gasta orçamento; decisão de produto por
+    tomar);
+  - o feedback `temporario` aceita qualquer data futura e termina às 23:59:59 UTC;
+  - um lugar `rejected` nunca é regenerado por um plano novo: as chaves dos lugares são
+    posicionais, por isso a publicação rejeitada fica como está (o plano novo pode mostrar outro
+    tema nesse lugar; a previsão assinala-o). O Diretor também ainda não vê as publicações já
+    decididas da semana ao propor um plano novo (seguimento);
+  - um só worker (um só processo) por base; o painel e o worker são processos separados que
+    partilham a base;
+  - a página do lote não mostra se o worker está a correr: sem ele as publicações ficam "por
+    gerar" indefinidamente;
+  - a base de conhecimento não tem ação de editar: desativar e voltar a acrescentar o mesmo item
+    no mesmo dia colide na restrição UNIQUE (mude a chave ou a data de início);
+  - o limite do Instagram conta a legenda mais as hashtags, mas a validação verifica-os em
+    separado: um texto pode passar a validação e ficar acima do total;
+  - as datas (semana ISO, hoje, validade do feedback) calculam-se em UTC, não na hora de Lisboa.
 - Prova real da autenticação com o Tailscale: ver
   `AgentDATA/docs/2026-11-06T14-26-00+00-00_checklist_prova_autenticacao_painel.md`.
