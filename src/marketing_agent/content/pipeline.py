@@ -10,7 +10,6 @@ Mensagens de falha: so `describe_error` chega a `job.last_error` e `post.last_er
 """
 
 import logging
-from collections.abc import Mapping
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -23,6 +22,7 @@ from marketing_agent.content.revision_store import (
     DRAFTING,
     GeneratedText,
     PostSnapshot,
+    kb_ref_ids,
     lock_post,
     save_generated,
     stale_reason,
@@ -57,11 +57,6 @@ class GenerationRequest(BaseModel):
     post_id: str = Field(min_length=1)
     owner_comment: str | None
     reason: Literal["plan", "changes"]
-
-
-def _kb_ref_ids(brief: Mapping[str, object]) -> list[str]:
-    refs = brief.get("kb_refs")
-    return [ref for ref in refs if isinstance(ref, str)] if isinstance(refs, list) else []
 
 
 class ContentPipeline:
@@ -143,7 +138,7 @@ class ContentPipeline:
                 f"geracao: falta uma estrategia ativa para a marca {brand_id}"
             )
         kb_entries = self._kb.valid_refs(
-            brand_id, _kb_ref_ids(snapshot.brief), snapshot.scheduled_date
+            brand_id, kb_ref_ids(snapshot.brief), snapshot.scheduled_date
         )
         styles, negatives = self._feedback.prompt_examples(brand_id)
         return CopyPayload(

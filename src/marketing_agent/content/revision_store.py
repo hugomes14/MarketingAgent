@@ -84,6 +84,23 @@ def lock_post(session: Session, post_id: str) -> Post | None:
     return session.scalars(select(Post).where(Post.id == post_id).with_for_update()).one_or_none()
 
 
+def kb_ref_ids(brief: Mapping[str, object]) -> list[str]:
+    """Ids de itens da base citados no brief (a selecao da KB da geracao e da edicao)."""
+    refs = brief.get("kb_refs")
+    return [ref for ref in refs if isinstance(ref, str)] if isinstance(refs, list) else []
+
+
+def latest_revision(session: Session, post_id: str) -> PostRevision | None:
+    """Revisao com o maior `rev_no` do post (a unica sobre a qual o responsavel decide)."""
+    statement = (
+        select(PostRevision)
+        .where(PostRevision.post_id == post_id)
+        .order_by(PostRevision.rev_no.desc())
+        .limit(1)
+    )
+    return session.scalars(statement).one_or_none()
+
+
 def _last_rev_no(session: Session, post_id: str) -> int:
     newest = select(func.max(PostRevision.rev_no)).where(PostRevision.post_id == post_id)
     return session.scalar(newest) or 0
