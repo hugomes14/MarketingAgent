@@ -4,7 +4,7 @@
 
 - Timestamp: `2026-11-09T14:07:58+00:00`
 - Autor: `agent`
-- Estado de execução: **Tarefas 1 a 12 concluídas; revisão final do ramo e PR por fazer.**
+- Estado de execução: **Tarefas 1 a 12 concluídas; revisão final do ramo feita e sem achados abertos; PR por abrir.**
 
 **Goal:** A partir da estratégia ativa, propor e aprovar o plano da semana e gerar em segundo plano, para cada publicação aprovada no plano, uma legenda revista que o responsável aprova, edita, devolve ou rejeita no painel.
 
@@ -458,3 +458,12 @@ tests/{db,kb,jobs,planning,content,feedback,panel,e2e}/...
 - Configuração e documentação: `.env.local.example` (três papéis), README (worker como terceiro processo, ecrãs, regras de feedback, lease, limitações), `AgentDATA/tools/smoke_ollama.md`, `marketing_agent_cli.md` corrigido (lease 1860 s), registo de estado com os marcos M1 a M8.
 - Menores adiados: a janela de contexto de 4096 tokens do `qwen2.5:14b` (documentar `OLLAMA_CONTEXT_LENGTH`); o `--database-url` explícito só é filtrado por nome; o teste de esquemas usa uma lista manual; `test_weekly_text_flow` tem cerca de 170 linhas.
 
+**Notas da revisão final do ramo (2A):**
+
+- Revisão final com modelo mais capaz sobre as 12 tarefas (commit `a3e4aaa`): sem achados Critical; 1425 testes passavam. Três achados Important, corrigidos numa onda única (`9e4faaf`, `0e52dd7`, `e127e77`) e re-revistos sem achados abertos (1495 testes; `ruff` e `mypy src scripts` limpos):
+  1. **Reaprovar o plano de uma semana com publicações decididas** divergia em silêncio do plano e cancelava publicações `approved`/`in_review` cujo lugar posicional desaparecia. Agora a página do plano mostra uma pré-visualização (a mesma função de decisão do reconciliador) e aprovar um plano que cancelaria publicações aprovadas ou em revisão exige a confirmação explícita `confirm_cancel`, recalculada na própria transação sob os bloqueios (`ConfirmationRequired` → 409, sem escrever nada).
+  2. **Geração falhada sem revisão** não tinha saída no painel. Novo `POST /post/{id}/gerar` (`ReviewService.retry_generation`): bloqueia o post, aceita `planned` ou `drafting` com `last_error` sem job ativo, enfileira um job novo (reaproveita o comentário do último job de alterações) e audita só ids. Um post `planned` sem job deixou de fazer polling.
+  3. **Exemplos de feedback no prompt do Copywriter** sem teto (até cerca de 19k tokens): cada campo é cortado a 1500 caracteres só no prompt (antes de neutralizar), e `OLLAMA_CONTEXT_LENGTH=8192` ficou documentado.
+- Também: o painel usa `worker_stale_after()` (360 s) como o worker; o script de fumo só aceita bases com o prefixo `marketing_agent_smoke_`; o README corrige a recuperação de um job morto (quando a lease de ~31 min expira, com um só worker por base de dados) e lista as limitações conhecidas.
+- **Para decidir ou fazer a seguir (fora do 2A):** alimentar o Diretor com as publicações já decididas da semana (um `rejected` nunca é regenerado por um plano novo, as chaves de lugar são posicionais); indicador de que o worker não está a correr; edição de itens da base (re-adicionar no mesmo dia colide com `UNIQUE`); o Instagram conta legenda + hashtags (a validação soma-as em separado); datas em UTC; `Idempotency-Key` da spec (secção 7) substituído por idempotência por estado; semanas passadas podem ser propostas; texto de uma edição inválida perde-se num 422; `pytest-randomly` não está instalado (a ordem dos testes não é aleatorizada).
+- **Verificação do responsável (marcos M2 a M8):** a verificação no browser e a semana real com o Ollama ficam contigo; ver a tabela em `AgentDATA/context/` e o README.
