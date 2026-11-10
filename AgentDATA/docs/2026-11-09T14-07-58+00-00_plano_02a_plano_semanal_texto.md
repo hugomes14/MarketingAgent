@@ -4,7 +4,7 @@
 
 - Timestamp: `2026-11-09T14:07:58+00:00`
 - Autor: `agent`
-- Estado de execução: **Tarefas 1 a 10 concluídas; Tarefas 11 e 12 por fazer.**
+- Estado de execução: **Tarefas 1 a 11 concluídas; Tarefa 12 por fazer.**
 
 **Goal:** A partir da estratégia ativa, propor e aprovar o plano da semana e gerar em segundo plano, para cada publicação aprovada no plano, uma legenda revista que o responsável aprova, edita, devolve ou rejeita no painel.
 
@@ -418,11 +418,20 @@ tests/{db,kb,jobs,planning,content,feedback,panel,e2e}/...
 - Produces rotas: `GET /lote/{semana}`, `GET /lote/{semana}/estado` (parcial HTMX com `hx-trigger="every 5s"` só enquanto houver posts `planned`/`drafting`), `POST /post/{id}/aprovar`, `POST /post/{id}/editar`, `POST /post/{id}/alteracoes`, `POST /post/{id}/rejeitar`, `GET /feedback`, `POST /feedback/{id}/desativar`. `{semana}` validado por `^\d{4}-W\d{2}$`. Cada cartão mostra legenda, hashtags, apelo, alegações com a origem (item da base) ou **"sem apoio válido em <data>"** quando o `kb_ref` não é válido na data do post (Foco 3), veredicto, violações, notas e voltas usadas. Editar e rejeitar exigem a escolha do tipo de feedback (rádios sem pré-seleção).
 - Erros: `StaleRevision`/`InvalidPostState` 409; `PostNotFound` 404; validação 422.
 
-- [ ] **Step 1: Testes que falham.** `test_batch_shows_cards_and_reviewer_verdict`, `test_expired_price_item_flagged_on_card` (Foco 3), `test_approve_edit_changes_reject_flows`, `test_edit_requires_feedback_choice`, `test_polling_only_while_drafting`, `test_model_and_owner_text_escaped`, `test_feedback_page_and_deactivate`.
-- [ ] **Step 2: Correr e ver falhar.**
-- [ ] **Step 3: Implementar.**
-- [ ] **Step 4: Validação global.**
-- [ ] **Step 5: Commit.** `feat: lote semanal e feedback no painel`.
+- [x] **Step 1: Testes que falham.** `test_batch_shows_cards_and_reviewer_verdict`, `test_expired_price_item_flagged_on_card` (Foco 3), `test_approve_edit_changes_reject_flows`, `test_edit_requires_feedback_choice`, `test_polling_only_while_drafting`, `test_model_and_owner_text_escaped`, `test_feedback_page_and_deactivate`.
+- [x] **Step 2: Correr e ver falhar.**
+- [x] **Step 3: Implementar.**
+- [x] **Step 4: Validação global.**
+- [x] **Step 5: Commit.** `feat: lote semanal e feedback no painel`.
+
+**Notas de execução (Tarefa 11):**
+
+- Concluída (commit `1cbfa78`), em modo subagente: implementação e revisão com modelo mais capaz (aprovação humana, autenticação/CSRF, XSS) sem achados Critical/Important. 1383 testes passam (311 no painel); `ruff` e `mypy src` limpos. A implementação foi escrita antes dos testes; duas mutações (alegação expirada, bloqueio de "pedir alterações" com job ativo) confirmam que os testes falham quando o código falha.
+- Rotas: `GET /lote`, `GET /lote/{week}` (o parâmetro chama-se `week`), `GET /lote/{week}/estado` (parcial HTMX sem efeitos, `hx-trigger="every 5s"` só enquanto houver posts `planned`/`drafting`; o `panel.js` não troca o conteúdo se houver um `details` aberto ou um campo alterado), `POST /post/{id}/aprovar|editar|alteracoes|rejeitar`, `GET /feedback`, `POST /feedback/{id}/desativar`. Código em `panel/routes_batch.py`, `routes_feedback.py`, `queries_batch.py`, `inputs_review.py`, `labels.py` (em vez do `routes_content.py` do plano).
+- Cartões: legenda, hashtags, apelo, alt text, alegações com a origem (título do item da base) ou **"sem apoio válido em <data>"**, calculado com a data da publicação (não a de hoje) e a mesma seleção da base que o pipeline; parecer, violações e notas só nas revisões do agente; voltas; histórico de decisões. Os botões só aparecem quando o serviço aceita a ação; cada formulário leva o `revision_id` mostrado (`base_revision_id` na edição) e um id desatualizado dá 409. Tipo de feedback em rádios sem pré-seleção; `temporario` pede uma data `AAAA-MM-DD` (fim desse dia, 23:59:59 UTC) e só existe na edição (`ReviewService.reject` não recebe validade).
+- Teste de guarda reforçado: o conjunto de rotas do OpenAPI tem de ser igual ao da tabela real de rotas (falha em qualquer diferença), com um teste que prova que uma rota escondida seria apanhada. `approve_plan` redireciona para `/lote/<semana>`; mensagem 409 própria para "perfil não ativo" (`InactiveProfile`). `ContentServices` ganhou `clock` e `FeedbackService.list_examples` um `limit` opcional.
+- Menores adiados: o texto de uma edição inválida perde-se num 422 (página de erro genérica); nota enganadora para alegações válidas mas fora do brief; `reject` forjado com `temporario` dá uma mensagem confusa; a derivação de rotas ignora `WebSocketRoute`/`Host`; a proteção do polling só tem teste de texto (cobrir no e2e de browser); sem teste HTTP de edição de um post `drafting` falhado; sem limite superior para a data de `temporario` (23:59:59 UTC ≠ meia-noite em Lisboa).
+
 
 ### Task 12: Ponta a ponta, configuração local e documentação
 
