@@ -210,9 +210,9 @@ def test_expires_at_only_accepted_for_temporario(rig: Rig, choice: str) -> None:
     ("overrides", "field"),
     [
         ({"before_text": ""}, "before_text"),
-        ({"before_text": "x" * 2501}, "before_text"),
+        ({"before_text": "x" * 5001}, "before_text"),
         ({"after_text": ""}, "after_text"),
-        ({"after_text": "x" * 2501}, "after_text"),
+        ({"after_text": "x" * 5001}, "after_text"),
         ({"note": ""}, "note"),
         ({"note": "x" * 501}, "note"),
     ],
@@ -227,7 +227,7 @@ def test_text_limits_rejected_without_leaking_text(
 
 
 def test_text_limits_accept_boundaries(rig: Rig) -> None:
-    assert rig.record(before_text="x" * 2500, after_text="y" * 2500, note="n" * 500) is not None
+    assert rig.record(before_text="x" * 5000, after_text="y" * 5000, note="n" * 500) is not None
     assert rig.record(before_text="x", after_text=None, note=None) is not None
 
 

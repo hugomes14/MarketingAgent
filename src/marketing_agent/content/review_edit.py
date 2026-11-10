@@ -7,7 +7,7 @@ efeitos na base, para a regra de validacao ser a mesma da geracao (`validate_dra
 from collections.abc import Mapping, Sequence
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from marketing_agent.content.review_errors import InvalidEdit
 from marketing_agent.content.revision_store import canonical_revision_hash
@@ -38,6 +38,32 @@ class CaptionEdit(BaseModel):
     hashtags: list[Hashtag] = Field(max_length=MAX_SCHEMA_HASHTAGS)
     apelo_a_acao: str = Field(max_length=MAX_CALL_TO_ACTION_CHARS)
     alt_text: str = Field(max_length=MAX_ALT_TEXT_CHARS)
+
+    @classmethod
+    def from_form(
+        cls, legenda: str, hashtags: Sequence[str], apelo_a_acao: str, alt_text: str
+    ) -> "CaptionEdit":
+        """Construtor seguro para o painel: limites violados viram `InvalidEdit` sem o texto.
+
+        As violacoes usam so a localizacao e o tipo do erro do pydantic (`hashtags.2:
+        string_too_long`); a `ValidationError` traz o valor recebido, por isso o `InvalidEdit`
+        e levantado FORA do `except`, para nao ficar nem como `__cause__` nem `__context__`.
+        """
+        violations: list[str] = []
+        try:
+            return cls(
+                legenda=legenda,
+                hashtags=list(hashtags),
+                apelo_a_acao=apelo_a_acao,
+                alt_text=alt_text,
+            )
+        except ValidationError as exc:
+            violations = [
+                f"{'.'.join(str(part) for part in err['loc'])}: {err['type']}"
+                for err in exc.errors(include_url=False, include_context=False, include_input=False)
+            ]
+        summary = "edicao invalida: " + "; ".join(violations)
+        raise InvalidEdit(summary[:MAX_SUMMARY_CHARS], tuple(violations))
 
 
 def check_edit(

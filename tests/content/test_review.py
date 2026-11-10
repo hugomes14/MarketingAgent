@@ -461,6 +461,59 @@ def test_edit_temporary_feedback_keeps_expiry(review: Review) -> None:
     assert example.expires_at == expires
 
 
+SECRET = "SEGREDO-do-responsavel-9137"
+
+
+@pytest.mark.parametrize("fields", [
+    {"hashtags": ["#" + SECRET + "x" * 100]},
+    {"apelo_a_acao": SECRET + "x" * 300},
+    {"alt_text": SECRET + "x" * 500},
+    {"legenda": SECRET + "x" * 10_000},
+])  # fmt: skip
+def test_from_form_never_leaks_the_input(fields: dict[str, object]) -> None:
+    form: dict[str, object] = {"legenda": "a", "hashtags": [], "apelo_a_acao": "", "alt_text": ""}
+    form.update(fields)
+    with pytest.raises(InvalidEdit) as caught:
+        CaptionEdit.from_form(**form)  # type: ignore[arg-type]
+    exc = caught.value
+    assert exc.__cause__ is None and exc.__context__ is None
+    assert exc.violations and len(str(exc)) <= 600
+    for text in (str(exc), repr(exc), *exc.violations):
+        assert SECRET not in text and "xxx" not in text
+    field = next(iter(fields))
+    assert any(field in violation for violation in exc.violations)
+
+
+def test_from_form_builds_a_valid_edit() -> None:
+    changes = CaptionEdit.from_form("Texto", ["#a"], "Venha.", "Pao.")
+    assert changes == CaptionEdit(
+        legenda="Texto", hashtags=["#a"], apelo_a_acao="Venha.", alt_text="Pao."
+    )
+
+
+@pytest.mark.parametrize("choice", ["estilo", "negativo"])
+def test_reject_and_edit_accept_a_long_facebook_caption(
+    review: Review, choice: FeedbackChoice
+) -> None:
+    long_caption = "Pao quente. " * 250  # 3000 caracteres
+    seeded = review.seed(channels=("facebook",))
+    other = review.seed(channels=("facebook",), slot=2)
+    review.add_revision(other.post_id, 2, caption=long_caption)
+    other = Seeded(other.post_id, review.rig.revisions(other.post_id)[1].id)
+
+    review.service.reject(review.rig.brand_id, other.post_id, other.revision_id, choice, "n", "ana")
+    new_id = review.edit(seeded, legenda=long_caption, feedback=choice, note="n")
+    edited = Seeded(seeded.post_id, new_id)
+    new_id = review.edit(edited, legenda=long_caption + "Fim.", feedback=choice, note="n")
+
+    examples = review.feedback()
+    assert len(examples) == 3 and all(e.kind == choice for e in examples)
+    assert examples[0].before_text == long_caption and examples[0].after_text is None
+    assert (
+        examples[2].before_text == long_caption and examples[2].after_text == long_caption + "Fim."
+    )
+
+
 def test_caption_edit_is_frozen_strict_and_bounded() -> None:
     changes = CaptionEdit(legenda="a", hashtags=[], apelo_a_acao="", alt_text="")
     with pytest.raises(ValueError):
