@@ -820,7 +820,10 @@ def test_decision_and_plan_reapproval_race_do_not_deadlock(review: Review) -> No
 
     def reapprove() -> object:
         with review.rig.factory.begin() as session:
-            return reconciler.apply(session, plan_record, empty_plan, review.rig.strategy_id)
+            # confirm_cancel: se a aprovacao ganhar, o post aprovado so se cancela confirmado
+            return reconciler.apply(
+                session, plan_record, empty_plan, review.rig.strategy_id, confirm_cancel=True
+            )
 
     for slot in range(1, 7):
         seeded = review.seed(slot=slot)

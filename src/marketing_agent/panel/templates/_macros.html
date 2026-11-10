@@ -8,6 +8,17 @@
 </form>
 {% endmacro %}
 
+{# Aprovar o plano; com `needs_confirmation`, a caixa e obrigatoria (o servico volta a exigi-la). #}
+{% macro approve_form(url, token, needs_confirmation) %}
+<form method="post" action="{{ url }}" class="em-linha">
+  {{ csrf_field(token) }}
+  {% if needs_confirmation %}
+  <label><input type="checkbox" name="confirm_cancel" value="1" required> Confirmo que as publicações aprovadas ou em revisão listadas acima ficam canceladas.</label>
+  {% endif %}
+  <button type="submit">Aprovar</button>
+</form>
+{% endmacro %}
+
 {% macro reject_form(url, token) %}
 <form method="post" action="{{ url }}" class="rejeitar">
   {{ csrf_field(token) }}

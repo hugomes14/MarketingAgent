@@ -14,7 +14,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session, sessionmaker
 
 from marketing_agent.agents.diretor import DIRETOR_DIR
-from marketing_agent.artifacts.store import ArtifactStore, ArtifactType
+from marketing_agent.artifacts.store import ArtifactNotFound, ArtifactStore, ArtifactType
 from marketing_agent.clock import Clock
 from marketing_agent.db.models import Artifact, AuditLog
 from marketing_agent.harness.engine import AgentEngine, RunResult
@@ -23,6 +23,7 @@ from marketing_agent.jobs.queue import JobQueue
 from marketing_agent.kb.service import KbEntry, KbService
 from marketing_agent.planning.loop import PlanLoop, PlanPayload
 from marketing_agent.planning.posts import PostReconciler
+from marketing_agent.planning.preview import ApprovalPreview
 from marketing_agent.planning.schemas import PlanoSemanal
 from marketing_agent.planning.validation import PlanLimits, week_range
 from marketing_agent.proposals import (
@@ -91,11 +92,30 @@ class PlanningService:
             only_pending_where=[Artifact.payload["semana"].astext == semana],
         )
 
-    def approve_plan(self, artifact_id: str, actor: str) -> list[str]:
+    def preview_approval(self, brand_id: str, artifact_id: str) -> ApprovalPreview:
+        """O que aprovar o plano faria aos posts da semana: so leituras, nada e gravado.
+
+        `ArtifactNotFound` se o plano nao existe ou e de outra marca; `ValueError` se nao e um
+        plano. A previsao e uma fotografia: `approve_plan` volta a decidir com os posts bloqueados.
+        """
+        record = self._store.get(artifact_id)
+        if record.brand_id != brand_id:
+            raise ArtifactNotFound(f"artefacto plano inexistente: {artifact_id}")
+        require_type(record, ArtifactType.PLANO)
+        plan = PlanoSemanal.model_validate(record.payload)
+        with self._session_factory() as session:
+            return self._reconciler.preview(session, brand_id, plan)
+
+    def approve_plan(
+        self, artifact_id: str, actor: str, *, confirm_cancel: bool = False
+    ) -> list[str]:
         """Aprova o plano e cria/atualiza os posts da semana e os seus trabalhos, numa transacao.
 
         Devolve os ids dos posts do plano, por ordem de slot (criados, atualizados ou mantidos).
         Um plano que ja nao esta `submitted` levanta `InvalidTransition` sem alterar nada.
+        Se o plano cancelaria posts `approved` ou `in_review`, exige `confirm_cancel=True`; senao
+        levanta `ConfirmationRequired` e a transacao inteira e desfeita. A verificacao repete-se
+        aqui, com os posts bloqueados: a flag e so o reconhecimento do responsavel.
         """
         record = self._store.get(artifact_id)
         require_type(record, ArtifactType.PLANO)
@@ -105,7 +125,9 @@ class PlanningService:
             self._store.approve_and_activate_in(
                 session, artifact_id, actor, scope=_week_scope(plan.semana)
             )
-            result = self._reconciler.apply(session, record, plan, strategy_id)
+            result = self._reconciler.apply(
+                session, record, plan, strategy_id, confirm_cancel=confirm_cancel
+            )
             session.add(
                 AuditLog(
                     actor=actor,

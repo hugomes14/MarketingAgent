@@ -133,6 +133,14 @@ Percurso no painel, depois de ter o perfil, o diagnóstico e a estratégia aprov
    como saída inválida e o Diretor repete (até 3 vezes). **`/plano/{id}`** mostra os slots.
    Aprovar cria, numa só transação, uma publicação e um trabalho por slot e redireciona para o
    lote; aprovar o mesmo plano outra vez dá 409 e não duplica nada.
+
+   Se a semana **já tem publicações**, a página do plano submetido mostra primeiro uma
+   **previsão** (lugar a lugar: tema antigo → novo, estado e o que acontece: nova, reescrita,
+   mantida, mantida com o texto antigo porque o plano mostra outro conteúdo, ou cancelada). Os
+   lugares são posicionais (`AAAA-Www-N`): um plano mais curto cancela as publicações dos lugares
+   que saem. Cancelar publicações **aprovadas ou por rever** exige marcar a caixa de confirmação
+   (`confirm_cancel`); sem ela o servidor responde 409 e não grava nada. A verificação repete-se
+   na própria transação da aprovação, por isso a previsão nunca autoriza nada por si.
 3. **O worker gera o texto** de cada publicação: Copywriter, validação em código (limite do
    canal, preços, alegações ligadas à base) e Revisor, com no máximo 2 voltas de correção.
    No fim a publicação fica "por rever" (`in_review`).
@@ -293,6 +301,10 @@ conhecimento, contexto e registos ficam em [`AgentDATA/`](AgentDATA/). Detalhes 
   - o painel deixa propor semanas ISO já passadas (gasta orçamento; decisão de produto por
     tomar);
   - o feedback `temporario` aceita qualquer data futura e termina às 23:59:59 UTC;
+  - um lugar `rejected` nunca é regenerado por um plano novo: as chaves dos lugares são
+    posicionais, por isso a publicação rejeitada fica como está (o plano novo pode mostrar outro
+    tema nesse lugar; a previsão assinala-o). O Diretor também ainda não vê as publicações já
+    decididas da semana ao propor um plano novo (seguimento);
   - um só worker por base; o painel e o worker são processos separados que partilham a base.
 - Prova real da autenticação com o Tailscale: ver
   `AgentDATA/docs/2026-11-06T14-26-00+00-00_checklist_prova_autenticacao_painel.md`.

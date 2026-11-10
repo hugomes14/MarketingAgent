@@ -17,6 +17,15 @@ _LIFECYCLE: Final = {
     "rejected": "Rejeitada",
     "cancelled": "Cancelada",
 }
+_OUTCOME: Final = {
+    "new": "Nova",
+    "rewritten": "Reescrita e gerada de novo",
+    "unchanged": "Mantida",
+    "restarted": "Mantida e gerada de novo (o trabalho anterior terminou sem texto)",
+    "decided_kept": "Mantida (já em revisão ou decidida, igual ao plano)",
+    "decided_differs": "Mantida com o texto antigo: o plano mostra outro conteúdo",
+    "cancelled": "Cancelada: o lugar sai do plano",
+}
 _VERDICT: Final = {"aprovar": "Aprovar", "rever": "Rever", "rejeitar": "Rejeitar"}
 _VIOLATION: Final = {
     "alegacao_sem_apoio": "alegação sem apoio",
@@ -60,6 +69,7 @@ def _labeller(labels: Mapping[str, str]) -> Callable[[str], str]:
 def install_label_filters(environment: Environment) -> None:
     """Regista os filtros `lifecycle_label`, `verdict_label`, `violation_label`, etc."""
     environment.filters["lifecycle_label"] = _labeller(_LIFECYCLE)
+    environment.filters["outcome_label"] = _labeller(_OUTCOME)
     environment.filters["verdict_label"] = _labeller(_VERDICT)
     environment.filters["violation_label"] = _labeller(_VIOLATION)
     environment.filters["decision_label"] = _labeller(_DECISION)

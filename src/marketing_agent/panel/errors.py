@@ -35,6 +35,7 @@ from marketing_agent.interview.service import (
 from marketing_agent.kb.service import KbError
 from marketing_agent.panel.rendering import Renderer
 from marketing_agent.panel.security import apply_security_headers
+from marketing_agent.planning.errors import ConfirmationRequired
 from marketing_agent.strategy.service import (
     IncompleteDecisions,
     MissingPrerequisite,
@@ -84,6 +85,11 @@ _RESPONSES: Final[dict[type[Exception], tuple[int, str]]] = {
     KbError: (
         422,
         "Não foi possível guardar na base de conhecimento: o item já existe ou não foi encontrado.",
+    ),
+    ConfirmationRequired: (
+        409,
+        "Este plano cancelaria publicações aprovadas ou em revisão. "
+        "Reveja a previsão, marque a confirmação e aprove de novo.",
     ),
     InactiveProfile: (409, f"O perfil indicado não é o perfil ativo. {RELOAD_HINT}"),
     InvalidTransition: (409, "Este item já foi decidido ou já não aceita esta ação."),

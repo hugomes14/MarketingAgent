@@ -24,6 +24,8 @@ MAX_KEY_CHARS: Final = 100
 MAX_REASON_CHARS: Final = 500
 MAX_TOPIC_CHARS: Final = 100
 DEFAULT_REASON: Final = "sem motivo indicado"
+CONFIRM_FIELD: Final = "confirm_cancel"
+CONFIRM_VALUE: Final = "1"
 ACCEPT: Final = "aceitar"
 REFUSE: Final = "recusar"
 _KEY_PATTERN: Final = re.compile(r"[\x21-\x7e]+")  # ASCII visivel, sem espacos nem controlo
@@ -97,6 +99,15 @@ def read_week(fields: FormFields) -> str | None:
     except ValueError:
         raise InvalidForm("Indique a semana no formato AAAA-Www, por exemplo 2026-W46.") from None
     return week
+
+
+def read_confirm_cancel(fields: FormFields) -> bool:
+    """A caixa `confirm_cancel` do formulario de aprovar: so o valor exato `1` confirma.
+
+    Ausente ou com outro valor e `False`: o servico exige a confirmacao quando o plano cancelaria
+    publicacoes aprovadas ou em revisao, por isso um valor estranho nunca confirma por engano.
+    """
+    return fields.get(CONFIRM_FIELD, "") == CONFIRM_VALUE
 
 
 def read_profile_topic(fields: FormFields) -> str:

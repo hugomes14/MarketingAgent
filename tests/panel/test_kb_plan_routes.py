@@ -441,6 +441,153 @@ def test_approving_twice_does_not_duplicate_posts(make_panel: MakePanel) -> None
     assert count_rows(rig, Post) == 3 and count_rows(rig, Job) == 3
 
 
+# ------------------------------------------------------- reaprovar com publicacoes decididas
+
+CONFIRM_MESSAGE = "cancelaria publicações aprovadas ou em revisão"
+
+
+def submit_variant(
+    rig: PanelRig, plan_id: str, *, keep: int | None = None, themes: dict[int, str] | None = None
+) -> str:
+    """Novo plano `submitted` da mesma semana: ate `keep` slots, com temas trocados (0-based)."""
+    payload = dict(rig.store.get(plan_id).payload)
+    slots = [dict(slot) for slot in payload["slots"]][:keep]  # type: ignore[attr-defined]
+    for index, theme in (themes or {}).items():
+        slots[index]["tema"] = theme
+    created = rig.store.create(rig.brand_id, ArtifactType.PLANO, {**payload, "slots": slots})
+    rig.store.submit(created.id, "ana")
+    return created.id
+
+
+def set_lifecycle(rig: PanelRig, slot: int, lifecycle: str) -> None:
+    with rig.factory.begin() as session:
+        session.execute(
+            update(Post).where(Post.slot_key == f"{WEEK}-{slot}").values(lifecycle=lifecycle)
+        )
+
+
+def lifecycles(rig: PanelRig) -> dict[str, str]:
+    with rig.factory() as session:
+        return {p.slot_key: p.lifecycle for p in session.scalars(select(Post))}
+
+
+def decided_week(make_panel: MakePanel) -> tuple[PanelRig, str]:
+    """Plano de 3 slots aprovado; o slot 2 esta por rever e o 3 aprovado. Devolve o plano antigo."""
+    rig = planning_rig(make_panel, slots=3)
+    first = rig.propose_plan()
+    assert rig.post(f"/plano/{first}/aprovar").status_code == 303
+    set_lifecycle(rig, 2, "in_review")
+    set_lifecycle(rig, 3, "approved")
+    return rig, first
+
+
+def test_plan_page_of_a_fresh_week_has_no_preview_nor_confirmation(make_panel: MakePanel) -> None:
+    rig = planning_rig(make_panel)
+    html = rig.get(f"/plano/{rig.propose_plan()}").text
+    assert "confirm_cancel" not in html and "Já existem publicações" not in html
+
+
+def test_preview_and_confirmation_checkbox_when_decided_posts_would_be_cancelled(
+    make_panel: MakePanel,
+) -> None:
+    rig, first = decided_week(make_panel)
+    second = submit_variant(rig, first, keep=2, themes={1: "Tema novo do slot dois"})
+
+    html = rig.get(f"/plano/{second}").text
+
+    assert "Já existem publicações nesta semana" in html
+    assert 'name="confirm_cancel"' in html and 'type="checkbox"' in html
+    assert "required" in html[html.index('name="confirm_cancel"') :][:200]
+    assert html.index('name="confirm_cancel"') < html.index(f"/plano/{second}/rejeitar")
+    assert f'action="/plano/{second}/aprovar"' in html
+    assert "Tema novo do slot dois" in html and "→" in html
+    assert "Atenção" in html and "ficaria cancelada" in html  # aviso claro
+    for label in ("Por rever", "Aprovada", "Cancelada", "Mantida"):
+        assert label in html
+    assert count_rows(rig, Job) == 3 and lifecycles(rig)[f"{WEEK}-3"] == "approved"  # so leitura
+
+
+def test_preview_without_decided_cancellations_has_no_checkbox(make_panel: MakePanel) -> None:
+    rig = planning_rig(make_panel)
+    first = rig.propose_plan()
+    assert rig.post(f"/plano/{first}/aprovar").status_code == 303
+    second = submit_variant(rig, first, keep=2, themes={0: "Outro tema"})
+    html = rig.get(f"/plano/{second}").text
+    assert "Já existem publicações nesta semana" in html and "Outro tema" in html
+    assert "confirm_cancel" not in html and "Atenção" not in html
+    assert rig.post(f"/plano/{second}/aprovar").status_code == 303
+    assert lifecycles(rig)[f"{WEEK}-3"] == "cancelled"
+
+
+def test_approving_without_confirmation_is_409_and_writes_nothing(make_panel: MakePanel) -> None:
+    rig, first = decided_week(make_panel)
+    second = submit_variant(rig, first, keep=1)
+    jobs, states = count_rows(rig, Job), lifecycles(rig)
+
+    for form in ({}, {"confirm_cancel": ""}, {"confirm_cancel": "talvez"}):
+        response = rig.post(f"/plano/{second}/aprovar", form)
+        assert response.status_code == 409, form
+        assert CONFIRM_MESSAGE in response.text and first not in response.text
+
+    assert rig.store.get(second).state is ArtifactState.SUBMITTED
+    assert (count_rows(rig, Job), lifecycles(rig)) == (jobs, states)
+    with rig.factory() as session:
+        approvals = session.scalars(select(AuditLog).where(AuditLog.action == "plan.approve"))
+        assert len(list(approvals)) == 1  # so a primeira aprovacao
+
+
+def test_approving_with_confirmation_cancels_the_decided_posts(make_panel: MakePanel) -> None:
+    rig, first = decided_week(make_panel)
+    second = submit_variant(rig, first, keep=1)
+
+    response = rig.post(f"/plano/{second}/aprovar", {"confirm_cancel": "1"})
+
+    assert response.status_code == 303 and response.headers["location"] == f"/lote/{WEEK}"
+    assert rig.store.get(second).state is ArtifactState.APPROVED
+    assert lifecycles(rig) == {
+        f"{WEEK}-1": "planned",
+        f"{WEEK}-2": "cancelled",
+        f"{WEEK}-3": "cancelled",
+    }
+
+
+def test_confirmation_is_recomputed_when_the_page_was_stale(make_panel: MakePanel) -> None:
+    """A pagina foi aberta quando o slot 3 ainda estava por gerar; o responsavel aprovou-o."""
+    rig = planning_rig(make_panel)
+    first = rig.propose_plan()
+    assert rig.post(f"/plano/{first}/aprovar").status_code == 303
+    second = submit_variant(rig, first, keep=2)
+    assert "confirm_cancel" not in rig.get(f"/plano/{second}").text
+    set_lifecycle(rig, 3, "approved")
+    assert rig.post(f"/plano/{second}/aprovar").status_code == 409
+    assert lifecycles(rig)[f"{WEEK}-3"] == "approved"
+
+
+def test_preview_themes_are_escaped_and_decided_posts_show_the_old_theme(
+    make_panel: MakePanel,
+) -> None:
+    rig, first = decided_week(make_panel)
+    hostile = "<script>alert(1)</script>"
+    with rig.factory.begin() as session:
+        post = session.scalars(select(Post).where(Post.slot_key == f"{WEEK}-2")).one()
+        post.brief = {**post.brief, "tema": "<img src=x onerror=alert(2)>"}
+    second = submit_variant(rig, first, themes={1: hostile})
+
+    html = rig.get(f"/plano/{second}").text
+
+    assert hostile not in html and "<img src=x" not in html
+    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in html
+    assert "&lt;img src=x onerror=alert(2)&gt;" in html
+    assert "Mantida" in html and "outro conteúdo" in html  # decidida: mantem o texto antigo
+    assert html.count("<script") == html.count('<script src="/static/')
+
+
+def test_decided_plan_page_has_no_preview(make_panel: MakePanel) -> None:
+    rig, first = decided_week(make_panel)
+    html = rig.get(f"/plano/{first}").text
+    assert "Já existem publicações" not in html and "confirm_cancel" not in html
+
+
 def test_reject_plan_creates_nothing_and_is_read_only(make_panel: MakePanel) -> None:
     rig = planning_rig(make_panel)
     plan_id = rig.propose_plan()

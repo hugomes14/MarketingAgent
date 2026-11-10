@@ -52,9 +52,28 @@
 </section>
 
 {% if state == "submitted" %}
+{% if preview %}
+<section class="cartao previsao" id="previsao">
+  <h2>Já existem publicações nesta semana</h2>
+  <p>Se aprovar este plano: {{ preview.created }} {{ "nova" if preview.created == 1 else "novas" }}, {{ preview.rewritten }} reescrita{{ "" if preview.rewritten == 1 else "s" }}, {{ preview.kept }} mantida{{ "" if preview.kept == 1 else "s" }}, {{ preview.kept_differs }} mantida{{ "" if preview.kept_differs == 1 else "s" }} com texto antigo, {{ preview.cancelled }} cancelada{{ "" if preview.cancelled == 1 else "s" }}.</p>
+  {% if preview.cancels_decided %}
+  <p class="aviso importante" role="alert"><strong>Atenção:</strong> {{ preview.cancels_decided|length }} {{ "publicação aprovada ou em revisão ficaria cancelada" if preview.cancels_decided|length == 1 else "publicações aprovadas ou em revisão ficariam canceladas" }}, porque o lugar delas já não existe neste plano. O texto delas perde-se.</p>
+  {% endif %}
+  <ul class="historico">
+    {% for entry in preview.entries %}
+    <li>
+      <strong>Lugar {{ entry.slot_key.rsplit("-", 1)[1] }}</strong>, {{ entry.scheduled_date.isoformat() }}:
+      {% if entry.old_theme is not none %}«{{ entry.old_theme }}»{% endif %}{% if entry.old_theme is not none and entry.new_theme is not none %} → {% endif %}{% if entry.new_theme is not none %}«{{ entry.new_theme }}»{% endif %}
+      {% if entry.lifecycle %}<span class="etiqueta etiqueta-{{ entry.lifecycle }}">{{ entry.lifecycle|lifecycle_label }}</span>{% endif %}
+      <span class="nota">{{ entry.outcome.value|outcome_label }}</span>
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
 <section class="cartao decisao">
   <h2>Decisão</h2>
-  {{ ui.post_button("/plano/" ~ view.record.id ~ "/aprovar", csrf_token, "Aprovar") }}
+  {{ ui.approve_form("/plano/" ~ view.record.id ~ "/aprovar", csrf_token, preview and preview.cancels_decided) }}
   {{ ui.reject_form("/plano/" ~ view.record.id ~ "/rejeitar", csrf_token) }}
 </section>
 {% endif %}

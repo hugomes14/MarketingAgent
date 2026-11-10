@@ -7,7 +7,7 @@ leva ao lote da semana do plano, onde as publicacoes vao aparecendo a medida que
 from fastapi import APIRouter
 from fastapi.responses import HTMLResponse, RedirectResponse
 
-from marketing_agent.artifacts.store import ArtifactType
+from marketing_agent.artifacts.store import ArtifactState, ArtifactType
 from marketing_agent.panel.context import (
     MUTATION_GUARD,
     CurrentUser,
@@ -17,7 +17,8 @@ from marketing_agent.panel.context import (
     proposed_id,
     see_other,
 )
-from marketing_agent.panel.inputs import read_reason, read_week
+from marketing_agent.panel.inputs import read_confirm_cancel, read_reason, read_week
+from marketing_agent.planning.preview import ApprovalPreview
 
 router = APIRouter()
 
@@ -29,6 +30,16 @@ def propose_plan(panel: Panel, fields: Fields) -> RedirectResponse:
     return see_other(f"/plano/{proposed_id(run)}")
 
 
+def _approval_preview(
+    panel: Panel, artifact_id: str, state: ArtifactState
+) -> ApprovalPreview | None:
+    """Previsao do que aprovar faria, so para um plano `submitted` cuja semana ja tem posts."""
+    if state is not ArtifactState.SUBMITTED:
+        return None
+    preview = panel.content.planning.preview_approval(panel.brand_id, artifact_id)
+    return preview if preview.has_existing_posts else None
+
+
 @router.get("/plano/{artifact_id}")
 def show_plan(artifact_id: RecordId, user: CurrentUser, panel: Panel) -> HTMLResponse:
     """Slots, suposicoes e, enquanto estiver submetido, os botoes de decisao."""
@@ -38,19 +49,28 @@ def show_plan(artifact_id: RecordId, user: CurrentUser, panel: Panel) -> HTMLRes
         if strategy
         else {}
     )
+    view = panel.queries.plan_view(panel.brand_id, artifact_id)
     context = {
-        "view": panel.queries.plan_view(panel.brand_id, artifact_id),
+        "view": view,
         "experiments": experiments,
         "strategy_id": strategy.artifact_id if strategy else None,
+        "preview": _approval_preview(panel, artifact_id, view.record.state),
     }
     return panel.renderer.page("plan.html", user, context)
 
 
 @router.post("/plano/{artifact_id}/aprovar", dependencies=[MUTATION_GUARD])
-def approve_plan(artifact_id: RecordId, user: CurrentUser, panel: Panel) -> RedirectResponse:
-    """Aprova o plano e cria as publicacoes e os trabalhos; um plano ja decidido da 409."""
+def approve_plan(
+    artifact_id: RecordId, user: CurrentUser, panel: Panel, fields: Fields
+) -> RedirectResponse:
+    """Aprova o plano e cria as publicacoes e os trabalhos; um plano ja decidido da 409.
+
+    Se cancelasse publicacoes aprovadas ou em revisao, exige o campo `confirm_cancel` (409 sem ele).
+    """
     record = panel.queries.require_artifact(panel.brand_id, artifact_id, ArtifactType.PLANO)
-    panel.content.planning.approve_plan(artifact_id, user.login)
+    panel.content.planning.approve_plan(
+        artifact_id, user.login, confirm_cancel=read_confirm_cancel(fields)
+    )
     return see_other(f"/lote/{record.payload['semana']}")
 
 
