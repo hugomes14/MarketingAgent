@@ -4,7 +4,7 @@
 
 - Timestamp: `2026-11-09T14:07:58+00:00`
 - Autor: `agent`
-- Estado de execução: **Tarefas 1 a 11 concluídas; Tarefa 12 por fazer.**
+- Estado de execução: **Tarefas 1 a 12 concluídas; revisão final do ramo e PR por fazer.**
 
 **Goal:** A partir da estratégia ativa, propor e aprovar o plano da semana e gerar em segundo plano, para cada publicação aprovada no plano, uma legenda revista que o responsável aprova, edita, devolve ou rejeita no painel.
 
@@ -442,8 +442,19 @@ tests/{db,kb,jobs,planning,content,feedback,panel,e2e}/...
 **Interfaces:**
 - Consumes: tudo o anterior.
 
-- [ ] **Step 1: Teste que falha.** `test_weekly_text_flow`: com `FakeLlmClient` (cenários `weekly_plan`, `caption_draft`, `review`): estratégia ativa (fixture), item de preço válido, propor e aprovar o plano pelo painel, `Worker.run_once()` até a fila esvaziar, lote com todos os posts `in_review`, aprovar um, editar outro (feedback `estilo`), pedir alterações num terceiro e correr o worker de novo; verificar: cada revisão tem `cost_entry` nas suas execuções, o exemplo de estilo entra no pedido seguinte do Copywriter (`llm.requests`), auditoria com o login.
-- [ ] **Step 2: Correr e ver falhar.**
-- [ ] **Step 3: Implementar** o que faltar; atualizar README e configuração.
-- [ ] **Step 4: Validação completa.** Validação global; `scripts/smoke_ollama.py` contra o Ollama local e registo do resultado (tempos por passo, voltas do Revisor, saídas inválidas).
-- [ ] **Step 5: Commit.** `feat: fluxo semanal de texto de ponta a ponta e execucao local com worker`.
+- [x] **Step 1: Teste que falha.** `test_weekly_text_flow`: com `FakeLlmClient` (cenários `weekly_plan`, `caption_draft`, `review`): estratégia ativa (fixture), item de preço válido, propor e aprovar o plano pelo painel, `Worker.run_once()` até a fila esvaziar, lote com todos os posts `in_review`, aprovar um, editar outro (feedback `estilo`), pedir alterações num terceiro e correr o worker de novo; verificar: cada revisão tem `cost_entry` nas suas execuções, o exemplo de estilo entra no pedido seguinte do Copywriter (`llm.requests`), auditoria com o login.
+- [x] **Step 2: Correr e ver falhar.**
+- [x] **Step 3: Implementar** o que faltar; atualizar README e configuração.
+- [x] **Step 4: Validação completa.** Validação global; `scripts/smoke_ollama.py` contra o Ollama local e registo do resultado (tempos por passo, voltas do Revisor, saídas inválidas).
+- [x] **Step 5: Commit.** `feat: fluxo semanal de texto de ponta a ponta e execucao local com worker`.
+
+**Notas de execução (Tarefa 12):**
+
+- Concluída (commit `0d8b5f5`), em modo subagente, com revisão sem achados Critical/Important. 1425 testes passam; `ruff` e `mypy src scripts` limpos.
+- `tests/e2e/test_weekly_text_flow.py` (dois testes: o fluxo semanal completo e a sinalização do preço expirado) passou à primeira, por isso foi validado por seis mutações deliberadas (exemplos vazios, polling sempre ligado, comentário removido, `is_supported=True`, verificação de revisão desatualizada removida, ator fixo), todas apanhadas. Verifica `cost_entry` por execução, o exemplo de estilo só no pedido seguinte do Copywriter, o ator da auditoria, o comentário no job de alterações, o 409 de separador antigo, a execução exatamente uma vez e o fim do polling.
+- `scripts/smoke_ollama.py` reescrito: usa a montagem de produção, cria e apaga uma base descartável no contentor de testes (porta 5433), recusa a base de desenvolvimento (5434) e os nomes `marketing_agent`/`marketing_agent_test`, não descarrega modelos e sai com código 3 e mensagem fixa se o Ollama ou o modelo faltam. 25 testes puros em `tests/test_smoke_ollama.py`.
+- **Execução real contra o Ollama local** (a 5.ª tentativa, as 4 anteriores falharam no plano, no perfil e no Copywriter): 3 publicações chegaram a `in_review` em 235 s, 0 voltas do Revisor, 1 saída inválida do Diretor, 1 `unknown_outcome` do Copywriter que passou na repetição. Registo em `AgentDATA/Knowledge/2026-11-10T10-00-00+00-00_ollama_teste_de_fumo_texto_semanal_e_gramatica_json_schema.md`.
+- **Dois defeitos reais encontrados pelo fumo e corrigidos:** o runner do Ollama rebenta com HTTP 500 quando o `json_schema` leva um `pattern` (`\d{4}`) ou um `maxLength` grande. `PlanoSemanal.semana` e `RascunhoTexto.legenda` passaram a validadores em código (mensagens sem o valor, com nova tentativa do motor) e `tests/llm/test_output_schema_limits.py` impede o regresso. O passo do plano nunca tinha funcionado contra o Ollama antes disto.
+- Configuração e documentação: `.env.local.example` (três papéis), README (worker como terceiro processo, ecrãs, regras de feedback, lease, limitações), `AgentDATA/tools/smoke_ollama.md`, `marketing_agent_cli.md` corrigido (lease 1860 s), registo de estado com os marcos M1 a M8.
+- Menores adiados: a janela de contexto de 4096 tokens do `qwen2.5:14b` (documentar `OLLAMA_CONTEXT_LENGTH`); o `--database-url` explícito só é filtrado por nome; o teste de esquemas usa uma lista manual; `test_weekly_text_flow` tem cerca de 170 linhas.
+
