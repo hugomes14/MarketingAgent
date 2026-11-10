@@ -75,6 +75,14 @@ Tudo corre em `127.0.0.1`. Execute a partir da raiz do repositório.
    existem (`ollama pull qwen2.5:14b` e `ollama pull llama3.1:8b`). O `.env.local.example` liga
    `diretor` e `copywriter` ao primeiro e `revisor` ao segundo.
 
+   **Contexto do Ollama**: o contexto por omissão é de 4096 tokens e o Ollama **trunca em
+   silêncio** os prompts mais longos (perfil, base, exemplos e brief juntos podem ultrapassá-lo).
+   O adaptador usa o endpoint compatível com a OpenAI, onde não é possível definir `num_ctx` por
+   pedido; defina-o no servidor, por exemplo `OLLAMA_CONTEXT_LENGTH=8192 ollama serve`, ou num
+   `Modelfile` com `PARAMETER num_ctx 8192` (`ollama create`). Do lado do painel, cada campo dos
+   exemplos de feedback entra no prompt do Copywriter com no máximo 1500 caracteres
+   (`…[truncado]`); o que está guardado não muda.
+
 5. **Migrações, preços e marca**:
 
    ```bash
@@ -101,7 +109,9 @@ Tudo corre em `127.0.0.1`. Execute a partir da raiz do repositório.
    ```
 
    Pára com Ctrl+C ou `SIGTERM` (o trabalho em curso termina primeiro; um segundo Ctrl+C
-   interrompe-o e o trabalho recupera-se no arranque seguinte). Corra **um** worker por base.
+   interrompe-o). Um trabalho interrompido **não** volta à fila logo: recupera-se quando a sua
+   lease vence (1860 s, cerca de 31 min, depois de reclamado), no arranque seguinte do worker ou
+   numa iteração ociosa (`requeue_expired`). Corra **um** worker (um só processo) por base.
 
 8. **Proxy de desenvolvimento** (noutro terminal), que faz o papel do `tailscale serve`:
 
@@ -147,8 +157,9 @@ Percurso no painel, depois de ter o perfil, o diagnóstico e a estratégia aprov
 4. **`/lote/{semana}`** (`/lote` leva à semana com publicações por rever): um cartão por
    publicação, com o texto, as alegações e a origem na base, o parecer do Revisor e as voltas.
 
-Em cada cartão há quatro ações; todas dizem sobre que revisão decidem e, se entretanto surgiu
-outra (uma edição noutra aba, uma geração nova), recusam com 409 ("Recarregue a página"):
+Em cada cartão há quatro ações de revisão (mais «Gerar de novo», abaixo); todas dizem sobre que
+revisão decidem e, se entretanto surgiu outra (uma edição noutra aba, uma geração nova), recusam
+com 409 ("Recarregue a página"):
 
 - **Aprovar** (`POST /post/{id}/aprovar`): só vale para a revisão **mais recente**. Nada no
   sistema aprova uma publicação sem este pedido do responsável.
@@ -158,6 +169,10 @@ outra (uma edição noutra aba, uma geração nova), recusam com 409 ("Recarregu
   dado (nunca como instrução) e o worker gera uma revisão nova; fica indisponível enquanto há
   uma geração em curso.
 - **Rejeitar** (`POST /post/{id}/rejeitar`): estado final; também exige o tipo de feedback.
+- **Gerar de novo** (`POST /post/{id}/gerar`): só quando a geração falhou ou se perdeu (por
+  gerar, ou em geração com motivo de falha) e não há trabalho ativo. Enfileira um trabalho novo
+  (um pedido de alterações que falhou repete-se com o mesmo comentário) e limpa o motivo da
+  falha; dois cliques seguidos geram um só trabalho.
 
 ### Feedback
 
@@ -187,9 +202,10 @@ alterado.
   gerado com um item válido; reveja o preço antes de aprovar, ou peça alterações.
 - **"A geração falhou (Classe)"**: o trabalho esgotou as 3 tentativas (`dead`) e o motivo (só o
   nome da classe do erro, nunca texto do modelo) ficou em `last_error` na publicação, que
-  continua "em geração" sem polling. Para recomeçar, **proponha e aprove outra vez o plano
-  dessa semana** (uma publicação igual, sem trabalho ativo, é regenerada); se já existe texto,
-  pode-se editá-lo.
+  continua "em geração" sem polling. Use **«Gerar de novo»** no cartão para repetir só essa
+  publicação (também aparece numa publicação "por gerar" cujo trabalho se perdeu); se já existe
+  texto, pode-se editá-lo. Reaprovar o plano da semana também regenera as publicações iguais sem
+  trabalho ativo, mas passa pela previsão acima.
 
 ### Fila, worker e leases
 
@@ -198,9 +214,11 @@ O trabalho `generate_post` é reclamado com uma **lease de 1860 s (31 min)** =
 um trabalho faz até 3 passagens Copywriter+Revisor, e o motor só verifica a duração máxima
 **antes** de cada passo, por isso uma chamada que começa perto do limite ainda pode correr mais
 120 s. Com uma lease mais curta outro worker reclamaria um trabalho ainda vivo. Se o worker for
-morto a meio, o trabalho volta à fila no arranque seguinte (ou numa iteração ociosa) quando a
-lease vencer, e não há revisão duplicada. O worker marca como `unknown_outcome` as reservas
-abertas há mais de 360 s ao arrancar.
+morto a meio, o trabalho fica como estava até a lease vencer (31 min) e só então volta à fila,
+no arranque seguinte do worker ou numa iteração ociosa (`requeue_expired`); não há revisão
+duplicada. Use **um** worker (um só processo) por base. O worker e o painel marcam como
+`unknown_outcome`, ao arrancar, as reservas abertas há mais de 360 s (`worker_stale_after()`, o
+mesmo limiar nos dois processos).
 
 ## Comandos
 
@@ -263,7 +281,8 @@ Corre o percurso real (entrevista, estratégia, item de preço, plano, worker um
 o Ollama e imprime o tempo de cada passo, as voltas do Revisor e as saídas inválidas por papel.
 **Usa uma base descartável** (`marketing_agent_smoke_<aleatório>`) criada e apagada no Postgres de
 teste (porta 5433) e recusa as bases de desenvolvimento (porta 5434, base `marketing_agent`) e
-do pytest. Se o Ollama estiver em baixo ou faltar um modelo, termina com código 3 e uma mensagem
+do pytest. Com `--database-url` só aceita uma base cujo **nome** comece por
+`marketing_agent_smoke_` (nunca a apaga e não assume que está vazia). Se o Ollama estiver em baixo ou faltar um modelo, termina com código 3 e uma mensagem
 fixa; nunca descarrega modelos. Pode levar bastante tempo com modelos locais.
 
 ## Segurança
@@ -305,6 +324,14 @@ conhecimento, contexto e registos ficam em [`AgentDATA/`](AgentDATA/). Detalhes 
     posicionais, por isso a publicação rejeitada fica como está (o plano novo pode mostrar outro
     tema nesse lugar; a previsão assinala-o). O Diretor também ainda não vê as publicações já
     decididas da semana ao propor um plano novo (seguimento);
-  - um só worker por base; o painel e o worker são processos separados que partilham a base.
+  - um só worker (um só processo) por base; o painel e o worker são processos separados que
+    partilham a base;
+  - a página do lote não mostra se o worker está a correr: sem ele as publicações ficam "por
+    gerar" indefinidamente;
+  - a base de conhecimento não tem ação de editar: desativar e voltar a acrescentar o mesmo item
+    no mesmo dia colide na restrição UNIQUE (mude a chave ou a data de início);
+  - o limite do Instagram conta a legenda mais as hashtags, mas a validação verifica-os em
+    separado: um texto pode passar a validação e ficar acima do total;
+  - as datas (semana ISO, hoje, validade do feedback) calculam-se em UTC, não na hora de Lisboa.
 - Prova real da autenticação com o Tailscale: ver
   `AgentDATA/docs/2026-11-06T14-26-00+00-00_checklist_prova_autenticacao_painel.md`.

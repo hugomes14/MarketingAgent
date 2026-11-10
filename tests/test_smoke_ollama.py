@@ -60,6 +60,9 @@ def test_posts_out_of_range_is_a_usage_error(posts: str) -> None:
         "postgresql+psycopg://u:p@localhost:5434/outra_base",
         "postgresql+psycopg://u:p@127.0.0.1:5433/marketing_agent",  # nome da base de dev
         "postgresql+psycopg://u:p@127.0.0.1:5433/marketing_agent_test",  # base do pytest
+        "postgresql+psycopg://u:p@127.0.0.1:5433/outra_base",  # nome fora do prefixo descartavel
+        "postgresql+psycopg://u:p@127.0.0.1:5433/postgres",  # base administrativa do servidor
+        "postgresql+psycopg://u:p@127.0.0.1:5433/Marketing_Agent_Smoke_x",  # prefixo e exato
         "postgresql+psycopg://u:p@db.exemplo.com:5433/smoke",  # fora do loopback
         "postgresql+psycopg://u:p@127.0.0.1:5433",  # sem base
         "isto nao e um url",
@@ -86,6 +89,25 @@ def test_explicit_safe_database_is_accepted() -> None:
     url = "postgresql+psycopg://u:p@127.0.0.1:5433/marketing_agent_smoke_manual"
     assert smoke.parse_args(["--database-url", url]).database_url == url
     assert smoke.check_database_url(url).database == "marketing_agent_smoke_manual"
+
+
+def test_explicit_database_without_the_throwaway_prefix_gets_a_fixed_message(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(SystemExit):
+        smoke.parse_args(["--database-url", "postgresql+psycopg://u:p@127.0.0.1:5433/minha_base"])
+    err = capsys.readouterr().err
+    assert "marketing_agent_smoke_" in err and "minha_base" not in err
+
+
+def test_throwaway_database_rejects_an_unsafe_generated_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A guarda do nome (vai direto para SQL) nao pode ser um `assert`, que `python -O` remove."""
+    monkeypatch.setattr(smoke, "new_throwaway_name", lambda: 'x"; DROP DATABASE postgres; --')
+    with pytest.raises(ValueError, match="descartavel"):  # noqa: SIM117
+        with smoke.throwaway_database(smoke.DEFAULT_SERVER_URL):
+            pytest.fail("nao devia criar nada")
 
 
 def test_throwaway_names_are_random_safe_identifiers() -> None:

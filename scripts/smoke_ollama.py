@@ -8,10 +8,11 @@ saidas invalidas por papel. Sem custos: os modelos locais tem preco 0.
 
 SEGURANCA. Nunca toca na base de desenvolvimento nem nas portas do painel: por omissao cria uma
 base `marketing_agent_smoke_<aleatorio>` no Postgres de teste (127.0.0.1:5433), migra-a, usa-a e
-apaga-a no fim (mesmo se falhar). Com `--database-url` usa uma base ja existente (nunca a apaga) e
-recusa qualquer URL que aponte a porta 5434, a base `marketing_agent` (desenvolvimento), a base
-`marketing_agent_test` (partilhada pelo pytest) ou a um servidor fora do loopback. Nunca descarrega
-modelos: se o Ollama estiver em baixo ou faltar um modelo, termina com uma mensagem fixa.
+apaga-a no fim (mesmo se falhar). Com `--database-url` usa uma base ja existente (nunca a apaga),
+mas so se o NOME comecar por `marketing_agent_smoke_`; recusa tambem a porta 5434, as bases
+`marketing_agent` (desenvolvimento) e `marketing_agent_test` (pytest) e servidores fora do
+loopback. Nunca descarrega modelos: se o Ollama estiver em baixo ou faltar um modelo, termina com
+uma mensagem fixa.
 
 Requisitos: Ollama em `--ollama-url` com os modelos pedidos (`ollama list`); Postgres de
 `compose.test.yaml` a correr. Escreve um ficheiro de chave descartavel num diretorio temporario.
@@ -174,9 +175,10 @@ def parse_args(argv: Sequence[str] | None = None) -> SmokeArgs:
     )
     parser.add_argument(
         "--database-url",
-        help="base existente a usar (nunca e apagada); recusa a base de desenvolvimento "
-        f"(porta {DEV_DATABASE_PORT} ou base marketing_agent), a base do pytest e hosts fora do "
-        "loopback. Por omissao cria e apaga uma base descartavel no Postgres de teste.",
+        help="base existente a usar (nunca e apagada); o nome tem de comecar por "
+        f"{THROWAWAY_PREFIX}. Recusa a base de desenvolvimento (porta {DEV_DATABASE_PORT} ou "
+        "base marketing_agent), a base do pytest e hosts fora do loopback. Por omissao cria e "
+        "apaga uma base descartavel no Postgres de teste.",
     )
     parser.add_argument(
         "--server-url",
@@ -232,12 +234,21 @@ def check_server_url(raw: str) -> URL:
 
 
 def check_database_url(raw: str) -> URL:
-    """Base a usar tal como esta: servidor seguro e base que nao e a de desenvolvimento/pytest."""
+    """Base a usar tal como esta: servidor seguro, nao protegida e com o prefixo descartavel.
+
+    O prefixo garante que e uma base feita para este script (por exemplo, sobra de uma corrida
+    anterior): nenhuma base com dados de outro uso tem esse nome por acaso. As mensagens nunca
+    repetem o nome recebido.
+    """
     url = check_server_url(raw)
     if not url.database:
         raise UnsafeDatabase("recusado: o URL nao indica a base de dados")
     if url.database in PROTECTED_DATABASES:
-        raise UnsafeDatabase(f"recusado: a base {url.database!r} nao pode ser usada no teste")
+        raise UnsafeDatabase("recusado: essa base (desenvolvimento ou pytest) nao pode ser usada")
+    if not url.database.startswith(THROWAWAY_PREFIX):
+        raise UnsafeDatabase(
+            f"recusado: o nome da base tem de comecar por {THROWAWAY_PREFIX} (base descartavel)"
+        )
     return url
 
 
@@ -251,7 +262,8 @@ def throwaway_database(server_url: str) -> Iterator[str]:
     """Cria uma base descartavel no servidor, devolve o seu URL e apaga-a no fim."""
     server = check_server_url(server_url)
     name = new_throwaway_name()
-    assert _THROWAWAY_PATTERN.fullmatch(name)  # o nome vai direto para SQL
+    if not _THROWAWAY_PATTERN.fullmatch(name):  # o nome vai direto para SQL
+        raise ValueError("nome de base descartavel invalido")
     admin = create_engine(server, isolation_level="AUTOCOMMIT")
     try:
         with admin.connect() as connection:
@@ -556,7 +568,11 @@ def _new_brand(session_factory: sessionmaker[Session]) -> str:
 
 
 def run_smoke(args: SmokeArgs, database_url: str, report: SmokeReport) -> None:
-    """Percurso completo sobre `database_url` (ja verificada e vazia)."""
+    """Percurso completo sobre `database_url`, uma base descartavel ja validada pelo chamador.
+
+    Migra-a e acrescenta uma marca nova, sem assumir que esta limpa (uma base reutilizada de
+    uma corrida anterior acumula marcas e planos): o isolamento vem do nome, nao do conteudo.
+    """
     migrate(database_url)
     with tempfile.TemporaryDirectory() as directory:
         key_file = Path(directory) / "ollama_key"
