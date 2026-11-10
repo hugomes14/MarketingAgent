@@ -3,8 +3,6 @@
 {% block title %}Início{% endblock %}
 {% block content %}
 <h1>Início</h1>
-<p><a href="/biblioteca">Biblioteca de fotos</a></p>
-
 <section class="cartao" id="orcamento">
   <h2>Estado do mês</h2>
   {% if budget.over_reference %}
@@ -64,6 +62,16 @@
     {% else %}
     <p class="nota">Ainda não há perfil confirmado. Faça uma entrevista e peça o perfil.</p>
     {% endif %}
+  </section>
+
+  <section class="cartao" id="kit-marca">
+    <h2>Imagem da marca</h2>
+    {% if kit %}
+    <p>Kit de marca: versão {{ kit.version }}, de {{ kit.created_at.strftime("%Y-%m-%d") }}.</p>
+    {% else %}
+    <p class="nota">Sem kit de marca.</p>
+    {% endif %}
+    <p><a href="/kit">{{ "Ver o kit de marca" if kit else "Criar o kit de marca" }}</a> · <a href="/biblioteca">Biblioteca de fotos</a></p>
   </section>
 
   <section class="cartao" id="diagnostico-ativo">

@@ -34,6 +34,7 @@ from marketing_agent.interview.service import (
     SubmissionConflict,
 )
 from marketing_agent.kb.service import KbError
+from marketing_agent.media.brand_kit import KitError
 from marketing_agent.media.library import AssetNotFound, MediaError
 from marketing_agent.panel.rendering import Renderer
 from marketing_agent.panel.security import apply_security_headers
@@ -142,7 +143,7 @@ class _ErrorHandlers:
         return self.respond(request, status_code, message)
 
     async def invalid_form(self, request: Request, exc: Exception) -> Response:
-        """Formulario ou imagem invalidos: mensagem fixa e segura do dominio."""
+        """Formulario, imagem ou kit invalidos: mensagem fixa e segura do dominio."""
         logger.info("painel: formulario invalido %s", request.url.path)
         return self.respond(request, 422, str(exc))
 
@@ -176,6 +177,8 @@ def install_error_handlers(app: FastAPI, renderer: Renderer) -> None:
         app.add_exception_handler(exception_type, handlers.domain_error)
     app.add_exception_handler(InvalidForm, handlers.invalid_form)
     app.add_exception_handler(ImageRejected, handlers.invalid_form)
+    # As mensagens do `KitError` sao fixas ou so citam a razao calculada (nunca texto submetido).
+    app.add_exception_handler(KitError, handlers.invalid_form)
     app.add_exception_handler(InvalidEdit, handlers.invalid_edit)
     app.add_exception_handler(RequestValidationError, handlers.validation)
     app.add_exception_handler(HTTPException, handlers.http)

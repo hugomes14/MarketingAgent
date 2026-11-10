@@ -15,6 +15,7 @@ from marketing_agent.feedback.service import FeedbackService
 from marketing_agent.harness.engine import RunResult, RunStatus
 from marketing_agent.interview.service import InterviewService
 from marketing_agent.kb.service import KbService
+from marketing_agent.media.brand_kit import BrandKitService
 from marketing_agent.media.library import MediaLibrary
 from marketing_agent.panel.auth import TailscaleUser, require_tailscale_user
 from marketing_agent.panel.csrf import require_same_origin_and_csrf
@@ -46,6 +47,7 @@ class MediaServices:
     """Servicos de media injetados no painel."""
 
     library: MediaLibrary
+    kits: BrandKitService
 
 
 @dataclass(frozen=True)

@@ -21,6 +21,7 @@ from marketing_agent.panel import (
     routes_batch,
     routes_feedback,
     routes_kb,
+    routes_kit,
     routes_media,
     routes_plan,
 )
@@ -139,7 +140,8 @@ def app_endpoints(rig: PanelRig) -> list[Endpoint]:
 
 def concrete_path(template: str) -> str:
     def value(match: re.Match[str]) -> str:
-        return "2026-W46" if match.group(0) == "{week}" else str(uuid.uuid4())
+        fixed = {"{week}": "2026-W46", "{layout}": "foto_titulo"}
+        return fixed.get(match.group(0)) or str(uuid.uuid4())
 
     return re.sub(r"\{[^}]+\}", value, template)
 
@@ -173,7 +175,7 @@ def test_real_app_exposes_no_hidden_route(make_panel: MakePanel) -> None:
     assert len(endpoints) == len(set(endpoints))
     paths = {path for _, path in endpoints}
     # as rotas de cada modulo (routes_*) estao todas na tabela servida
-    for module in (routes_batch, routes_feedback, routes_kb, routes_media, routes_plan):
+    for module in (routes_batch, routes_feedback, routes_kb, routes_kit, routes_media, routes_plan):
         assert route_table_endpoints(module.router.routes) <= set(endpoints), module.__name__
     assert {
         "/lote/{week}",
@@ -188,7 +190,11 @@ def test_real_app_exposes_no_hidden_route(make_panel: MakePanel) -> None:
         "/biblioteca",
         "/biblioteca/{asset_id}/desativar",
         "/media/{asset_id}",
+        "/kit",
+        "/kit/contraste",
+        "/kit/previa/{layout}",
     } <= paths
+    assert {("GET", "/kit"), ("POST", "/kit")} <= set(endpoints)
 
 
 def test_every_new_route_requires_auth_and_csrf(make_panel: MakePanel) -> None:

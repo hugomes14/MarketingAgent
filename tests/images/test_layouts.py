@@ -265,7 +265,7 @@ def test_title_length_counts_normalized_text() -> None:
 def test_unsupported_glyphs_and_controls_do_not_fit(layout: LayoutName) -> None:
     # O Inter nao tem emoji: recusa-se em vez de desenhar o quadrado de glifo em falta.
     assert fit_title("Pão quente 😀", layout) is None
-    assert fit_title("Bom​dia", layout) is None
+    assert fit_title("Bom\u200bdia", layout) is None
     with pytest.raises(TitleDoesNotFit):
         render_layout(spec_for(layout, titulo="Pão 😀"))
 

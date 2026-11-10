@@ -23,11 +23,9 @@ from marketing_agent.harness.engine import AgentEngine
 from marketing_agent.interview.service import InterviewService
 from marketing_agent.llm.factory import build_llm_router
 from marketing_agent.llm.router import LlmRouter
-from marketing_agent.media.library import MediaLibrary
-from marketing_agent.media.store import LocalMediaStore
 from marketing_agent.panel.app import create_app
-from marketing_agent.panel.assembly import build_content_services
-from marketing_agent.panel.context import MediaServices, PanelContext
+from marketing_agent.panel.assembly import build_content_services, build_media_services
+from marketing_agent.panel.context import PanelContext
 from marketing_agent.panel.queries import PanelQueries
 from marketing_agent.secrets import SecretFileError, read_secret_file
 from marketing_agent.startup import (
@@ -89,9 +87,7 @@ def _assemble(
             content=build_content_services(
                 settings, session_factory, engine, store, strategy, clock
             ),
-            media=MediaServices(
-                MediaLibrary(session_factory, LocalMediaStore(settings.media_dir), clock)
-            ),
+            media=build_media_services(settings, session_factory, clock),
         )
     except ValueError as exc:
         raise StartupError(str(exc)) from exc

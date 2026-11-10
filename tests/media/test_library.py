@@ -277,6 +277,34 @@ def test_list_filters_by_subject(
         library.photo_refs(brand_id, limit=-1)
 
 
+def test_active_photo_returns_only_active_photos_of_the_brand(
+    library: MediaLibrary,
+    session_factory: sessionmaker[Session],
+    brand_id: str,
+    photo_meta: PhotoUpload,
+) -> None:
+    with session_factory.begin() as session:
+        other = Brand(name="Outra marca")
+        session.add(other)
+        session.flush()
+        other_id = other.id
+    photo = library.upload_photo(brand_id, make_png(1080, 1080), photo_meta, "owner")
+    logo = normalize_logo(make_logo_png())
+    from_other = library.upload_photo(other_id, make_png(1081, 1080), photo_meta, "owner")
+    with session_factory.begin() as session:
+        logo_id = library.store_asset_in(
+            session, brand_id, logo, kind="logotipo", origem="propria", actor="owner"
+        )
+    ref = library.active_photo(brand_id, photo.id)
+    assert ref is not None and (ref.id, ref.descricao) == (photo.id, "Produto privado")
+    assert library.active_photo(brand_id, logo_id) is None
+    assert library.active_photo(brand_id, from_other.id) is None
+    assert library.active_photo(other_id, photo.id) is None
+    assert library.active_photo(brand_id, "missing") is None
+    library.deactivate(brand_id, photo.id, "owner")
+    assert library.active_photo(brand_id, photo.id) is None
+
+
 @pytest.mark.parametrize("operation", ["read", "deactivate"])
 def test_other_brand_asset_not_found(
     library: MediaLibrary,

@@ -213,6 +213,11 @@ def fit_title(titulo: str, layout: LayoutName) -> TitleFit | None:
     O tamanho decresce em TITLE_SIZE_STEP: aceita-se o primeiro que cabe em duas linhas, por
     isso um tamanho maior com duas linhas vence um menor com uma. Titulos vazios, com mais de
     MAX_TITLE_CHARS, com caracteres nao imprimiveis ou sem glifo na fonte devolvem None.
+
+    Levanta `InvalidLayoutInput` para `foto_inteira`, que nao desenha titulo: quem chama so
+    deve medir os layouts de `TITLE_BOXES`. Nota: `LayoutInput` recusa com `TitleTooLong` um
+    titulo com mais de MAX_TITLE_CHARS mesmo em `foto_inteira` (o titulo e validado antes de
+    o layout decidir ignora-lo), enquanto `fit_title` devolve None para esse mesmo titulo.
     """
     box = _title_box(layout)
     text = normalize_title(titulo)
@@ -258,6 +263,11 @@ def logo_box(layout: LayoutName) -> Rect:
 
 
 def _paste_logo(canvas: Image.Image, logo_png: bytes, box: Rect) -> None:
+    """Cola o logotipo contido em `box`.
+
+    Pre-condicao: `logo_png` ja foi normalizado por `normalize_logo` (PNG RGBA em sRGB, 64 a
+    4096 px, sem blocos auxiliares); aqui so se valida o limite de pixeis e o formato PNG.
+    """
     logo = open_bounded(logo_png, _LOGO_FORMATS).convert("RGBA")
     box_width, box_height = box[2] - box[0], box[3] - box[1]
     # Nunca se amplia: um logotipo pequeno fica no tamanho original, centrado na caixa.

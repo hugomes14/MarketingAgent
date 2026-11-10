@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+{% block title %}Kit de marca{% endblock %}
+{% macro swatch(color, label) %}<svg class="amostra" width="28" height="28" role="img" aria-label="{{ label }} {{ color }}"><rect width="28" height="28" fill="{{ color }}"></rect></svg>{% endmacro %}
+{% block content %}
+<h1>Kit de marca</h1>
+
+<section class="cartao" id="kit-ativo">
+  <h2>Kit ativo</h2>
+  {% if kit %}
+  <p><strong>Versão {{ kit.version }}</strong> · guardada em {{ kit.created_at.strftime("%Y-%m-%d %H:%M") }} UTC</p>
+  <div class="amostras">
+    <span>{{ swatch(kit.cor_primaria, "Cor primária") }} Primária <code>{{ kit.cor_primaria }}</code></span>
+    <span>{{ swatch(kit.cor_secundaria, "Cor secundária") }} Secundária <code>{{ kit.cor_secundaria }}</code></span>
+    <img class="logo-kit" src="/media/{{ kit.logo_asset_id }}" alt="Logótipo do kit">
+  </div>
+  {% else %}
+  <p class="nota">Ainda não há kit de marca. Guarde o logótipo e as duas cores no formulário abaixo.</p>
+  {% endif %}
+</section>
+
+<section class="cartao" id="guardar-kit">
+  <h2>{{ "Nova versão do kit" if kit else "Criar o kit" }}</h2>
+  <p class="nota">O título é escrito na cor secundária sobre a primária; o contraste tem de ser de pelo menos {{ contrast.threshold }}:1. Cada gravação cria uma versão nova; as anteriores ficam no histórico.</p>
+  <form method="post" action="/kit" enctype="multipart/form-data">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <fieldset class="cores-kit" hx-get="/kit/contraste" hx-trigger="change" hx-target="#contraste" hx-swap="innerHTML" hx-include="#cor_primaria,#cor_secundaria">
+      <legend>Cores</legend>
+      <label for="cor_primaria">Cor primária (faixa e sombra)</label>
+      <input id="cor_primaria_picker" type="color" value="{{ primary }}" data-campo="cor_primaria" aria-label="Escolher a cor primária">
+      <input id="cor_primaria" name="cor_primaria" type="text" value="{{ primary }}" maxlength="7" pattern="#[0-9A-Fa-f]{6}" required autocomplete="off" data-seletor="cor_primaria_picker">
+      <label for="cor_secundaria">Cor secundária (título)</label>
+      <input id="cor_secundaria_picker" type="color" value="{{ secondary }}" data-campo="cor_secundaria" aria-label="Escolher a cor secundária">
+      <input id="cor_secundaria" name="cor_secundaria" type="text" value="{{ secondary }}" maxlength="7" pattern="#[0-9A-Fa-f]{6}" required autocomplete="off" data-seletor="cor_secundaria_picker">
+    </fieldset>
+    <div id="contraste" aria-live="polite">{% include "_contrast.html" %}</div>
+    <label for="logotipo">Logótipo{% if kit %} (opcional: sem ficheiro mantém o atual){% endif %}</label>
+    <input id="logotipo" name="logotipo" type="file" accept="image/png"{% if not kit %} required{% endif %}>
+    <p class="nota">PNG com transparência, até 2 MB e entre 64 e 4096 píxeis em cada lado.</p>
+    <button type="submit">Guardar o kit</button>
+  </form>
+</section>
+
+<section class="cartao" id="previas">
+  <h2>Pré-visualização dos layouts</h2>
+  {% if can_preview %}
+  <form method="get" action="/kit">
+    <label for="foto">Fotografia de exemplo</label>
+    <select id="foto" name="foto">
+      {% for photo in photos %}<option value="{{ photo.id }}"{% if photo.id == selected %} selected{% endif %}>{{ photo.descricao|truncate(60) }}</option>{% endfor %}
+    </select>
+    <button type="submit">Ver com esta fotografia</button>
+  </form>
+  <div class="previas-kit">
+    {% for name, label in layouts %}
+    <figure>
+      <img loading="lazy" src="/kit/previa/{{ name }}{% if selected %}?foto={{ selected }}{% endif %}" alt="Pré-visualização do layout {{ label }}" width="1080" height="1350">
+      <figcaption>{{ label }}</figcaption>
+    </figure>
+    {% endfor %}
+  </div>
+  <p class="nota">Título de exemplo; o fundo gerado é só um gradiente de teste.</p>
+  {% elif kit %}
+  <p class="nota">Falta uma fotografia ativa: adicione uma na <a href="/biblioteca">biblioteca</a> para ver os layouts.</p>
+  {% else %}
+  <p class="nota">Para ver os layouts falta o kit de marca{% if not photos %} e uma fotografia ativa na <a href="/biblioteca">biblioteca</a>{% endif %}.</p>
+  {% endif %}
+</section>
+
+<section class="cartao" id="historico-kit">
+  <h2>Histórico</h2>
+  {% if history %}
+  <ul class="itens">
+    {% for row in history %}
+    <li class="versao-kit"><strong>Versão {{ row.kit.version }}</strong> · {{ row.kit.created_at.strftime("%Y-%m-%d") }} · {{ swatch(row.kit.cor_primaria, "Cor primária") }} <code>{{ row.kit.cor_primaria }}</code> {{ swatch(row.kit.cor_secundaria, "Cor secundária") }} <code>{{ row.kit.cor_secundaria }}</code> <span class="nota">contraste {{ row.ratio }}:1</span></li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="nota">Ainda não há versões.</p>
+  {% endif %}
+</section>
+{% endblock %}

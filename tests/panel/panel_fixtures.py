@@ -30,11 +30,8 @@ from marketing_agent.harness.engine import AgentEngine
 from marketing_agent.interview.service import InterviewService
 from marketing_agent.llm.fake import FakeLlmClient
 from marketing_agent.llm.router import LlmRouter
-from marketing_agent.media.library import MediaLibrary
-from marketing_agent.media.store import LocalMediaStore
 from marketing_agent.panel.app import create_app
-from marketing_agent.panel.assembly import build_content_services
-from marketing_agent.panel.context import MediaServices
+from marketing_agent.panel.assembly import build_content_services, build_media_services
 from marketing_agent.panel.queries import PanelQueries
 from marketing_agent.strategy.service import StrategyService
 
@@ -50,9 +47,7 @@ def make_panel(
 
     def make(script: Script, *, peer: str = PEER) -> PanelRig:
         settings = build_settings(media_dir=tmp_path / "media")
-        media = MediaServices(
-            MediaLibrary(session_factory, LocalMediaStore(settings.media_dir), clock)
-        )
+        media = build_media_services(settings, session_factory, clock)
         llm = FakeLlmClient(scripted(script))
         route = RoleRoute(
             provider="fake", model_id="fake-1", capabilities=frozenset({"text", "json_schema"})

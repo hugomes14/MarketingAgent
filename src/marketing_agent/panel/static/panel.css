@@ -152,3 +152,14 @@ fieldset.feedback { border: 1px solid var(--linha); border-radius: 0.4rem; margi
 fieldset.feedback label { display: block; font-weight: 400; margin-right: 0; }
 .etiqueta-in_review, .etiqueta-drafting, .etiqueta-planned { background: var(--aviso-fundo); color: var(--aviso); }
 .etiqueta-cancelled { color: var(--suave); }
+
+/* Kit de marca: as amostras sao SVG (a CSP nao permite estilos inline). */
+.amostras { display: flex; flex-wrap: wrap; align-items: center; gap: 1.5rem; }
+.amostra { vertical-align: middle; border: 1px solid var(--linha); border-radius: 0.25rem; }
+.logo-kit { max-width: 12rem; max-height: 5rem; padding: 0.5rem; background: var(--linha); border-radius: 0.25rem; }
+.cores-kit { border: 1px solid var(--linha); border-radius: 0.4rem; margin: 0 0 0.75rem; }
+.cores-kit input[type="color"] { width: 3rem; height: 2.25rem; padding: 0; vertical-align: middle; }
+.cores-kit input[type="text"] { width: 8rem; font-family: monospace; }
+.previas-kit { display: grid; gap: 1rem; margin-top: 1rem; grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr)); }
+.previas-kit figure { margin: 0; }
+.previas-kit img { display: block; width: 100%; height: auto; background: var(--linha); }

@@ -110,6 +110,15 @@ def _photo_view(row: MediaAsset) -> PhotoView:
     )
 
 
+def _photo_ref(row: MediaAsset) -> PhotoRef:
+    return PhotoRef(
+        row.id,
+        cast(PhotoSubject, row.mostra),
+        cast(str, row.descricao),
+        row.tem_autorizacao_pessoas,
+    )
+
+
 def _photo_query(brand_id: str, active_only: bool) -> Select[MediaAsset]:
     statement = select(MediaAsset).where(MediaAsset.brand_id == brand_id, MediaAsset.kind == "foto")
     if active_only:
@@ -176,15 +185,16 @@ class MediaLibrary:
             raise MediaError()
         with self._sessions() as session:
             photos = session.scalars(_photo_query(brand_id, True).limit(min(limit, 50)))
-            return {
-                row.id: PhotoRef(
-                    row.id,
-                    cast(PhotoSubject, row.mostra),
-                    cast(str, row.descricao),
-                    row.tem_autorizacao_pessoas,
-                )
-                for row in photos
-            }
+            return {row.id: _photo_ref(row) for row in photos}
+
+    def active_photo(self, brand_id: str, asset_id: str) -> PhotoRef | None:
+        """A foto ativa da marca com este id, ou None.
+
+        Inexistente, desativada, de outra marca ou de outro tipo (logotipo) dao todas None.
+        """
+        with self._sessions() as session:
+            row = session.scalar(_photo_query(brand_id, True).where(MediaAsset.id == asset_id))
+            return _photo_ref(row) if row is not None else None
 
     def store_asset_in(
         self,

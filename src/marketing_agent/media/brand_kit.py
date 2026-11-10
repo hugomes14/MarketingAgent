@@ -16,6 +16,7 @@ from marketing_agent.media.ingest import NormalizedImage, normalize_logo
 from marketing_agent.media.library import AssetNotFound, MediaLibrary
 
 MIN_TITLE_CONTRAST = 4.5
+INVALID_COLOR_MESSAGE = "A cor deve usar o formato #RRGGBB."
 _HEX_COLOR = re.compile(r"#[0-9A-Fa-f]{6}")
 type HexColor = Annotated[str, StringConstraints(pattern=r"^#[0-9A-Fa-f]{6}$")]
 type BrandFont = Literal["inter-bold"]
@@ -27,7 +28,7 @@ class KitError(ValueError):
 
 def _normalize_color(color: str) -> str:
     if _HEX_COLOR.fullmatch(color) is None:
-        raise KitError("A cor deve usar o formato #RRGGBB.")
+        raise KitError(INVALID_COLOR_MESSAGE)
     return color.upper()
 
 
@@ -46,6 +47,11 @@ def contrast_ratio(color_a: str, color_b: str) -> float:
     """Calcula a razao WCAG entre duas cores #RRGGBB, independentemente da ordem."""
     first, second = sorted((_luminance(color_a), _luminance(color_b)))
     return (second + 0.05) / (first + 0.05)
+
+
+def display_ratio(ratio: float) -> str:
+    """Razao com duas casas, truncada: 4.497 nunca aparece como 4.50 ao lado do minimo de 4.5."""
+    return f"{math.floor(ratio * 100) / 100:.2f}"
 
 
 class BrandKitInput(BaseModel):
@@ -68,9 +74,9 @@ class BrandKitInput(BaseModel):
         """Compara a razao sem arredondar; so a mensagem apresentada e truncada."""
         ratio = contrast_ratio(self.cor_secundaria, self.cor_primaria)
         if ratio < MIN_TITLE_CONTRAST:
-            # Truncar evita mostrar 4.50 para 4.497 ao lado do minimo de 4.5.
-            shown = math.floor(ratio * 100) / 100
-            raise KitError(f"Contraste {shown:.2f}: o título exige pelo menos 4.5.")
+            raise KitError(
+                f"Contraste {display_ratio(ratio)}: o título exige pelo menos {MIN_TITLE_CONTRAST}."
+            )
         return self
 
 
@@ -151,10 +157,16 @@ class BrandKitService:
             row = session.scalar(_history_query(brand_id).limit(1))
             return _view(row) if row is not None else None
 
-    def history(self, brand_id: str) -> list[BrandKitView]:
-        """Lista apenas as versoes da marca, da mais recente para a mais antiga."""
+    def history(self, brand_id: str, limit: int | None = None) -> list[BrandKitView]:
+        """Lista apenas as versoes da marca, da mais recente para a mais antiga.
+
+        `limit` (se dado) corta no SQL as versoes mais antigas; sem ele devolve todas.
+        """
+        statement = _history_query(brand_id)
+        if limit is not None:
+            statement = statement.limit(limit)
         with self._sessions() as session:
-            return [_view(row) for row in session.scalars(_history_query(brand_id))]
+            return [_view(row) for row in session.scalars(statement)]
 
     def logo_png(self, brand_id: str, kit: BrandKitView) -> bytes:
         """Le o logotipo canonico da versao, comprovando a marca na base de dados."""

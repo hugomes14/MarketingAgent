@@ -1,0 +1,8 @@
+{% if contrast.state == "ok" %}
+<p class="aviso {{ 'info' if contrast.complies else 'atencao' }}">
+  Contraste {{ contrast.ratio }}:1 entre as duas cores (mínimo {{ contrast.threshold }}):
+  <strong>{{ "cumpre" if contrast.complies else "não cumpre" }}</strong>.
+</p>
+{% elif contrast.state == "invalid" %}
+<p class="aviso atencao">Cor inválida: use o formato #RRGGBB nas duas cores.</p>
+{% endif %}

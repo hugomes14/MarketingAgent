@@ -17,6 +17,9 @@ MULTIPART_OVERHEAD_BYTES = 64 * 1024
 MAX_UPLOAD_FIELDS = 20
 MAX_FIELD_BYTES = 8 * 1024
 MULTIPART_CONTENT_TYPE = "multipart/form-data"
+# Nomes aceites para o unico ficheiro: `ficheiro` (fotos) e `logotipo` (kit de marca). O
+# recetor so devolve bytes; cada rota decide o que o ficheiro significa. Qualquer outro e 400.
+FILE_FIELD_NAMES = frozenset({"ficheiro", "logotipo"})
 _CACHE_ATTRIBUTE = "panel_upload_form"
 _MAX_BODY_BYTES = MAX_UPLOAD_BYTES + MULTIPART_OVERHEAD_BYTES
 
@@ -129,7 +132,7 @@ async def _copy_form(form: FormData) -> UploadForm:
             raise _invalid(400)
         names.add(name)
         if isinstance(value, UploadFile):
-            if name != "ficheiro" or (value.filename and "\x00" in value.filename):
+            if name not in FILE_FIELD_NAMES or (value.filename and "\x00" in value.filename):
                 raise _invalid(400)
             data = await value.read(MAX_UPLOAD_BYTES + 1)
             if len(data) > MAX_UPLOAD_BYTES:

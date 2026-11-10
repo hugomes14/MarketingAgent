@@ -22,6 +22,7 @@ from marketing_agent.media.brand_kit import (
     BrandKitService,
     KitError,
     contrast_ratio,
+    display_ratio,
 )
 from marketing_agent.media.ingest import normalize_logo
 from marketing_agent.media.library import MediaLibrary
@@ -332,3 +333,21 @@ def test_concurrent_saves_get_distinct_versions(
             )
             == 2 + offset
         )
+
+
+@pytest.mark.parametrize(
+    ("ratio", "shown"),
+    [(21.0, "21.00"), (4.5, "4.50"), (4.4999, "4.49"), (4.478089, "4.47"), (1.0, "1.00")],
+)
+def test_display_ratio_truncates_never_rounds_up(ratio: float, shown: str) -> None:
+    assert display_ratio(ratio) == shown
+
+
+def test_history_limit_cuts_the_oldest_versions(
+    service: BrandKitService, brand_id: str, kit_input: BrandKitInput
+) -> None:
+    for _ in range(3):
+        service.save(brand_id, kit_input, make_logo_png(), "owner")
+    assert [kit.version for kit in service.history(brand_id, limit=2)] == [3, 2]
+    assert [kit.version for kit in service.history(brand_id)] == [3, 2, 1]
+    assert service.history(brand_id, limit=0) == []
