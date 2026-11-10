@@ -4,7 +4,7 @@
 
 - Timestamp: `2026-11-09T14:07:58+00:00`
 - Autor: `agent`
-- Estado de execução: **Tarefas 1 a 7 concluídas; Tarefas 8 a 12 por fazer.**
+- Estado de execução: **Tarefas 1 a 8 concluídas; Tarefas 9 a 12 por fazer.**
 
 **Goal:** A partir da estratégia ativa, propor e aprovar o plano da semana e gerar em segundo plano, para cada publicação aprovada no plano, uma legenda revista que o responsável aprova, edita, devolve ou rejeita no painel.
 
@@ -326,7 +326,7 @@ tests/{db,kb,jobs,planning,content,feedback,panel,e2e}/...
   - `Worker(queue, pipeline, worker_id, sleep)`: `run_once() -> bool`, `run_forever(stop: threading.Event) -> None` (espera 2 s quando a fila está vazia); no arranque `queue.requeue_expired()` e `recover_stale` das reservas.
   - CLI: `marketing-agent worker` (sai com 0 em `SIGINT`/`SIGTERM`, sem traceback).
 
-- [ ] **Step 1: Testes que falham.**
+- [x] **Step 1: Testes que falham.**
   - `test_generate_happy_path_creates_revision_in_review`.
   - `test_reviewer_rever_twice_then_goes_to_owner_with_notes` (3 rascunhos, 2 voltas, revisão final com as notas).
   - `test_needs_human_leaves_post_drafting_with_reason`.
@@ -334,10 +334,20 @@ tests/{db,kb,jobs,planning,content,feedback,panel,e2e}/...
   - `test_cancelled_post_job_completes_without_writing`.
   - `test_worker_killed_mid_job_requeued_once` (Foco 4: job `running` com `lease` expirada volta a `queued`; a segunda execução cria uma só revisão).
   - `test_worker_cli_stops_cleanly`.
-- [ ] **Step 2: Correr e ver falhar.**
-- [ ] **Step 3: Implementar.**
-- [ ] **Step 4: Validação global.**
-- [ ] **Step 5: Commit.** `feat: pipeline copywriter-revisor no worker com protecao contra gravacoes obsoletas`.
+- [x] **Step 2: Correr e ver falhar.**
+- [x] **Step 3: Implementar.**
+- [x] **Step 4: Validação global.**
+- [x] **Step 5: Commit.** `feat: pipeline copywriter-revisor no worker com protecao contra gravacoes obsoletas`.
+
+**Notas de execução (Tarefa 8):**
+
+- Concluída (commits `bc2ccf6` e `e2d118b`), em modo subagente: implementação, revisão com modelo mais capaz (concorrência) e uma ronda de correção com re-revisão limpa. 1209 testes passam; `ruff` e `mypy src` limpos.
+- `ContentPipeline.generate`: o post é bloqueado (`FOR UPDATE`) antes do job, nunca há transação nem lock aberto durante as chamadas ao LLM, e a gravação final (revisão `origin='agente'`, veredicto, notas, `lifecycle='in_review'`, `review_rounds`, `last_error` limpo) corre na mesma transação que `queue.complete_in`; se a lease se perdeu, tudo é revertido sem erro. **Obsoleto (`stale`)** = post `cancelled`, já não `drafting`, `rev_no` máximo diferente do do início da tentativa, ou `brief`/`channels`/`scheduled_date` diferentes; o reposicionamento de `plan_artifact_id`/`strategy_artifact_id` é ignorado. `aprovar` com violações conta como `rever`; no máximo 2 voltas; `rejeitar` segue para o responsável com esse veredicto. Todas as falhas passam por `describe_error`/`describe_stop` (só nomes de classe); um job `dead` deixa `last_error` no post que ainda está `drafting`.
+- **Lease (emenda a R2):** a verificação de limites do motor só corre entre passos, por isso uma chamada pode durar até ao timeout do adaptador. `LLM_CALL_TIMEOUT_S = 120` (em `llm/types.py`, usado pelos adaptadores) e lease = 3 × (180 + 180 + 2 × 120) + 60 = **1860 s**; `worker_stale_after()` = 360 s. `requeue_expired` corre no arranque e nas iterações ociosas.
+- `Worker` (`jobs/worker.py`), `marketing-agent worker` (sai com 0 em SIGINT/SIGTERM; um segundo sinal força a saída), módulos `content/{pipeline,rounds,revision_store,specs}.py`, hash canónico com normalização NFC. `RunResult` ganhou o campo opcional `limit` (alteração mínima ao Plano 1). `ContentPipeline` leva também `store` e `strategy`.
+- **Contrato para a Tarefa 9 (vinculativo):** tudo numa transação que bloqueia o post primeiro (`lock_post`) e só depois jobs/revisões. `request_changes`: exige `in_review`, recusa se há job ativo, põe `drafting` e `last_error=None`, enfileira `{post_id, owner_comment, reason:"changes"}` (dedupe `generate_post:<post>:changes:<max rev_no>`). `edit`: `cancel_for_post_in`, `rev_no=max+1`, `origin='edicao_responsavel'`, `in_review`. `approve`: `in_review` e hash igual ao da revisão mais recente, `cancel_for_post_in`. `reject`: `cancel_for_post_in`. Não inventar estados.
+- Menores adiados: `stop_on_signals` atribui `previous` depois de instalar o handler; falha de infraestrutura antes de `_begin` pode deixar o job `dead` com o post `planned` sem motivo; o timeout do cliente HTTP é por fase, não total; testes dos itens 2 a 8 da ronda de correção escritos depois do código. Para a Tarefa 9: `planning/posts._week_posts` deve bloquear por `Post.id` (evita impasse com `requeue_expired`).
+
 
 ### Task 9: Revisão do responsável
 
