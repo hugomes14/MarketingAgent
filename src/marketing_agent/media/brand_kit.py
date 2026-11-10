@@ -1,5 +1,6 @@
 """Kit de marca versionado, com contraste WCAG 2.x e logotipos imutaveis."""
 
+import math
 import re
 from dataclasses import dataclass
 from datetime import datetime
@@ -10,7 +11,7 @@ from sqlalchemy import Select, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from marketing_agent.clock import Clock
-from marketing_agent.db.models import AuditLog, Brand, BrandKit
+from marketing_agent.db.models import AuditLog, Brand, BrandKit, MediaAsset
 from marketing_agent.media.ingest import NormalizedImage, normalize_logo
 from marketing_agent.media.library import AssetNotFound, MediaLibrary
 
@@ -64,10 +65,12 @@ class BrandKitInput(BaseModel):
 
     @model_validator(mode="after")
     def require_contrast(self) -> Self:
-        """Compara a razao sem arredondar; arredonda apenas a mensagem apresentada."""
+        """Compara a razao sem arredondar; so a mensagem apresentada e truncada."""
         ratio = contrast_ratio(self.cor_secundaria, self.cor_primaria)
         if ratio < MIN_TITLE_CONTRAST:
-            raise KitError(f"Contraste {ratio:.2f}: o título exige pelo menos 4.5.")
+            # Truncar evita mostrar 4.50 para 4.497 ao lado do minimo de 4.5.
+            shown = math.floor(ratio * 100) / 100
+            raise KitError(f"Contraste {shown:.2f}: o título exige pelo menos 4.5.")
         return self
 
 
@@ -180,12 +183,28 @@ class BrandKitService:
     ) -> str:
         if image is not None:
             # A deduplicacao reutiliza ativos sem sobrescrever os metadados originais.
-            return self._library.store_asset_in(
+            logo_id = self._library.store_asset_in(
                 session, brand_id, image, kind="logotipo", origem="propria", actor=actor
             )
-        if previous is None:
+        elif previous is not None:
+            logo_id = previous.logo_asset_id
+        else:
             raise KitError("O primeiro kit exige um logótipo.")
-        return previous.logo_asset_id
+        self._require_brand_logo(session, brand_id, logo_id)
+        return logo_id
+
+    def _require_brand_logo(self, session: Session, brand_id: str, logo_id: str) -> None:
+        # Os mesmos bytes podem ja existir como outro tipo de ativo (a deduplicacao e por
+        # marca/hash); um kit nunca pode apontar para um que nao seja logotipo da marca.
+        is_logo = session.scalar(
+            select(MediaAsset.id).where(
+                MediaAsset.id == logo_id,
+                MediaAsset.brand_id == brand_id,
+                MediaAsset.kind == "logotipo",
+            )
+        )
+        if is_logo is None:
+            raise KitError("O ativo escolhido não é um logótipo da marca.")
 
     def _audit(self, session: Session, row: BrandKit, actor: str) -> None:
         session.add(

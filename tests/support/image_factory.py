@@ -15,6 +15,19 @@ def _srgb_profile() -> bytes:
     return bytes(profile)
 
 
+def linear_rgb_profile() -> bytes:
+    """Perfil RGB de gama 1, para distinguir conversao ICC de copia de pixeis."""
+    profile = bytearray(ImageCms.ImageCmsProfile(ImageCms.createProfile("sRGB")).tobytes())
+    count = struct.unpack_from(">I", profile, 128)[0]
+    for index in range(count):
+        tag, offset, _ = struct.unpack_from(">4sII", profile, 132 + 12 * index)
+        if tag in (b"rTRC", b"gTRC", b"bTRC"):
+            # Curva parametrica de tipo 0 e gama 1: RGB linear em vez de sRGB.
+            struct.pack_into(">H", profile, offset + 8, 0)
+            struct.pack_into(">i", profile, offset + 12, 65536)
+    return bytes(profile)
+
+
 def make_jpeg(
     width: int,
     height: int,
@@ -34,6 +47,28 @@ def make_jpeg(
     profile = _srgb_profile() if icc else b""
     output = BytesIO()
     image.save(output, "JPEG", quality=95, exif=exif, icc_profile=profile, comment=b"privado")
+    return output.getvalue()
+
+
+def make_mpo(width: int, height: int, *, orientation: int | None = None) -> bytes:
+    """Cria JPEG multi-imagem (MPO) de telemovel: dois fotogramas, EXIF e bloco MPF."""
+    first = Image.new("RGB", (width, height), (220, 30, 20))
+    first.paste((20, 40, 220), (width // 2, 0, width, height))
+    second = Image.new("RGB", (width // 2, height // 2), (0, 255, 0))
+    exif = Image.Exif()
+    exif[34853] = {1: "N", 2: (38.0, 43.0, 0.0), 3: "W", 4: (9.0, 8.0, 0.0)}
+    if orientation is not None:
+        exif[274] = orientation
+    output = BytesIO()
+    first.save(output, "MPO", save_all=True, append_images=[second], exif=exif)
+    return output.getvalue()
+
+
+def make_gray16_png(width: int, height: int, value: int, *, icc: bytes | None = None) -> bytes:
+    """Cria PNG cinzento de 16 bits (modo I;16) com um valor uniforme."""
+    image = Image.new("I;16", (width, height), value)
+    output = BytesIO()
+    image.save(output, "PNG", icc_profile=icc)
     return output.getvalue()
 
 
@@ -80,5 +115,5 @@ def make_animated_webp() -> bytes:
 
 
 def make_logo_png() -> bytes:
-    """Cria logotipo RGBA pequeno, incluindo transparencia parcial."""
-    return make_png(32, 24, alpha=True)
+    """Cria logotipo RGBA no limite inferior de tamanho, com transparencia parcial."""
+    return make_png(96, 64, alpha=True)

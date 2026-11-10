@@ -2,6 +2,7 @@
 
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import FrozenInstanceError, replace
+from math import floor
 from pathlib import Path
 from threading import Event
 from time import monotonic
@@ -58,8 +59,17 @@ def test_contrast_known_pairs() -> None:
 @pytest.mark.parametrize("color", ["#777777", "#FFFFFF", "#808080"])
 def test_kit_refuses_low_contrast(color: str) -> None:
     ratio = contrast_ratio(color, "#FFFFFF")
-    with pytest.raises(ValidationError, match=f"{ratio:.2f}"):
+    # O valor apresentado trunca (nunca arredonda para cima, ao lado do minimo de 4.5).
+    with pytest.raises(ValidationError, match=f"{floor(ratio * 100) / 100:.2f}"):
         BrandKitInput(cor_primaria=color, cor_secundaria="#FFFFFF")
+
+
+def test_contrast_just_below_minimum_is_not_displayed_as_the_minimum() -> None:
+    assert 4.49 < contrast_ratio("#767776", "#FFFFFF") < MIN_TITLE_CONTRAST
+    with pytest.raises(ValidationError) as error:
+        BrandKitInput(cor_primaria="#767776", cor_secundaria="#FFFFFF")
+    assert "Contraste 4.49:" in str(error.value)
+    assert "4.50" not in str(error.value)
 
 
 def test_kit_colors_normalized_uppercase() -> None:
@@ -145,10 +155,10 @@ def test_new_logo_preserves_previous_bytes(
     brand_id: str,
 ) -> None:
     first = service.save(brand_id, kit_input, make_logo_png(), "owner")
-    second = service.save(brand_id, kit_input, make_png(40, 40, alpha=True), "owner")
+    second = service.save(brand_id, kit_input, make_png(80, 80, alpha=True), "owner")
     assert first.logo_asset_id != second.logo_asset_id
     assert service.logo_png(brand_id, first) == normalize_logo(make_logo_png()).data
-    assert service.logo_png(brand_id, second) == normalize_logo(make_png(40, 40, alpha=True)).data
+    assert service.logo_png(brand_id, second) == normalize_logo(make_png(80, 80, alpha=True)).data
 
 
 def test_missing_or_other_brand_kit_is_safe(
@@ -184,7 +194,7 @@ def test_brand_scoped_logo_and_history(
         session.flush()
         other_id = other.id
     first = service.save(brand_id, kit_input, make_logo_png(), "owner")
-    second = service.save(other_id, kit_input, make_png(40, 40, alpha=True), "owner")
+    second = service.save(other_id, kit_input, make_png(80, 80, alpha=True), "owner")
     assert first.version == second.version == 1
     assert service.history(brand_id) == [first]
     assert service.history(other_id) == [second]
@@ -228,7 +238,7 @@ def test_invalid_logo_is_atomic(
             assert session.scalar(select(func.count()).select_from(model)) == 0
 
 
-def test_duplicate_logo_keeps_existing_asset_metadata(
+def test_logo_bytes_matching_a_non_logo_asset_are_refused_without_changes(
     service: BrandKitService,
     library: MediaLibrary,
     kit_input: BrandKitInput,
@@ -244,11 +254,33 @@ def test_duplicate_logo_keeps_existing_asset_metadata(
             origem="composta",
             actor="original",
         )
-    kit = service.save(brand_id, kit_input, make_logo_png(), "other")
-    assert kit.logo_asset_id == asset_id
+    with pytest.raises(KitError) as error:
+        service.save(brand_id, kit_input, make_logo_png(), "other")
+    assert str(error.value) == "O ativo escolhido não é um logótipo da marca."
     with session_factory() as session:
         asset = session.get_one(MediaAsset, asset_id)
         assert (asset.kind, asset.origem, asset.created_by) == ("final", "composta", "original")
+        assert session.scalar(select(func.count()).select_from(BrandKit)) == 0
+        # So a auditoria do ativo preparado: a tentativa recusada nao deixou rasto.
+        assert session.scalars(select(AuditLog.action)).all() == ["media.upload"]
+
+
+def test_inherited_logo_must_still_be_a_brand_logo(
+    service: BrandKitService,
+    kit_input: BrandKitInput,
+    brand_id: str,
+    session_factory: sessionmaker[Session],
+) -> None:
+    first = service.save(brand_id, kit_input, make_logo_png(), "owner")
+    with session_factory.begin() as session:
+        # Referencia corrompida: o servico nao pode propagar um ativo que nao seja logotipo.
+        session.execute(
+            text("UPDATE media_asset SET kind = 'final' WHERE id = :id"),
+            {"id": first.logo_asset_id},
+        )
+    with pytest.raises(KitError, match="não é um logótipo"):
+        service.save(brand_id, kit_input, None, "owner")
+    assert [kit.version for kit in service.history(brand_id)] == [1]
 
 
 @pytest.mark.parametrize("has_previous", [False, True])

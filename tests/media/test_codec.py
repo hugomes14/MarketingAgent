@@ -5,8 +5,16 @@ from io import BytesIO
 from unittest.mock import patch
 
 import pytest
-from image_factory import make_animated_webp, make_jpeg, make_png, make_png_bomb
-from PIL import Image, ImageCms, ImageFile
+from image_factory import (
+    linear_rgb_profile,
+    make_animated_webp,
+    make_gray16_png,
+    make_jpeg,
+    make_mpo,
+    make_png,
+    make_png_bomb,
+)
+from PIL import Image, ImageFile
 
 from marketing_agent.images import codec
 from marketing_agent.images.codec import (
@@ -107,21 +115,9 @@ def test_invalid_pillow_data_has_safe_reason_and_preserves_cause() -> None:
     assert error.value.__cause__ is not None
 
 
-def _linear_rgb_profile() -> bytes:
-    profile = bytearray(ImageCms.ImageCmsProfile(ImageCms.createProfile("sRGB")).tobytes())
-    count = struct.unpack_from(">I", profile, 128)[0]
-    for index in range(count):
-        tag, offset, _ = struct.unpack_from(">4sII", profile, 132 + 12 * index)
-        if tag in (b"rTRC", b"gTRC", b"bTRC"):
-            # Curva parametrica de tipo 0 e gama 1: RGB linear em vez de sRGB.
-            struct.pack_into(">H", profile, offset + 8, 0)
-            struct.pack_into(">i", profile, offset + 12, 65536)
-    return bytes(profile)
-
-
 def test_icc_profile_converted_to_srgb_and_dropped() -> None:
     image = Image.new("RGB", (4, 4), (128, 128, 128))
-    image.info["icc_profile"] = _linear_rgb_profile()
+    image.info["icc_profile"] = linear_rgb_profile()
     converted = to_srgb_rgb(image)
     assert converted.mode == "RGB"
     # 128/255 linear convertido pela curva sRGB fica perto de 188/255.
@@ -145,7 +141,7 @@ def test_transparency_is_composited_over_white(mode: str) -> None:
 
 def test_icc_conversion_preserves_alpha_until_white_composition() -> None:
     image = Image.new("RGBA", (1, 1), (128, 128, 128, 128))
-    image.info["icc_profile"] = _linear_rgb_profile()
+    image.info["icc_profile"] = linear_rgb_profile()
     assert to_srgb_rgb(image).getpixel((0, 0)) == pytest.approx((221, 221, 221), abs=1)
 
 
@@ -198,7 +194,7 @@ def test_png_with_invalid_idat_checksum_is_rejected() -> None:
 
 
 def _linear_gray_profile() -> bytes:
-    profile = bytearray(_linear_rgb_profile())
+    profile = bytearray(linear_rgb_profile())
     profile[16:20] = b"GRAY"
     count = struct.unpack_from(">I", profile, 128)[0]
     for index in range(count):
@@ -226,3 +222,63 @@ def test_grayscale_png_trns_keeps_gray_icc_until_conversion() -> None:
     assert converted.mode == "RGB"
     assert converted.getpixel((0, 0)) == (255, 255, 255)
     assert converted.getpixel((1, 0)) == pytest.approx((188, 188, 188), abs=1)
+
+
+def test_mpo_uses_primary_frame_and_is_not_treated_as_animation() -> None:
+    data = make_mpo(64, 48)
+    with Image.open(BytesIO(data)) as probe:
+        assert (probe.format, getattr(probe, "n_frames", 1)) == ("MPO", 2)
+    with open_bounded(data, frozenset({"jpeg"})) as image:
+        assert image.size == (64, 48)
+        assert image.getpixel((0, 0)) == pytest.approx((220, 30, 20), abs=6)
+
+
+def test_mpo_reencoded_is_single_frame_without_exif_or_mpf() -> None:
+    with open_bounded(make_mpo(64, 48, orientation=6), frozenset({"jpeg"})) as image:
+        encoded = encode_jpeg(to_srgb_rgb(image))
+    with Image.open(BytesIO(encoded)) as saved:
+        assert saved.format == "JPEG"
+        assert getattr(saved, "n_frames", 1) == 1
+        assert not saved.getexif()
+        assert not {"exif", "mp", "mpoffset"} & saved.info.keys()
+    # APP2 MPF e APP1 EXIF nao podem sobreviver nos bytes finais.
+    assert b"MPF\x00" not in encoded
+    assert b"Exif\x00" not in encoded
+
+
+def test_gray16_png_midpoint_is_scaled_to_eight_bits() -> None:
+    with open_bounded(make_gray16_png(4, 4, 32768), frozenset({"png"})) as decoded:
+        assert decoded.mode == "I;16"
+        converted = to_srgb_rgb(decoded)
+    assert converted.mode == "RGB"
+    assert converted.getpixel((0, 0)) == pytest.approx((128, 128, 128), abs=1)
+
+
+@pytest.mark.parametrize(("value", "expected"), [(0, 0), (65535, 255)])
+def test_gray16_png_extremes_are_preserved(value: int, expected: int) -> None:
+    with open_bounded(make_gray16_png(2, 2, value), frozenset({"png"})) as decoded:
+        assert to_srgb_rgb(decoded).getpixel((0, 0)) == (expected,) * 3
+
+
+def test_gray16_png_with_icc_is_converted_like_without_icc() -> None:
+    # Perfil cinzento linear: 32768/65535 linear fica perto de 188/255 em sRGB.
+    data = make_gray16_png(2, 2, 32768, icc=_linear_gray_profile())
+    with open_bounded(data, frozenset({"png"})) as decoded:
+        assert decoded.info["icc_profile"]
+        converted = to_srgb_rgb(decoded)
+    assert converted.getpixel((0, 0)) == pytest.approx((188, 188, 188), abs=2)
+
+
+@pytest.mark.parametrize("mode", ["I", "F"])
+def test_unscalable_high_depth_modes_are_rejected_with_fixed_message(mode: str) -> None:
+    with pytest.raises(ImageRejected) as error:
+        to_srgb_rgb(Image.new(mode, (1, 1)))
+    assert str(error.value) == "Profundidade de cor da imagem não suportada."
+
+
+def test_gray16_with_transparency_is_rejected_not_misread() -> None:
+    image = Image.new("I;16", (1, 1), 32768)
+    image.info["transparency"] = 32768
+    with pytest.raises(ImageRejected) as error:
+        to_srgb_rgb(image)
+    assert str(error.value) == "Profundidade de cor da imagem não suportada."
