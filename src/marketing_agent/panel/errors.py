@@ -24,6 +24,7 @@ from marketing_agent.interview.service import (
     SessionNotFound,
     SubmissionConflict,
 )
+from marketing_agent.kb.service import KbError
 from marketing_agent.panel.rendering import Renderer
 from marketing_agent.panel.security import apply_security_headers
 from marketing_agent.strategy.service import (
@@ -64,6 +65,11 @@ _RESPONSES: Final[dict[type[Exception], tuple[int, str]]] = {
     PendingProposal: (409, "Já existe uma proposta deste tipo à espera da sua decisão."),
     ProposalInProgress: (409, "Já há uma proposta em curso. Aguarde."),
     InvalidSessionState: (409, "Esta entrevista já não aceita esta ação."),
+    # Fixa: as mensagens do `KbError` citam chaves e ids da base, que podem ser texto do utilizador.
+    KbError: (
+        422,
+        "Não foi possível guardar na base de conhecimento: o item já existe ou não foi encontrado.",
+    ),
     InvalidTransition: (409, "Este item já foi decidido ou já não aceita esta ação."),
     SessionNotFound: (404, NOT_FOUND_MESSAGE),
     ArtifactNotFound: (404, NOT_FOUND_MESSAGE),

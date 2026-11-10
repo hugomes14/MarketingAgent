@@ -34,6 +34,26 @@
 </section>
 
 <div class="grelha">
+  <section class="cartao" id="plano-semanal">
+    <h2>Plano semanal</h2>
+    {% if snapshot.latest_plan %}
+    <p><a href="/plano/{{ snapshot.latest_plan.artifact_id }}">Plano da semana {{ snapshot.latest_plan.week }}</a> {{ ui.state_badge(snapshot.latest_plan.state) }}</p>
+    {% else %}
+    <p class="nota">Ainda não há plano semanal.</p>
+    {% endif %}
+    {{ ui.post_button("/plano", csrf_token, "Propor plano", disabled=not strategy) }}
+    {% if not strategy %}<p class="nota">Precisa primeiro de uma estratégia aprovada.</p>{% endif %}
+  </section>
+
+  <section class="cartao" id="por-rever">
+    <h2>Publicações</h2>
+    {% if snapshot.in_review_count %}
+    <p>{{ snapshot.in_review_count }} {{ "publicação" if snapshot.in_review_count == 1 else "publicações" }} por rever</p>
+    {% else %}
+    <p class="nota">Nenhuma publicação por rever.</p>
+    {% endif %}
+  </section>
+
   <section class="cartao" id="perfil-ativo">
     <h2>Perfil ativo</h2>
     {% if snapshot.profile %}

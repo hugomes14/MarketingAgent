@@ -25,6 +25,7 @@ from marketing_agent.interview.service import InterviewService
 from marketing_agent.llm.factory import build_llm_router
 from marketing_agent.llm.router import LlmRouter
 from marketing_agent.panel.app import create_app
+from marketing_agent.panel.assembly import build_content_services
 from marketing_agent.panel.context import PanelContext
 from marketing_agent.panel.queries import PanelQueries
 from marketing_agent.secrets import SecretFileError, read_secret_file
@@ -84,6 +85,9 @@ def _assemble(
             csrf_secret,
             brand_id=brand_id,
             queries=PanelQueries(session_factory, store),
+            content=build_content_services(
+                settings, session_factory, engine, store, strategy, clock
+            ),
         )
     except ValueError as exc:
         raise StartupError(str(exc)) from exc

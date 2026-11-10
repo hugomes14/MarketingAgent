@@ -1,21 +1,40 @@
 """Estado partilhado do painel e dependencias FastAPI usadas pelas rotas."""
 
+import logging
 from dataclasses import dataclass
 from typing import Annotated
 
 from fastapi import Depends, Path, Request
 from fastapi.responses import RedirectResponse
 
+from marketing_agent.artifacts.store import ArtifactRecord
 from marketing_agent.budget.controller import BudgetController
+from marketing_agent.content.review import ReviewService
+from marketing_agent.feedback.service import FeedbackService
+from marketing_agent.harness.engine import RunResult, RunStatus
 from marketing_agent.interview.service import InterviewService
+from marketing_agent.kb.service import KbService
 from marketing_agent.panel.auth import TailscaleUser, require_tailscale_user
 from marketing_agent.panel.csrf import require_same_origin_and_csrf
+from marketing_agent.panel.errors import UpstreamFailure
 from marketing_agent.panel.forms import FormFields, read_form
 from marketing_agent.panel.queries import PanelQueries
 from marketing_agent.panel.rendering import Renderer
+from marketing_agent.planning.service import PlanningService
 from marketing_agent.strategy.service import StrategyService
 
+logger = logging.getLogger(__name__)
 UUID_PATTERN = r"^[0-9a-fA-F-]{36}$"
+
+
+@dataclass(frozen=True)
+class ContentServices:
+    """Servicos do texto semanal: base de conhecimento, plano, revisao e feedback."""
+
+    kb: KbService
+    planning: PlanningService
+    review: ReviewService
+    feedback: FeedbackService
 
 
 @dataclass(frozen=True)
@@ -29,6 +48,7 @@ class PanelContext:
     renderer: Renderer
     brand_id: str
     max_message_chars: int
+    content: ContentServices
 
 
 def get_panel(request: Request) -> PanelContext:
@@ -48,3 +68,14 @@ MUTATION_GUARD = Depends(require_same_origin_and_csrf)
 def see_other(url: str) -> RedirectResponse:
     """Redireciona um POST para a pagina de resultado (303: o browser volta a pedir com GET)."""
     return RedirectResponse(url, status_code=303)
+
+
+def proposed_id(run: RunResult) -> str:
+    """Id do artefacto submetido por uma proposta bem-sucedida; senao `UpstreamFailure`.
+
+    Nada do resultado do modelo vai para a mensagem nem para o log: so o estado e o id da execucao.
+    """
+    if run.status is RunStatus.SUCCEEDED and isinstance(run.output, ArtifactRecord):
+        return run.output.id
+    logger.warning("painel: proposta sem sucesso (%s) execucao %s", run.status.value, run.run_id)
+    raise UpstreamFailure(f"execucao {run.run_id} terminou em {run.status.value}")

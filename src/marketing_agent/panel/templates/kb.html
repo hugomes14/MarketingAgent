@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% import "_macros.html" as ui %}
+{% block title %}Base de conhecimento{% endblock %}
+{% block content %}
+<h1>Base de conhecimento</h1>
+<p class="nota">Factos da marca que os textos podem citar. Cada item tem origem e janela de validade; desativar nunca apaga.</p>
+
+{% for group in groups %}
+<section class="cartao" id="kind-{{ group.kind }}">
+  <h2>{{ group.kind|kind_label }}</h2>
+  <ul class="itens">
+    {% for item in group["items"] %}
+    <li>
+      <strong>{{ item.title }}</strong> <span class="nota">({{ item.key }})</span>
+      {% if item.price %}<span class="etiqueta">{{ item.price }}</span>{% endif %}
+      <span class="etiqueta">{{ item.source_kind|origin_label }}</span>
+      <p class="texto">{{ item.body }}</p>
+      <p class="nota">Válido de {{ item.valid_from.isoformat() }} {% if item.valid_until %}até {{ item.valid_until.isoformat() }}{% else %}sem data de fim{% endif %}</p>
+      {{ ui.post_button("/base/" ~ item.id ~ "/desativar", csrf_token, "Desativar") }}
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+{% else %}
+<section class="cartao"><p class="nota">Ainda não há itens na base.</p></section>
+{% endfor %}
+
+<section class="cartao" id="novo-item">
+  <h2>Novo item</h2>
+  <form method="post" action="/base">
+    {{ ui.csrf_field(csrf_token) }}
+    <label for="kb-kind">Tipo</label>
+    <select id="kb-kind" name="kind" required>
+      {% for kind in kinds %}<option value="{{ kind }}">{{ kind|kind_label }}</option>{% endfor %}
+    </select>
+    <label for="kb-key">Chave (identifica o item, ex.: bolo-aniversario)</label>
+    <input type="text" id="kb-key" name="key" maxlength="120" required autocomplete="off">
+    <label for="kb-title">Título</label>
+    <input type="text" id="kb-title" name="title" maxlength="120" required autocomplete="off">
+    <label for="kb-body">Texto</label>
+    <textarea id="kb-body" name="body" rows="4" maxlength="2000" required></textarea>
+    <fieldset>
+      <legend>Só para preços</legend>
+      <label for="kb-amount">Montante</label>
+      <input type="text" id="kb-amount" name="price_amount" inputmode="decimal" maxlength="15" autocomplete="off">
+      <label for="kb-currency">Moeda (3 letras, ex.: EUR)</label>
+      <input type="text" id="kb-currency" name="price_currency" maxlength="3" autocomplete="off">
+    </fieldset>
+    <label for="kb-from">Válido desde</label>
+    <input type="date" id="kb-from" name="valid_from" required>
+    <label for="kb-until">Válido até (obrigatório para preços, posterior ao início)</label>
+    <input type="date" id="kb-until" name="valid_until">
+    <label for="kb-source">Origem</label>
+    <select id="kb-source" name="source_kind">
+      {% for source in sources %}<option value="{{ source }}"{% if source == default_source %} selected{% endif %}>{{ source|origin_label }}</option>{% endfor %}
+    </select>
+    <button type="submit">Guardar item</button>
+  </form>
+</section>
+{% endblock %}

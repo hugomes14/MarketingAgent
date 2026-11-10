@@ -13,7 +13,16 @@
   <dl class="detalhes">
     {% for name, topic in view.perfil.topicos.items() %}
     <dt>{{ name|topic_label }}</dt>
-    <dd>{{ topic.texto }} <span class="etiqueta">{{ topic.origem|origin_label }}</span></dd>
+    <dd>
+      {{ topic.texto }} <span class="etiqueta">{{ topic.origem|origin_label }}</span>
+      {% if view.is_active %}
+      <form method="post" action="/perfil/{{ view.record.id }}/promover" class="em-linha">
+        {{ ui.csrf_field(csrf_token) }}
+        <input type="hidden" name="topic" value="{{ name }}">
+        <button type="submit">Promover à base</button>
+      </form>
+      {% endif %}
+    </dd>
     {% endfor %}
   </dl>
 </section>

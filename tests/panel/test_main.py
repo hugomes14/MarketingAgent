@@ -74,6 +74,17 @@ def test_app_answers_401_without_header_and_200_with_it(
     assert client.get("/", headers={"Tailscale-User-Login": "outro@x"}).status_code == 403
 
 
+def test_factory_wires_the_content_pages_to_real_services(
+    environment: Path, session_factory: Factory
+) -> None:
+    add_brand(session_factory)
+    client = TestClient(create_app_from_env(), client=("127.0.0.1", 5000))
+    headers = {"Tailscale-User-Login": LOGIN}
+    assert client.get("/base", headers=headers).status_code == 200
+    assert "Ainda não há itens" in client.get("/base", headers=headers).text
+    assert "Propor plano" in client.get("/", headers=headers).text
+
+
 def test_untrusted_peer_is_denied_even_with_forged_forwarding(
     environment: Path, session_factory: Factory
 ) -> None:

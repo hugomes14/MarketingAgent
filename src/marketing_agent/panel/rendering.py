@@ -40,6 +40,18 @@ _ORIGIN_LABELS: Final = {
 }
 
 
+_KIND_LABELS: Final = {
+    "oferta": "Ofertas",
+    "preco": "Preços",
+    "horario": "Horários",
+    "contacto": "Contactos",
+    "prova": "Provas",
+    "politica": "Políticas",
+    "outro": "Outros",
+}
+_CHANNEL_LABELS: Final = {"facebook": "Facebook", "instagram": "Instagram"}
+
+
 _TOPIC_LABELS: Final = {
     "o_que_vende": "O que vende",
     "cliente_prioritario": "Cliente prioritário",
@@ -74,6 +86,14 @@ def _origin_label(origin: str) -> str:
     return _ORIGIN_LABELS.get(origin, origin)
 
 
+def _kind_label(kind: str) -> str:
+    return _KIND_LABELS.get(kind, kind)
+
+
+def _channel_label(channel: str) -> str:
+    return _CHANNEL_LABELS.get(channel, channel)
+
+
 def _topic_label(topic: str) -> str:
     """Etiqueta em portugues de um topico do mapa; um desconhecido mostra-se sem sublinhados."""
     return _TOPIC_LABELS.get(topic) or topic.replace("_", " ").capitalize()
@@ -89,6 +109,8 @@ def build_environment() -> Environment:
     environment.filters["usd"] = _usd
     environment.filters["state_label"] = _state_label
     environment.filters["topic_label"] = _topic_label
+    environment.filters["kind_label"] = _kind_label
+    environment.filters["channel_label"] = _channel_label
     environment.filters["gap_status"] = _gap_status
     environment.filters["origin_label"] = _origin_label
     return environment

@@ -94,7 +94,7 @@ form { margin: 0; }
 form.em-linha { display: inline-block; margin: 0.25rem 0.5rem 0.25rem 0; }
 label { display: block; font-weight: 600; margin: 0.5rem 0 0.25rem; }
 fieldset label { display: inline-block; font-weight: 400; margin-right: 1.5rem; }
-textarea, select, input[type="text"] {
+textarea, select, input[type="text"], input[type="date"] {
   width: 100%;
   padding: 0.5rem;
   border: 1px solid var(--linha);
@@ -129,3 +129,6 @@ ul { padding-left: 1.25rem; }
 /* O HTMX nao injeta estilos (includeIndicatorStyles desligado): o indicador define-se aqui. */
 .htmx-indicator { opacity: 0; }
 .htmx-request .htmx-indicator, .htmx-request.htmx-indicator { opacity: 1; }
+
+.itens { list-style: none; padding: 0; }
+.itens li { padding: 0.5rem 0; border-bottom: 1px solid var(--linha); }

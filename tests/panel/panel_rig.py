@@ -32,6 +32,7 @@ from marketing_agent.interview.service import InterviewService
 from marketing_agent.llm.fake import FakeLlmClient
 from marketing_agent.llm.types import LlmResponse, StopReason
 from marketing_agent.panel.auth import TailscaleUser
+from marketing_agent.panel.context import ContentServices
 from marketing_agent.panel.csrf import csrf_token_for
 from marketing_agent.strategy.service import StrategyService
 
@@ -115,6 +116,7 @@ class PanelRig:
     clock: FixedClock
     brand_id: str
     settings: Settings
+    content: ContentServices
 
     def token(self, login: str = LOGIN) -> str:
         return csrf_token_for(TailscaleUser(login=login, name=None), SECRET)
@@ -167,6 +169,21 @@ class PanelRig:
         diagnosis_id = self.post_id("/diagnostico")
         assert self.post(f"/diagnostico/{diagnosis_id}/aprovar").status_code == 303
         return diagnosis_id
+
+    def approve_strategy(self) -> str:
+        """Perfil, diagnostico e estrategia aprovados (aceita a oferta 0, recusa a 1)."""
+        self.confirm_profile()
+        self.approve_diagnosis()
+        strategy_id = self.post_id("/estrategia")
+        decisions = {"decisao_0": "aceitar", "decisao_1": "recusar"}
+        assert self.post(f"/estrategia/{strategy_id}/aprovar", decisions).status_code == 303
+        return strategy_id
+
+    def propose_plan(self, data: dict[str, str] | None = None) -> str:
+        """`POST /plano` (precisa de estrategia aprovada); devolve o id do plano submetido."""
+        response = self.post("/plano", data)
+        assert response.status_code == 303, response.text
+        return response.headers["location"].rsplit("/", 1)[1]
 
     def add_cost(self, cost: Decimal) -> None:
         """Lancamento acertado no mes corrente, como o ledger real."""
