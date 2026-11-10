@@ -1,4 +1,5 @@
 {# Um cartao do lote. Todo o texto do modelo e do responsavel passa pelo autoescape do Jinja. #}
+{% import "_macros.html" as ui %}
 {% set rev = card.revision %}
 <article class="cartao publicacao" id="post-{{ card.id }}">
   <h2>{{ card.scheduled_date.isoformat() }} — {{ card.theme }}</h2>
@@ -54,8 +55,11 @@
   <p class="nota">Em geração: o texto aparece aqui quando estiver pronto.</p>
   {% endif %}
   {% if card.last_error %}
-  <p class="aviso erro" role="alert">A geração falhou ({{ card.last_error }}).{% if not rev %} Não há texto para editar.{% endif %}</p>
+  <p class="aviso erro" role="alert">A geração falhou ({{ card.last_error }}).{% if not rev %} Não há texto para editar: gere de novo.{% endif %}</p>
+  {% elif card.can_retry %}
+  <p class="aviso atencao">Esta publicação não está a ser gerada. Gere de novo para pedir o texto.</p>
   {% endif %}
+  {% if card.can_retry %}{{ ui.post_button("/post/" ~ card.id ~ "/gerar", csrf_token, "Gerar de novo") }}{% endif %}
 
   {% if card.decisions %}
   <h3>Histórico de decisões</h3>

@@ -238,6 +238,19 @@ class JobQueue:
         statement = select(Job.id).where(*_active_generate_post(post_id)).limit(1)
         return session.execute(statement).first() is not None
 
+    def latest_generate_payload_in(self, session: Session, post_id: str) -> Mapping[str, object]:
+        """Payload do `generate_post` mais recente do post (em qualquer estado); vazio se nao ha.
+
+        Serve para repetir uma geracao falhada com o mesmo pedido. Chamar com o post bloqueado.
+        """
+        statement = (
+            select(Job.payload)
+            .where(Job.type == GENERATE_POST_JOB, Job.payload["post_id"].astext == post_id)
+            .order_by(Job.created_at.desc(), Job.updated_at.desc())
+            .limit(1)
+        )
+        return session.execute(statement).scalar_one_or_none() or {}
+
     def cancel_for_post_in(self, session: Session, post_id: str) -> int:
         """Cancela os `generate_post` ativos do post na transacao do chamador; devolve quantos.
 

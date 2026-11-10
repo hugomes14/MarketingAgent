@@ -377,6 +377,7 @@ def test_failed_drafting_stops_polling_and_shows_the_error(make_panel: MakePanel
     assert "A geração falhou (NeedsHuman)" in html and "Não há texto para editar" in html
     for action in ACTIONS:
         assert f"/post/{seeded.post_id}/{action}" not in html
+    assert f'action="/post/{seeded.post_id}/gerar"' in html and "Gerar de novo" in html
 
 
 def test_failed_drafting_with_revision_offers_only_edit(make_panel: MakePanel) -> None:
@@ -387,13 +388,14 @@ def test_failed_drafting_with_revision_offers_only_edit(make_panel: MakePanel) -
     assert f"/post/{seeded.post_id}/editar" in html
     for action in ("aprovar", "alteracoes", "rejeitar"):
         assert f"/post/{seeded.post_id}/{action}" not in html
+    assert f"/post/{seeded.post_id}/gerar" in html  # editar a mao ou repetir a geracao
 
 
 def test_generating_drafting_with_revision_has_no_actions(make_panel: MakePanel) -> None:
     rig = make_panel([])
     seeded = seed_post(rig, lifecycle="drafting", has_job=True)
     html = rig.get(lote()).text
-    for action in ACTIONS:
+    for action in (*ACTIONS, "gerar"):
         assert f"/post/{seeded.post_id}/{action}" not in html
 
 
@@ -1028,3 +1030,103 @@ def test_feedback_page_is_bounded(make_panel: MakePanel) -> None:
         seed_feedback(rig, seeded, "estilo", before_text=f"B{number:03d}")
     html = rig.get("/feedback").text
     assert html.count('id="feedback-') == 100
+
+
+# ---------------------------------------------------------------- repetir a geracao
+
+
+def jobs_of(rig: PanelRig, post_id: str) -> list[Job]:
+    with rig.factory() as session:
+        return [j for j in session.scalars(select(Job)) if j.payload.get("post_id") == post_id]
+
+
+def test_retry_button_rules(make_panel: MakePanel) -> None:
+    rig = make_panel([])
+    shown = {
+        "failed_no_text": seed_post(
+            rig, 1, lifecycle="drafting", with_revision=False, last_error="NeedsHuman"
+        ),
+        "failed_with_text": seed_post(rig, 2, lifecycle="drafting", last_error="RunLimitExceeded"),
+        # planned com o trabalho morto e sem motivo registado: sem botao ficava sem saida
+        "planned_dead_job": seed_post(
+            rig, 3, lifecycle="planned", with_revision=False, last_error=None
+        ),
+    }
+    hidden = {
+        "drafting_running": seed_post(rig, 4, lifecycle="drafting", has_job=True),
+        "planned_with_job": seed_post(
+            rig, 5, lifecycle="planned", with_revision=False, has_job=True
+        ),
+        "failed_but_job_active": seed_post(
+            rig, 6, lifecycle="drafting", last_error="NeedsHuman", has_job=True
+        ),
+        "drafting_no_error_no_job": seed_post(rig, 7, lifecycle="drafting", with_revision=False),
+        "in_review": seed_post(rig, 8, lifecycle="in_review"),
+    }
+    more = {
+        name: seed_post(rig, 9 + i, lifecycle=name)
+        for i, name in enumerate(("approved", "rejected", "cancelled"))
+    }
+    html = rig.get(lote()).text
+    for name, seeded in shown.items():
+        assert f'action="/post/{seeded.post_id}/gerar"' in html, name
+    for name, seeded in {**hidden, **more}.items():
+        assert f"/post/{seeded.post_id}/gerar" not in html, name
+    assert html.count("Gerar de novo") == len(shown)
+    assert "Não há texto para editar" in html  # a explicacao continua, agora com a saida ao lado
+
+
+def test_planned_post_without_job_stops_polling(make_panel: MakePanel) -> None:
+    rig = make_panel([])
+    seed_post(rig, lifecycle="planned", with_revision=False)
+    assert "hx-trigger" not in rig.get(lote()).text
+
+
+def test_retry_route_enqueues_one_job_and_redirects(make_panel: MakePanel) -> None:
+    rig = make_panel([])
+    seeded = seed_post(rig, lifecycle="drafting", with_revision=False, last_error="NeedsHuman")
+
+    response = rig.post(f"/post/{seeded.post_id}/gerar", {"actor": "intruso"})
+
+    assert response.status_code == 303
+    assert response.headers["location"] == f"/lote/{WEEK}#post-{seeded.post_id}"
+    [job] = jobs_of(rig, seeded.post_id)
+    assert (job.status, job.payload["reason"], job.payload["owner_comment"]) == (
+        "queued",
+        "plan",
+        None,
+    )
+    assert post_row(rig, seeded.post_id).last_error is None
+    with rig.factory() as session:
+        audit = session.scalars(
+            select(AuditLog).where(AuditLog.action == "post.retry_generation")
+        ).one()
+    assert (audit.actor, audit.subject_id) == (LOGIN, seeded.post_id)
+    page = rig.get(lote()).text
+    assert f"/post/{seeded.post_id}/gerar" not in page  # ja ha trabalho: sem botao e com polling
+    assert 'hx-trigger="every 5s"' in page
+    # segundo clique (pagina antiga): 409 e continua a haver um so trabalho
+    again = rig.post(f"/post/{seeded.post_id}/gerar")
+    assert again.status_code == 409 and STALE_MESSAGE in again.text
+    assert len(jobs_of(rig, seeded.post_id)) == 1
+
+
+@pytest.mark.parametrize("lifecycle", ["in_review", "approved", "rejected", "cancelled"])
+def test_retry_route_refused_in_other_states_is_409(make_panel: MakePanel, lifecycle: str) -> None:
+    rig = make_panel([])
+    seeded = seed_post(rig, lifecycle=lifecycle)
+    response = rig.post(f"/post/{seeded.post_id}/gerar")
+    assert response.status_code == 409 and STALE_MESSAGE in response.text
+    assert jobs_of(rig, seeded.post_id) == []
+    assert post_row(rig, seeded.post_id).lifecycle == lifecycle
+
+
+def test_retry_route_on_other_brand_or_unknown_post_is_404(make_panel: MakePanel) -> None:
+    rig = make_panel([])
+    foreign = seed_post(rig, brand_id=rig.new_brand(), lifecycle="planned", with_revision=False)
+    for post_id in (foreign.post_id, str(uuid.uuid4())):
+        response = rig.post(f"/post/{post_id}/gerar")
+        assert response.status_code == 404, post_id
+        assert foreign.post_id not in response.text.replace(f"/post/{post_id}", "")
+    assert jobs_of(rig, foreign.post_id) == []
+    assert rig.post("/post/nao-e-um-id/gerar").status_code == 422

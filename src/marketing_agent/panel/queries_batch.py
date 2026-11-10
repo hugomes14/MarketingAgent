@@ -24,7 +24,9 @@ from marketing_agent.panel.queries_content import IN_REVIEW, kb_titles
 
 ValidRefs = Callable[[str, Sequence[str], date], Mapping[str, KbEntry]]
 
-MAX_BATCH_POSTS: Final = 50  # o teto semanal e 7; isto so protege contra dados anormais
+# Teto semanal de publicacoes: 5 por omissao (`plan_max_posts_per_week`), 14 no maximo do esquema.
+# O limite abaixo so protege contra dados anormais.
+MAX_BATCH_POSTS: Final = 50
 MAX_BATCH_DECISIONS: Final = 300
 AGENT_ORIGIN: Final = "agente"
 PLANNED: Final = "planned"
@@ -95,9 +97,23 @@ class PostCard:
 
     @property
     def is_generating(self) -> bool:
-        """Por gerar ou a gerar: ha trabalho ativo ou nada falhou ainda (justifica o polling)."""
-        waiting = self.lifecycle in (PLANNED, DRAFTING)
-        return waiting and (self.has_active_job or self.last_error is None)
+        """A gerar (justifica o polling): ha trabalho ativo, ou esta `drafting` sem falha.
+
+        Um `planned` sem trabalho ativo nao gera nada: o trabalho morreu e so `can_retry` o
+        resolve, por isso nao ha razao para a pagina ficar a perguntar.
+        """
+        if self.lifecycle == PLANNED:
+            return self.has_active_job
+        return self.lifecycle == DRAFTING and (self.has_active_job or self.last_error is None)
+
+    @property
+    def can_retry(self) -> bool:
+        """Repetir a geracao: `planned`, ou `drafting` falhado, e nenhum trabalho a correr."""
+        if self.has_active_job:
+            return False
+        return self.lifecycle == PLANNED or (
+            self.lifecycle == DRAFTING and self.last_error is not None
+        )
 
     @property
     def can_decide(self) -> bool:

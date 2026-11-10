@@ -1,6 +1,7 @@
 """Lote semanal: ver as publicacoes da semana e decidir sobre cada uma.
 
-Quatro acoes por publicacao (aprovar, editar, pedir alteracoes, rejeitar), todas POST com o
+Cinco acoes por publicacao (aprovar, editar, pedir alteracoes, rejeitar e repetir a geracao
+quando falhou), todas POST com o
 guarda de mutacao. O autor e sempre o utilizador da sessao. Cada formulario leva o id da revisao
 que a pagina mostrava: se entretanto surgiu outra (edicao noutra aba, geracao nova), o servico
 recusa com 409 e o responsavel recarrega a pagina. O `ReviewService` e a autoridade sobre o que
@@ -144,6 +145,14 @@ def request_post_changes(
     panel.content.review.request_changes(
         panel.brand_id, post_id, read_revision_id(fields), fields.get("comentario", ""), user.login
     )
+    return see_other(url)
+
+
+@router.post("/post/{post_id}/gerar", dependencies=[MUTATION_GUARD])
+def retry_post_generation(post_id: RecordId, user: CurrentUser, panel: Panel) -> RedirectResponse:
+    """Repete a geracao falhada (ou perdida) da publicacao; sem formulario alem do CSRF."""
+    url = _batch_redirect(panel, post_id)
+    panel.content.review.retry_generation(panel.brand_id, post_id, user.login)
     return see_other(url)
 
 
