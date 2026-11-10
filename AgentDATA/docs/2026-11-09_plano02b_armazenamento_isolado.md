@@ -1,5 +1,7 @@
 # Plano 02B: armazenamento local preparado em isolamento
 
+> **Substituído:** este documento descreve a fase isolada. A biblioteca (`media/`), o Pillow, `MEDIA_DIR`, o painel de upload e o kit de marca já foram acrescentados no ramo do 2B (Tarefas 1 a 5); ver `2026-11-09T14-07-58+00-00_plano_02b_imagem.md`.
+
 - Data: 2026-11-09
 - Autor: Codex
 - Ramo: `agent/2026-11-09_plano02b_store`
