@@ -228,25 +228,12 @@ def test_revision_image_columns_immutable(
         )
 
 
-def test_job_type_review_post_and_origin_upload_accepted(
-    session_factory: Fabrica, brand_id: str
-) -> None:
-    assert "review_post" in models.JOB_TYPES
+def test_revision_origin_upload_accepted(session_factory: Fabrica, brand_id: str) -> None:
     post_id = gravar_post(session_factory, brand_id)
     with session_factory.begin() as sessao:
         revisao = criar_revisao(brand_id, post_id)
         revisao.origin = "upload"
         sessao.add(revisao)
-        sessao.add(
-            models.Job(
-                type="review_post",
-                payload={},
-                status="queued",
-                run_at=AGORA,
-                created_at=AGORA,
-                updated_at=AGORA,
-            )
-        )
         sessao.flush()
         assert revisao.review_verdict is None
         assert revisao.components == []

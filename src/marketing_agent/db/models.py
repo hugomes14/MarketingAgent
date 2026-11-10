@@ -56,8 +56,6 @@ REVIEW_VERDICTS = ("aprovar", "rever", "rejeitar")
 REVISION_ORIGINS = ("agente", "edicao_responsavel", "upload")
 APPROVAL_DECISIONS = ("approved", "rejected", "changes_requested")
 FEEDBACK_KINDS = ("estilo", "correcao_factual", "temporario", "negativo")
-# Tipos conhecidos pelo pipeline; a fila aceita tambem tipos de outros consumidores.
-JOB_TYPES = ("generate_post", "review_post")
 JOB_STATUSES = ("queued", "running", "succeeded", "failed", "dead", "cancelled")
 # Estados em que um job ainda conta para a deduplicacao (ver o indice parcial de `Job`).
 ACTIVE_JOB_STATUSES = ("queued", "running")

@@ -79,7 +79,26 @@ def test_upload_photo_stores_normalized_jpeg_and_row(
         result.data = b"alterados"
 
 
-def test_same_file_twice_is_deduplicated(
+def test_same_active_file_twice_is_deduplicated_without_audit_or_metadata_change(
+    library: MediaLibrary,
+    session_factory: sessionmaker[Session],
+    brand_id: str,
+    photo_meta: PhotoUpload,
+    clock: FixedClock,
+) -> None:
+    data = make_png(1080, 1080)
+    first = library.upload_photo(brand_id, data, photo_meta, "owner")
+    clock.advance(timedelta(days=1))
+    changed = photo_meta.model_copy(update={"descricao": "Outra", "origem": "cliente_autorizado"})
+    second = library.upload_photo(brand_id, data, changed, "other")
+    assert second == first
+    with session_factory() as session:
+        assert session.scalar(select(func.count()).select_from(MediaAsset)) == 1
+        actions = session.scalars(select(AuditLog.action)).all()
+        assert actions == ["media.upload"]
+
+
+def test_reupload_of_deactivated_photo_reactivates_it_once(
     library: MediaLibrary,
     session_factory: sessionmaker[Session],
     brand_id: str,
@@ -89,17 +108,50 @@ def test_same_file_twice_is_deduplicated(
     data = make_png(1080, 1080)
     first = library.upload_photo(brand_id, data, photo_meta, "owner")
     library.deactivate(brand_id, first.id, "owner")
+    assert library.list_photos(brand_id) == []
     clock.advance(timedelta(days=1))
     changed = photo_meta.model_copy(update={"descricao": "Outra", "origem": "cliente_autorizado"})
     second = library.upload_photo(brand_id, data, changed, "other")
-    assert second.id == first.id
-    assert second.descricao == first.descricao
-    assert second.origem == first.origem
-    assert second.created_at == first.created_at
-    assert not second.is_active
+    # Metadados guardados e data de criacao mantem-se; so o estado muda.
+    assert second == first
+    assert second.is_active
+    assert [photo.id for photo in library.list_photos(brand_id)] == [first.id]
+    assert first.id in library.photo_refs(brand_id)
+    again = library.upload_photo(brand_id, data, changed, "other")
+    assert again == first
     with session_factory() as session:
         assert session.scalar(select(func.count()).select_from(MediaAsset)) == 1
-        assert session.scalar(select(func.count()).select_from(AuditLog)) == 2
+        rows = session.scalars(select(AuditLog).order_by(AuditLog.at, AuditLog.id)).all()
+        assert [row.action for row in rows] == [
+            "media.upload",
+            "media.deactivate",
+            "media.reactivate",
+        ]
+        digest = session.get_one(MediaAsset, first.id).sha256
+        assert rows[2].detail == {"kind": "foto", "mostra": "produto", "sha256": digest[:12]}
+        assert (rows[2].actor, rows[2].subject_id, rows[2].at) == ("other", first.id, clock.now())
+
+
+def test_concurrent_reuploads_of_deactivated_photo_reactivate_only_once(
+    library: MediaLibrary,
+    session_factory: sessionmaker[Session],
+    brand_id: str,
+    photo_meta: PhotoUpload,
+) -> None:
+    data = make_png(1080, 1080)
+    photo = library.upload_photo(brand_id, data, photo_meta, "owner")
+    library.deactivate(brand_id, photo.id, "owner")
+    barrier = Barrier(2)
+
+    def upload() -> bool:
+        barrier.wait(timeout=10)
+        return library.upload_photo(brand_id, data, photo_meta, "owner").is_active
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        assert list(pool.map(lambda _: upload(), range(2))) == [True, True]
+    with session_factory() as session:
+        actions = session.scalars(select(AuditLog.action)).all()
+        assert actions.count("media.reactivate") == 1
 
 
 def test_deduplication_is_per_brand(
@@ -118,6 +170,32 @@ def test_deduplication_is_per_brand(
     second = library.upload_photo(other, data, photo_meta, "owner")
     assert first.id != second.id
     assert library.read_asset(brand_id, first.id) == library.read_asset(other, second.id)
+
+
+def test_reactivation_is_independent_per_brand(
+    library: MediaLibrary,
+    session_factory: sessionmaker[Session],
+    brand_id: str,
+    photo_meta: PhotoUpload,
+) -> None:
+    with session_factory.begin() as session:
+        brand = Brand(name="Outra marca")
+        session.add(brand)
+        session.flush()
+        other = brand.id
+    data = make_png(1080, 1080)
+    first = library.upload_photo(brand_id, data, photo_meta, "owner")
+    second = library.upload_photo(other, data, photo_meta, "owner")
+    library.deactivate(brand_id, first.id, "owner")
+    # Os mesmos bytes noutra marca nao reativam nem tocam na foto desativada desta.
+    assert library.upload_photo(other, data, photo_meta, "owner") == second
+    assert library.list_photos(brand_id) == []
+    assert [photo.id for photo in library.list_photos(other)] == [second.id]
+    with session_factory() as session:
+        reactivations = session.scalar(
+            select(func.count()).select_from(AuditLog).where(AuditLog.action == "media.reactivate")
+        )
+        assert reactivations == 0
 
 
 def test_people_without_authorization_refused(photo_meta: PhotoUpload) -> None:

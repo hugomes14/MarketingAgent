@@ -41,7 +41,8 @@ def test_every_new_route_requires_auth_and_csrf(make_panel: MakePanel) -> None:
         for route in iter_route_contexts(rig.app.routes)
         if route.path and route.path.startswith(("/biblioteca", "/media"))
     ]
-    assert len(routes) == 4
+    # A contagem vem do proprio router: uma rota nova entra na verificacao sem editar o teste.
+    assert len(routes) == len(routes_media.router.routes) > 0
     for route in routes:
         assert route.path and route.methods
         path = route.path.replace("{asset_id}", str(uuid4()))
@@ -150,6 +151,19 @@ def test_deactivate_photo(make_panel: MakePanel) -> None:
     assert rig.media.library.list_photos(rig.brand_id) == []
     assert f"/media/{photo.id}" not in rig.get("/biblioteca").text
     assert rig.get(f"/media/{photo.id}").status_code == 200
+
+
+def test_reupload_of_deactivated_photo_makes_it_reappear_in_library(make_panel: MakePanel) -> None:
+    rig = make_panel([])
+    upload(rig)
+    photo = rig.media.library.list_photos(rig.brand_id)[0]
+    rig.post(f"/biblioteca/{photo.id}/desativar")
+    assert f"/media/{photo.id}" not in rig.get("/biblioteca").text
+    assert upload(rig, descricao="Outra descricao").status_code == 303
+    assert f"/media/{photo.id}" in rig.get("/biblioteca").text
+    assert [item.descricao for item in rig.media.library.list_photos(rig.brand_id)] == [
+        "Foto teste"
+    ]
 
 
 def test_get_media_requires_auth(make_panel: MakePanel) -> None:

@@ -43,7 +43,11 @@ _DECISION: Final = {
     "rejected": "rejeitou",
     "changes_requested": "pediu alterações",
 }
-_REVISION_ORIGIN: Final = {"agente": "do agente", "edicao_responsavel": "edição do responsável"}
+_REVISION_ORIGIN: Final = {
+    "agente": "do agente",
+    "edicao_responsavel": "edição do responsável",
+    "upload": "upload do responsável",
+}
 _FEEDBACK: Final = {
     "estilo": "Estilo: usar como exemplo de tom e de escrita",
     "correcao_factual": "Correção factual: um facto estava errado",

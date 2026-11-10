@@ -130,12 +130,17 @@ class MediaLibrary:
         self._clock = clock
 
     def upload_photo(self, brand_id: str, data: bytes, meta: PhotoUpload, actor: str) -> PhotoView:
-        """Normaliza e obtem ou cria a foto, preservando metadados de duplicados."""
+        """Normaliza e obtem ou cria a foto, preservando metadados de duplicados.
+
+        Carregar de novo uma foto desativada reativa-a (com auditoria), mantendo os
+        metadados guardados; e a unica forma de a recuperar pelo painel.
+        """
         image = normalize_photo(data)
         with self._sessions.begin() as session:
             row = self._store_in(session, brand_id, image, "foto", meta.origem, actor, meta)
             # O hash e unico mesmo entre tipos: um final nao pode virar foto implicitamente.
-            return _photo_view(row)
+            view = _photo_view(row)
+            return self._reactivate(session, row, actor) if not view.is_active else view
 
     def deactivate(self, brand_id: str, asset_id: str, actor: str) -> None:
         """Desativa apenas fotos da marca, sem apagar bytes ou repetir auditorias."""
@@ -221,6 +226,14 @@ class MediaLibrary:
             if row is None:
                 raise AssetNotFound()
             return AssetBytes(cast(AssetMime, row.mime), self._store.read(row.storage_key))
+
+    def _reactivate(self, session: Session, row: MediaAsset, actor: str) -> PhotoView:
+        # Reler com bloqueio: dois reuploads concorrentes auditam a reativacao uma so vez.
+        session.refresh(row, with_for_update=True)
+        if not row.is_active:
+            row.is_active = True
+            self._audit(session, row, "media.reactivate", actor)
+        return _photo_view(row)
 
     def _store_in(
         self,
