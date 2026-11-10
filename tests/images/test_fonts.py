@@ -1,6 +1,7 @@
 """Fonte oficial, integridade antes do cache e composicao deterministica."""
 
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import FrozenInstanceError
 from hashlib import sha256
 from importlib.resources import files
@@ -10,7 +11,12 @@ import pytest
 from PIL import ImageFont
 
 from marketing_agent.images import fonts
-from marketing_agent.images.fonts import BRAND_FONTS, FontIntegrityError, load_font
+from marketing_agent.images.fonts import (
+    BRAND_FONTS,
+    FontIntegrityError,
+    load_font,
+    load_thread_font,
+)
 
 FONT_HASH = "288316099b1e0a47a4716d159098005eef7c0066921f34e3200393dbdb01947f"
 LICENSE_HASH = "262481e844521b326f5ecd053e59b98c8b2da78c8ee1bdbb6e8174305e54935a"
@@ -83,3 +89,19 @@ def test_invalid_font_size_refused(size: int) -> None:
 def test_unknown_font_refused() -> None:
     with pytest.raises(ValueError):
         load_font("../../private", 32)
+
+
+def test_thread_font_is_cached_per_thread_and_never_shared() -> None:
+    mine = load_thread_font("inter-bold", 40)
+    assert mine is load_thread_font("inter-bold", 40)
+    assert mine is not load_font("inter-bold", 40)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        other = pool.submit(load_thread_font, "inter-bold", 40).result(timeout=10)
+    assert other is not mine
+    assert other.getlength("Marketing") == mine.getlength("Marketing")
+
+
+@pytest.mark.parametrize("size", [0, -1, 1.5, True])
+def test_thread_font_refuses_invalid_size(size: int) -> None:
+    with pytest.raises(ValueError):
+        load_thread_font("inter-bold", size)

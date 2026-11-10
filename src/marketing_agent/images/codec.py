@@ -98,7 +98,11 @@ def convert_to_srgb(image: Image.Image) -> tuple[Image.Image, Image.Image | None
 
 
 def to_srgb_rgb(image: Image.Image) -> Image.Image:
-    """Converte o perfil para sRGB e compoe o alfa sobre branco."""
+    """Converte o perfil para sRGB e compoe o alfa sobre branco.
+
+    Aviso: pode devolver a propria imagem recebida (sem copia); nunca a modifique nem feche
+    se nao foi o chamador a cria-la.
+    """
     color, alpha = convert_to_srgb(image)
     if alpha is None:
         return color
