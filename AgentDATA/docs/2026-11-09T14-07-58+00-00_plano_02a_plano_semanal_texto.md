@@ -4,7 +4,7 @@
 
 - Timestamp: `2026-11-09T14:07:58+00:00`
 - Autor: `agent`
-- Estado de execução: **Tarefas 1 a 8 concluídas; Tarefas 9 a 12 por fazer.**
+- Estado de execução: **Tarefas 1 a 9 concluídas; Tarefas 10 a 12 por fazer.**
 
 **Goal:** A partir da estratégia ativa, propor e aprovar o plano da semana e gerar em segundo plano, para cada publicação aprovada no plano, uma legenda revista que o responsável aprova, edita, devolve ou rejeita no painel.
 
@@ -366,11 +366,21 @@ tests/{db,kb,jobs,planning,content,feedback,panel,e2e}/...
   - Exceções: `StaleRevision`, `PostNotFound`, `InvalidPostState`.
   - Comentários do responsável: 1 a `settings.max_message_chars` caracteres.
 
-- [ ] **Step 1: Testes que falham.** `test_approve_only_latest_revision`, `test_edit_creates_revision_and_invalidates_approval`, `test_edit_on_stale_base_raises`, `test_edit_validates_limits`, `test_request_changes_enqueues_with_comment`, `test_reject_records_feedback`, `test_other_brand_post_not_found`, `test_decisions_audited_with_actor`.
-- [ ] **Step 2: Correr e ver falhar.**
-- [ ] **Step 3: Implementar.**
-- [ ] **Step 4: Validação global.**
-- [ ] **Step 5: Commit.** `feat: aprovacao, edicao, pedido de alteracoes e rejeicao por publicacao`.
+- [x] **Step 1: Testes que falham.** `test_approve_only_latest_revision`, `test_edit_creates_revision_and_invalidates_approval`, `test_edit_on_stale_base_raises`, `test_edit_validates_limits`, `test_request_changes_enqueues_with_comment`, `test_reject_records_feedback`, `test_other_brand_post_not_found`, `test_decisions_audited_with_actor`.
+- [x] **Step 2: Correr e ver falhar.**
+- [x] **Step 3: Implementar.**
+- [x] **Step 4: Validação global.**
+- [x] **Step 5: Commit.** `feat: aprovacao, edicao, pedido de alteracoes e rejeicao por publicacao`.
+
+**Notas de execução (Tarefa 9):**
+
+- Concluída (commits `17e8113` e `45bb4b5`), em modo subagente: implementação, revisão e uma ronda de correção. 1268 testes passam; `ruff` e `mypy src` limpos.
+- `ReviewService(session_factory, feedback, queue, kb, clock, max_comment_chars=settings.max_message_chars)` (o último argumento, só por nome, não estava no plano), em `content/review.py` com `review_errors.py`, `review_edit.py` e `review_records.py`. Cada ação é **uma transação que bloqueia o post primeiro** (`lock_post`) e só depois toca em jobs e revisões. `approve`/`reject`/`request_changes` exigem `in_review` e a revisão mais recente (`StaleRevision` caso contrário); `edit` aceita `in_review`, ou `drafting` com `last_error` e sem job ativo, cancela os jobs do post, cria a revisão `edicao_responsavel` (alegações da base mantidas, `validate_draft` com a mesma seleção da base que o pipeline) e recusa edições sem alterações. Uma aprovação só vale para a revisão mais recente (nada é apagado). `request_changes` põe o post em `drafting` e enfileira `generate_post` com `reason="changes"`.
+- Mensagens de erro e auditoria só levam campos, contagens e estados; `PostNotFound` tem a mesma mensagem para id desconhecido e de outra marca; `FeedbackChoice` é verificado também em tempo de execução. `CaptionEdit.from_form` é o construtor seguro para o painel (sem o valor recebido em nenhum sítio). `planning/posts._week_posts` bloqueia por `Post.id`.
+- Limite do texto de feedback subiu de 2500 para 5000 caracteres (a legenda de Facebook chega a 5000).
+- **Contrato do painel (Tarefas 10 e 11):** `PostNotFound` → 404; `StaleRevision` e `InvalidPostState` → 409 (recarregar); `InvalidComment`, `FeedbackError`, `InvalidEdit` → 422 (mostrar `exc.violations`, nunca `str(ValidationError)`); POST com CSRF e o `actor` derivado da sessão, nunca do formulário; cada formulário leva o `revision_id` mostrado na página (e `base_revision_id` na edição); um post sem revisão não oferece ações.
+- Menores adiados: edição de texto idêntico recusada a partir de `drafting` com erro; `kb.valid_refs` abre uma segunda sessão durante o lock; alegações herdadas com item da base expirado bloqueiam a edição (saída: pedir alterações).
+
 
 ### Task 10: Painel: base de conhecimento e plano
 
