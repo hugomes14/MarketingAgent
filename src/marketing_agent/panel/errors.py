@@ -15,6 +15,7 @@ from fastapi.responses import Response
 from starlette.exceptions import HTTPException
 
 from marketing_agent.artifacts.store import ArtifactNotFound, InvalidTransition
+from marketing_agent.images.codec import ImageRejected
 from marketing_agent.interview.service import (
     InterviewStartFailed,
     InvalidAnswer,
@@ -24,6 +25,7 @@ from marketing_agent.interview.service import (
     SessionNotFound,
     SubmissionConflict,
 )
+from marketing_agent.media.library import AssetNotFound, MediaError
 from marketing_agent.panel.rendering import Renderer
 from marketing_agent.panel.security import apply_security_headers
 from marketing_agent.strategy.service import (
@@ -67,6 +69,8 @@ _RESPONSES: Final[dict[type[Exception], tuple[int, str]]] = {
     InvalidTransition: (409, "Este item já foi decidido ou já não aceita esta ação."),
     SessionNotFound: (404, NOT_FOUND_MESSAGE),
     ArtifactNotFound: (404, NOT_FOUND_MESSAGE),
+    AssetNotFound: (404, NOT_FOUND_MESSAGE),
+    MediaError: (422, "Dados de media inválidos."),
     ProfileRequestFailed: (502, UPSTREAM_MESSAGE),
     InterviewStartFailed: (502, UPSTREAM_MESSAGE),
     UpstreamFailure: (502, UPSTREAM_MESSAGE),
@@ -98,7 +102,7 @@ class _ErrorHandlers:
         return self.respond(request, status_code, message)
 
     async def invalid_form(self, request: Request, exc: Exception) -> Response:
-        """Formulario invalido: a mensagem de `InvalidForm` e fixa e segura."""
+        """Formulario ou imagem invalidos: mensagem fixa e segura do dominio."""
         logger.info("painel: formulario invalido %s", request.url.path)
         return self.respond(request, 422, str(exc))
 
@@ -125,6 +129,7 @@ def install_error_handlers(app: FastAPI, renderer: Renderer) -> None:
     for exception_type in _RESPONSES:
         app.add_exception_handler(exception_type, handlers.domain_error)
     app.add_exception_handler(InvalidForm, handlers.invalid_form)
+    app.add_exception_handler(ImageRejected, handlers.invalid_form)
     app.add_exception_handler(RequestValidationError, handlers.validation)
     app.add_exception_handler(HTTPException, handlers.http)
     app.add_exception_handler(Exception, handlers.unexpected)

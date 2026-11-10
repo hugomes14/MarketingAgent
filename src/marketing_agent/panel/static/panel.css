@@ -129,3 +129,9 @@ ul { padding-left: 1.25rem; }
 /* O HTMX nao injeta estilos (includeIndicatorStyles desligado): o indicador define-se aqui. */
 .htmx-indicator { opacity: 0; }
 .htmx-request .htmx-indicator, .htmx-request.htmx-indicator { opacity: 1; }
+
+/* Fotografias normalizadas; proporcoes preservadas na grelha. */
+.biblioteca-fotos img { display: block; width: 100%; height: auto; margin-bottom: 0.75rem; }
+.biblioteca-fotos h2 { overflow-wrap: anywhere; }
+.filtros-fotos { display: flex; flex-wrap: wrap; gap: 1rem; margin: 1rem 0; }
+.filtros-fotos [aria-current="page"] { font-weight: 700; }

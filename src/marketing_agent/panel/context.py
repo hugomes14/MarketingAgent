@@ -8,6 +8,7 @@ from fastapi.responses import RedirectResponse
 
 from marketing_agent.budget.controller import BudgetController
 from marketing_agent.interview.service import InterviewService
+from marketing_agent.media.library import MediaLibrary
 from marketing_agent.panel.auth import TailscaleUser, require_tailscale_user
 from marketing_agent.panel.csrf import require_same_origin_and_csrf
 from marketing_agent.panel.forms import FormFields, read_form
@@ -16,6 +17,13 @@ from marketing_agent.panel.rendering import Renderer
 from marketing_agent.strategy.service import StrategyService
 
 UUID_PATTERN = r"^[0-9a-fA-F-]{36}$"
+
+
+@dataclass(frozen=True)
+class MediaServices:
+    """Servicos de media injetados no painel."""
+
+    library: MediaLibrary
 
 
 @dataclass(frozen=True)
@@ -29,6 +37,7 @@ class PanelContext:
     renderer: Renderer
     brand_id: str
     max_message_chars: int
+    media: MediaServices
 
 
 def get_panel(request: Request) -> PanelContext:

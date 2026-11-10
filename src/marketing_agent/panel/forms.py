@@ -1,8 +1,8 @@
 """Leitura de formularios `application/x-www-form-urlencoded` do painel.
 
-O painel so recebe formularios HTML e pedidos HTMX, ambos urlencoded; por isso o corpo e lido
-aqui, com limite de tamanho, sem a dependencia `python-multipart`. O resultado fica em cache no
-pedido: a dependencia de CSRF e a rota leem o mesmo corpo uma so vez.
+Os formularios HTML e pedidos HTMX urlencoded continuam aqui; o multipart vive em `uploads`.
+O resultado fica em cache no pedido: a dependencia de CSRF e a rota leem o mesmo corpo
+uma so vez, com limite de tamanho.
 """
 
 from collections.abc import Mapping

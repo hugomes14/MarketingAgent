@@ -6,6 +6,7 @@ Vive num modulo proprio (e nao num conftest) para tambem servir os testes ponta 
 
 from collections.abc import Callable
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -29,14 +30,17 @@ from marketing_agent.harness.engine import AgentEngine
 from marketing_agent.interview.service import InterviewService
 from marketing_agent.llm.fake import FakeLlmClient
 from marketing_agent.llm.router import LlmRouter
+from marketing_agent.media.library import MediaLibrary
+from marketing_agent.media.store import LocalMediaStore
 from marketing_agent.panel.app import create_app
+from marketing_agent.panel.context import MediaServices
 from marketing_agent.panel.queries import PanelQueries
 from marketing_agent.strategy.service import StrategyService
 
 
 @pytest.fixture
 def make_panel(
-    session_factory: Factory, clock: FixedClock, brand_id: str
+    session_factory: Factory, clock: FixedClock, brand_id: str, tmp_path: Path
 ) -> Callable[[Script], PanelRig]:
     free = PriceTier(0, Decimal(0), Decimal(0))
     sync_model_prices(
@@ -44,7 +48,10 @@ def make_panel(
     )
 
     def make(script: Script, *, peer: str = PEER) -> PanelRig:
-        settings = build_settings()
+        settings = build_settings(media_dir=tmp_path / "media")
+        media = MediaServices(
+            MediaLibrary(session_factory, LocalMediaStore(settings.media_dir), clock)
+        )
         llm = FakeLlmClient(scripted(script))
         route = RoleRoute(
             provider="fake", model_id="fake-1", capabilities=frozenset({"text", "json_schema"})
@@ -71,6 +78,7 @@ def make_panel(
             SECRET,
             brand_id=brand_id,
             queries=PanelQueries(session_factory, store),
+            media=media,
         )
         client = TestClient(app, client=(peer, 5000))
         return PanelRig(
@@ -85,6 +93,7 @@ def make_panel(
             clock,
             brand_id,
             settings,
+            media,
         )
 
     return make

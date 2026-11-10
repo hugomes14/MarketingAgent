@@ -32,6 +32,7 @@ from marketing_agent.interview.service import InterviewService
 from marketing_agent.llm.fake import FakeLlmClient
 from marketing_agent.llm.types import LlmResponse, StopReason
 from marketing_agent.panel.auth import TailscaleUser
+from marketing_agent.panel.context import MediaServices
 from marketing_agent.panel.csrf import csrf_token_for
 from marketing_agent.strategy.service import StrategyService
 
@@ -115,6 +116,7 @@ class PanelRig:
     clock: FixedClock
     brand_id: str
     settings: Settings
+    media: MediaServices
 
     def token(self, login: str = LOGIN) -> str:
         return csrf_token_for(TailscaleUser(login=login, name=None), SECRET)

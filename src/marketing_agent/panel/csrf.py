@@ -15,6 +15,7 @@ from fastapi import Depends, HTTPException, Request
 
 from marketing_agent.panel.auth import TailscaleUser, require_tailscale_user
 from marketing_agent.panel.forms import read_form
+from marketing_agent.panel.uploads import MULTIPART_CONTENT_TYPE, read_upload_form
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +68,10 @@ async def _supplied_token(request: Request) -> str | None:
     header = request.headers.get(CSRF_HEADER)
     if header is not None:
         return header
+    content_type = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+    if content_type == MULTIPART_CONTENT_TYPE:
+        # Os limites multipart mantem 400/413; nao os esconder como token em falta.
+        return (await read_upload_form(request)).fields.get(CSRF_FIELD)
     try:
         fields = await read_form(request)
     except HTTPException:
