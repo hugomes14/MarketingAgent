@@ -4,7 +4,7 @@
 
 - Timestamp: `2026-11-09T14:07:58+00:00`
 - Autor: `agent`
-- Estado de execução: **Tarefas 1 a 9 concluídas; Tarefas 10 a 12 por fazer.**
+- Estado de execução: **Tarefas 1 a 10 concluídas; Tarefas 11 e 12 por fazer.**
 
 **Goal:** A partir da estratégia ativa, propor e aprovar o plano da semana e gerar em segundo plano, para cada publicação aprovada no plano, uma legenda revista que o responsável aprova, edita, devolve ou rejeita no painel.
 
@@ -392,11 +392,20 @@ tests/{db,kb,jobs,planning,content,feedback,panel,e2e}/...
 - Consumes: `KbService` (T2), `PlanningService` (T5).
 - Produces rotas (todas autenticadas; POST com `MUTATION_GUARD`): `GET /base`, `POST /base` (formulário), `POST /base/{id}/desativar`, `POST /perfil/{id}/promover` (campo `topic`), `POST /plano` (propor; `Idempotency-Key` não é precisa: o marcador e `PendingProposal` protegem), `GET /plano/{id}`, `POST /plano/{id}/aprovar`, `POST /plano/{id}/rejeitar`. Erros: `KbError` 422; `PendingProposal`/`ProposalInProgress`/`MissingPrerequisite` 409; RunResult não-SUCCEEDED → 502 genérico.
 
-- [ ] **Step 1: Testes que falham.** `test_every_new_route_requires_auth_and_csrf` (derivado da app), `test_add_price_item_form`, `test_promote_topic_button`, `test_propose_and_approve_plan_creates_posts`, `test_plan_page_escapes_model_text`, `test_home_links_plan_and_pending`.
-- [ ] **Step 2: Correr e ver falhar.**
-- [ ] **Step 3: Implementar.**
-- [ ] **Step 4: Validação global.**
-- [ ] **Step 5: Commit.** `feat: painel da base de conhecimento e do plano semanal`.
+- [x] **Step 1: Testes que falham.** `test_every_new_route_requires_auth_and_csrf` (derivado da app), `test_add_price_item_form`, `test_promote_topic_button`, `test_propose_and_approve_plan_creates_posts`, `test_plan_page_escapes_model_text`, `test_home_links_plan_and_pending`.
+- [x] **Step 2: Correr e ver falhar.**
+- [x] **Step 3: Implementar.**
+- [x] **Step 4: Validação global.**
+- [x] **Step 5: Commit.** `feat: painel da base de conhecimento e do plano semanal`.
+
+**Notas de execução (Tarefa 10):**
+
+- Concluída (commit `d810e4f`), em modo subagente: implementação e revisão com modelo mais capaz (autenticação/CSRF/Host) sem achados Critical/Important. 1321 testes passam; `ruff` e `mypy src` limpos.
+- Rotas (`panel/routes_kb.py`, `panel/routes_plan.py`): `GET/POST /base`, `POST /base/{id}/desativar`, `POST /perfil/{id}/promover` (exige o perfil ativo e um tópico existente), `POST /plano`, `GET /plano/{id}`, `POST /plano/{id}/aprovar|rejeitar`. Todas autenticadas, os POST com `MUTATION_GUARD`, o `actor` vem sempre da sessão, outra marca ou outro tipo de artefacto dá 404, aprovar duas vezes dá 409 e não cria nada. `KbError` → 422 com uma mensagem fixa; `PendingProposal`/`ProposalInProgress`/`MissingPrerequisite` → 409; execução falhada → 502 genérico. O texto do modelo e do utilizador só aparece escapado.
+- Montagem num só sítio: `panel/assembly.py` (`build_content_services(settings, session_factory, engine, store, strategy, clock)` → `ContentServices(kb, planning, review, feedback)`), usada por `panel/main.py` e pelos fixtures; `create_app(..., content=...)` é obrigatório. O teste `test_every_new_route_requires_auth_and_csrf` deriva as rotas de `app.openapi()` (esta versão do FastAPI esconde as rotas em `app.routes`).
+- **Para a Tarefa 11:** (a) trocar o redireccionamento de `approve_plan` para `/lote/<semana>`; (b) ligar a home (`#por-rever`) e a navegação a `/lote`; (c) mapear `ReviewError` e os erros do feedback em `errors.py` com mensagens fixas; (d) o teste de guarda deve cruzar a lista do OpenAPI com a tabela real de rotas (routers dos módulos) e falhar se diferirem; (e) uma mensagem fixa própria para "perfil não ativo" em vez de "falta um passo anterior"; (f) usar `panel.content.review`/`feedback`, sem construir serviços novos.
+- Menores adiados: qualquer semana ISO pode ser proposta, incluindo semanas passadas (decisão de produto, a registar no PR); desativar um item inexistente dá 422 e não 404; `/base` sem limite nem rótulo "expirado"; o plano submetido aparece duas vezes na home.
+
 
 ### Task 11: Painel: lote semanal e feedback
 
