@@ -496,3 +496,30 @@ def test_worker_refuses_fake_provider(
     monkeypatch.setenv("ROLE_ROUTES", json.dumps(routes))
     code, _, err = run(capsys, "worker")
     assert code == 2 and "fake" in err and "Traceback" not in err
+
+
+@pytest.mark.parametrize("sent", [signal.SIGINT, signal.SIGTERM])
+def test_first_signal_restores_default_handlers_so_a_second_one_forces_exit(
+    sent: signal.Signals,
+) -> None:
+    stop = threading.Event()
+    before = {sig: signal.getsignal(sig) for sig in (signal.SIGINT, signal.SIGTERM)}
+    with cli.stop_on_signals(stop):
+        assert signal.getsignal(sent) not in before.values()
+        signal.raise_signal(sent)
+        assert stop.is_set()
+        assert {sig: signal.getsignal(sig) for sig in before} == before  # logo apos o 1o sinal
+
+
+def test_worker_second_sigint_interrupts_with_exit_130(
+    session_factory: Factory,
+    worker_environment: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def interrupted(self: Worker, stop: threading.Event) -> None:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(Worker, "run_forever", interrupted)
+    code, _, err = run(capsys, "worker")
+    assert code == 130 and "Traceback" not in err

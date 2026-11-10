@@ -8,6 +8,11 @@ from typing import Literal, Protocol
 from marketing_agent.budget.pricing import Usage
 from marketing_agent.config import Capability
 
+# Timeout de UMA chamada ao fornecedor (adaptadores). O motor so verifica `max_duration_s` ANTES
+# de cada passo, por isso uma execucao pode ultrapassa-lo ate este valor: a lease dos jobs e o
+# limiar de reservas orfas somam-no (ver `startup`).
+LLM_CALL_TIMEOUT_S = 120.0
+
 
 @dataclass(frozen=True)
 class TextPart:

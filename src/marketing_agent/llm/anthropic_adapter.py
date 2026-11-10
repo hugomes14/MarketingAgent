@@ -17,6 +17,7 @@ from marketing_agent.budget.pricing import Usage
 from marketing_agent.config import Capability
 from marketing_agent.llm.transport_errors import classify_connection_cause, classify_http_status
 from marketing_agent.llm.types import (
+    LLM_CALL_TIMEOUT_S,
     ContentPart,
     ImagePart,
     LlmRequest,
@@ -143,7 +144,7 @@ class AnthropicClient:
         self,
         api_key_file: Path,
         capabilities: frozenset[Capability],
-        timeout_s: float = 120.0,
+        timeout_s: float = LLM_CALL_TIMEOUT_S,
         base_url: str | None = None,
         sdk_client: anthropic.Anthropic | None = None,
     ) -> None:

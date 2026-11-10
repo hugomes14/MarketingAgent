@@ -23,8 +23,8 @@ FeedbackChoice = Literal["estilo", "correcao_factual", "temporario", "negativo",
 
 _STYLE_LIMIT = 5
 _NEGATIVE_LIMIT = 3
-# 2500 cobre a legenda maxima do Instagram (2200) e do Facebook com folga.
-_TEXT_MAX = 2500
+# 5000 e a legenda maxima de canal (Facebook); sem truncar, para o par antes/depois ficar fiel.
+_TEXT_MAX = 5000
 _NOTE_MAX = 500
 _TEMPORARY_KIND = "temporario"
 

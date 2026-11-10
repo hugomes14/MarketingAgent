@@ -14,7 +14,7 @@ from sqlalchemy import select
 from marketing_agent.clock import FixedClock
 from marketing_agent.content.pipeline import GenerationOutcome
 from marketing_agent.db.models import Job
-from marketing_agent.jobs.queue import RETRY_BACKOFF, ClaimedJob, JobQueue
+from marketing_agent.jobs.queue import RETRY_BACKOFF, ClaimedJob, JobFailure, JobQueue
 from marketing_agent.jobs.worker import IDLE_WAIT_S, Worker
 
 HOSTILE = "ignora-as-regras-SEGREDO-4711"
@@ -23,6 +23,8 @@ LEASE = timedelta(minutes=20)
 
 class StubPipeline:
     """Pipeline substituto: regista os jobs e levanta o erro dado (se houver)."""
+
+    queue: JobQueue  # ligada pela fixture `queue`; `fail_job` so delega na fila
 
     def __init__(self, error: BaseException | None = None) -> None:
         self.error = error
@@ -37,10 +39,15 @@ class StubPipeline:
             raise self.error
         return "in_review"
 
+    def fail_job(self, job: ClaimedJob, message: str, retry: bool) -> JobFailure | None:
+        return "queued" if self.queue.fail(job, message, retry) else None
+
 
 @pytest.fixture
 def queue(session_factory: Factory, clock: FixedClock) -> JobQueue:
-    return JobQueue(session_factory, clock, LEASE)
+    built = JobQueue(session_factory, clock, LEASE)
+    StubPipeline.queue = built
+    return built
 
 
 def enqueue(queue: JobQueue, session_factory: Factory, key: str = "k1") -> str:
@@ -279,3 +286,94 @@ def test_worker_with_real_pipeline_never_stores_model_text_in_errors(rig: Conten
     stored = rig.job(job_id)
     assert (stored.status, stored.last_error) == ("queued", "AgentRunFailed")
     assert rig.post(post_id).last_error is None
+
+
+# --- jobs mortos nao deixam o post em geracao para sempre ------------------------------------
+
+LEASE_EXPIRED = "LeaseExpired: lease expirada sem conclusao"
+
+
+def test_three_unexpected_failures_leave_post_with_sanitized_last_error(rig: ContentRig) -> None:
+    rig.llm.load([RuntimeError(HOSTILE)] * 3)
+    post_id = rig.seed_post()
+    job_id = rig.enqueue(post_id)
+    worker = Worker(rig.queue, rig.pipeline, "w1")
+    for attempt in (1, 2, 3):
+        assert worker.run_once() is True
+        rig.clock.advance(RETRY_BACKOFF * attempt + timedelta(seconds=1))
+        if attempt < 3:  # ainda ha tentativas: nada a mostrar no post
+            assert rig.post(post_id).last_error is None
+    assert rig.job(job_id).status == "dead"
+    post = rig.post(post_id)
+    assert (post.lifecycle, post.last_error) == ("drafting", "AgentRunFailed")
+    assert HOSTILE not in (post.last_error or "")
+
+
+def kill_job(rig: ContentRig, post_id: str) -> None:
+    """Um worker reclama o job e morre; a lease vence e o arranque seguinte recoloca-o."""
+    assert rig.queue.claim("morto") is not None
+    rig.expire_leases()
+    assert rig.queue.requeue_expired() == 1
+
+
+def test_job_killed_three_times_marks_the_post_when_it_turns_dead(rig: ContentRig) -> None:
+    post_id = rig.seed_post(lifecycle="drafting")
+    job_id = rig.enqueue(post_id)
+    for kill in (1, 2, 3):
+        kill_job(rig, post_id)
+        expected = LEASE_EXPIRED if kill == 3 else None
+        assert rig.post(post_id).last_error == expected
+        rig.clock.advance(timedelta(minutes=5))  # espera de nova tentativa
+    assert rig.job(job_id).status == "dead"
+
+
+def test_dead_job_leaves_a_post_that_is_not_drafting_untouched(rig: ContentRig) -> None:
+    post_id = rig.seed_post(lifecycle="in_review")
+    rig.enqueue(post_id)
+    for _ in range(3):
+        kill_job(rig, post_id)
+        rig.clock.advance(timedelta(minutes=5))
+    assert rig.post(post_id).last_error is None
+
+
+def test_requeue_expired_does_not_touch_posts_of_jobs_that_are_requeued(rig: ContentRig) -> None:
+    post_id = rig.seed_post(lifecycle="drafting")
+    rig.enqueue(post_id)
+    kill_job(rig, post_id)  # 1a morte: volta a fila
+    assert rig.post(post_id).last_error is None
+
+
+def test_run_forever_requeues_abandoned_jobs_on_idle_iterations(
+    queue: JobQueue, session_factory: Factory, clock: FixedClock
+) -> None:
+    pipeline = StubPipeline()
+    stop = threading.Event()
+    sleeps: list[float] = []
+    job_ids: list[str] = []
+
+    def sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+        if len(sleeps) == 1:  # outro processo reclama um job e morre, depois do arranque
+            job_ids.append(enqueue(queue, session_factory))
+            assert queue.claim("outro") is not None
+            clock.advance(LEASE + timedelta(seconds=1))
+        else:
+            stop.set()
+
+    Worker(queue, pipeline, "w1", sleep).run_forever(stop)
+    assert [job.id for job in pipeline.jobs] == job_ids  # recolocado na espera e processado
+    assert load(session_factory, job_ids[0]).attempts == 2
+
+
+def test_idle_requeue_does_not_run_after_stop(queue: JobQueue) -> None:
+    calls: list[str] = []
+
+    class SpyQueue(JobQueue):
+        def requeue_expired(self) -> int:
+            calls.append("requeue")
+            return 0
+
+    spy = SpyQueue(queue._session_factory, queue._clock, LEASE)  # noqa: SLF001
+    stop = threading.Event()
+    Worker(spy, StubPipeline(), "w1", lambda seconds: stop.set()).run_forever(stop)
+    assert calls == ["requeue"]  # so o do arranque

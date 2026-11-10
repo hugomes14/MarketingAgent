@@ -1,6 +1,6 @@
 """Worker: reclama um job de cada vez e entrega-o ao pipeline; nunca morre por um job mau.
 
-Concorrencia 1. Falhas inesperadas de um job viram `queue.fail(..., retry=True)` com
+Concorrencia 1. Falhas inesperadas de um job viram `pipeline.fail_job(..., retry=True)` com
 `describe_error` (nunca texto de excecao); o log leva so o nome da classe e o id do job.
 """
 
@@ -11,7 +11,7 @@ from typing import Protocol
 
 from marketing_agent.content.pipeline import GenerationOutcome
 from marketing_agent.jobs.errors import describe_error
-from marketing_agent.jobs.queue import ClaimedJob, JobQueue
+from marketing_agent.jobs.queue import ClaimedJob, JobFailure, JobQueue
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +23,10 @@ class JobHandler(Protocol):
 
     def generate(self, job: ClaimedJob) -> GenerationOutcome:
         """Processa e fecha o job; erros inesperados sobem ao worker."""
+        ...
+
+    def fail_job(self, job: ClaimedJob, message: str, retry: bool) -> JobFailure | None:
+        """Falha o job (e, se ficou terminal, anota o motivo no que ele produzia)."""
         ...
 
 
@@ -57,8 +61,8 @@ class Worker:
             outcome = self._pipeline.generate(job)
         except Exception as exc:
             logger.error("job %s falhou: %s", job.id, type(exc).__name__)
-            # `False` = lease perdida: o job ja e de outro worker e nao se altera nada.
-            self._queue.fail(job, describe_error(exc), retry=True)
+            # `None` = lease perdida: o job ja e de outro worker e nao se altera nada.
+            self._pipeline.fail_job(job, describe_error(exc), retry=True)
         else:
             logger.info("job %s: %s", job.id, outcome)
         return True
@@ -79,7 +83,7 @@ class Worker:
         self.recover()
         while not stop.is_set():
             if not self._step():
-                self._wait(stop)
+                self._idle(stop)
 
     def _step(self) -> bool:
         """Um `run_once` a prova de falhas da infraestrutura (base em baixo, por exemplo)."""
@@ -89,8 +93,22 @@ class Worker:
             logger.error("worker %s: erro fora do job: %s", self._worker_id, type(exc).__name__)
             return False
 
-    def _wait(self, stop: threading.Event) -> None:
+    def _idle(self, stop: threading.Event) -> None:
+        """Fila vazia: espera e, se continua a correr, recupera jobs de workers que sumiram."""
         if self._sleep is None:
             stop.wait(IDLE_WAIT_S)
         else:
             self._sleep(IDLE_WAIT_S)
+        if stop.is_set():
+            return
+        try:
+            requeued = self._queue.requeue_expired()
+        except Exception as exc:
+            logger.error(
+                "worker %s: recolocar jobs falhou: %s", self._worker_id, type(exc).__name__
+            )
+        else:
+            if requeued:
+                logger.warning(
+                    "worker %s: %d job(s) de lease vencida recolocado(s)", self._worker_id, requeued
+                )

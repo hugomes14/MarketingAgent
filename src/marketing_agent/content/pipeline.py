@@ -10,7 +10,6 @@ Mensagens de falha: so `describe_error` chega a `job.last_error` e `post.last_er
 """
 
 import logging
-from collections.abc import Mapping
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -23,6 +22,7 @@ from marketing_agent.content.revision_store import (
     DRAFTING,
     GeneratedText,
     PostSnapshot,
+    kb_ref_ids,
     lock_post,
     save_generated,
     stale_reason,
@@ -34,7 +34,7 @@ from marketing_agent.db.models import Post
 from marketing_agent.feedback.service import FeedbackService
 from marketing_agent.harness.engine import AgentEngine, RunResult
 from marketing_agent.jobs.errors import describe_error
-from marketing_agent.jobs.queue import ClaimedJob, JobQueue
+from marketing_agent.jobs.queue import ClaimedJob, JobFailure, JobQueue
 from marketing_agent.kb.service import KbService
 from marketing_agent.proposals import MissingPrerequisite, require_active
 from marketing_agent.strategy.service import StrategyService
@@ -57,11 +57,6 @@ class GenerationRequest(BaseModel):
     post_id: str = Field(min_length=1)
     owner_comment: str | None
     reason: Literal["plan", "changes"]
-
-
-def _kb_ref_ids(brief: Mapping[str, object]) -> list[str]:
-    refs = brief.get("kb_refs")
-    return [ref for ref in refs if isinstance(ref, str)] if isinstance(refs, list) else []
 
 
 class ContentPipeline:
@@ -99,17 +94,17 @@ class ContentPipeline:
         try:
             request = GenerationRequest.model_validate(job.payload)
         except ValidationError as exc:
-            return self._fail(job, None, describe_error(exc))
+            return self._fail(job, describe_error(exc))
         started = self._begin(job, request)
         if not isinstance(started, PostSnapshot):
             return started
         try:
             payload = self._load_payload(started)
         except MissingPrerequisite as exc:
-            return self._fail(job, started, describe_error(exc))
+            return self._fail(job, describe_error(exc))
         result = self._rounds.run(started.brand_id, payload, request.owner_comment)
         if isinstance(result, RunResult):
-            return self._fail(job, started, describe_stop(result))
+            return self._fail(job, describe_stop(result))
         return self._save(job, started, result)
 
     def _begin(
@@ -118,6 +113,8 @@ class ContentPipeline:
         """Bloqueia o post, decide se ha trabalho a fazer e passa-o a `drafting`."""
         with self._session_factory.begin() as session:
             post = lock_post(session, request.post_id)
+            if not self._queue.holds_lease_in(session, job):
+                return "stale"  # cancelado ou reclamado por outro: nao tocar no post
             if post is None or not self._can_generate(post, request.reason):
                 self._queue.complete_in(session, job)
                 return "stale"
@@ -141,7 +138,7 @@ class ContentPipeline:
                 f"geracao: falta uma estrategia ativa para a marca {brand_id}"
             )
         kb_entries = self._kb.valid_refs(
-            brand_id, _kb_ref_ids(snapshot.brief), snapshot.scheduled_date
+            brand_id, kb_ref_ids(snapshot.brief), snapshot.scheduled_date
         )
         styles, negatives = self._feedback.prompt_examples(brand_id)
         return CopyPayload(
@@ -175,18 +172,24 @@ class ContentPipeline:
             logger.warning("job %s: lease perdida antes de gravar; nada foi gravado", job.id)
             return "stale"
 
-    def _fail(
-        self, job: ClaimedJob, snapshot: PostSnapshot | None, message: str
-    ) -> GenerationOutcome:
+    def _fail(self, job: ClaimedJob, message: str) -> GenerationOutcome:
         """Falha o job sem nova tentativa; so com a lease valida e que o post recebe o motivo."""
-        if not self._queue.fail(job, message, retry=False):
+        if self.fail_job(job, message, retry=False) is None:
             return "stale"
-        if snapshot is not None:
-            self._record_post_error(snapshot, message)
         return "drafting_failed"
 
-    def _record_post_error(self, snapshot: PostSnapshot, message: str) -> None:
+    def fail_job(self, job: ClaimedJob, message: str, retry: bool) -> JobFailure | None:
+        """Falha o job; se ficou `failed` ou `dead`, o post `drafting` recebe `message` como motivo.
+
+        Uma so transacao, post primeiro e job depois (como a aprovacao do plano): nao ha estado
+        em que o job falhou e o post continua mudo, e quem perdeu a lease (`None`) nao escreve
+        nada, nem no post de um job novo. `message` vem sempre de `describe_error`.
+        """
+        post_id = job.payload.get("post_id")
         with self._session_factory.begin() as session:
-            post = lock_post(session, snapshot.post_id)
-            if post is not None and stale_reason(session, post, snapshot) is None:
+            post = lock_post(session, post_id) if isinstance(post_id, str) else None
+            status = self._queue.fail_in(session, job, message, retry)
+            is_terminal = status in ("failed", "dead")
+            if is_terminal and post is not None and post.lifecycle == DRAFTING:
                 post.last_error = message
+            return status

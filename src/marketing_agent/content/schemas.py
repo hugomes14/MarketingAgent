@@ -29,6 +29,8 @@ MAX_SCHEMA_CAPTION_CHARS = 10_000
 MAX_SCHEMA_HASHTAGS = 100
 # Cada hashtag limita-se a 100 caracteres: o formato (`#`, sem espacos) e do validador.
 Hashtag = Annotated[str, Field(max_length=100)]
+MAX_CALL_TO_ACTION_CHARS = 300
+MAX_ALT_TEXT_CHARS = 500
 
 
 class Alegacao(BaseModel):
@@ -47,8 +49,8 @@ class RascunhoTexto(BaseModel):
 
     legenda: str = Field(min_length=1, max_length=MAX_SCHEMA_CAPTION_CHARS)
     hashtags: list[Hashtag] = Field(max_length=MAX_SCHEMA_HASHTAGS)
-    apelo_a_acao: str = Field(max_length=300)
-    alt_text: str = Field(max_length=500)
+    apelo_a_acao: str = Field(max_length=MAX_CALL_TO_ACTION_CHARS)
+    alt_text: str = Field(max_length=MAX_ALT_TEXT_CHARS)
     alegacoes: list[Alegacao] = Field(max_length=30)
 
 

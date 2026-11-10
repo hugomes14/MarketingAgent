@@ -66,12 +66,17 @@ class RunStatus(StrEnum):
 
 @dataclass(frozen=True)
 class RunResult:
-    """Resultado de `AgentEngine.run`; `run_id` e vazio se a execucao nem chegou a ser criada."""
+    """Resultado de `AgentEngine.run`; `run_id` e vazio se a execucao nem chegou a ser criada.
+
+    `limit` so existe em `BLOCKED_LIMIT`: a classe do limite que parou a execucao (passos,
+    tokens ou duracao vs. custo), para quem precisa de a distinguir sem ler `message`.
+    """
 
     status: RunStatus
     run_id: str
     output: object | None
     message: str | None
+    limit: type[Exception] | None = None
 
 
 class RunLimitExceeded(Exception):
@@ -456,7 +461,7 @@ class AgentEngine:
         try:
             output = loop.run(ctx, payload)
         except (RunLimitExceeded, RunCostLimitExceeded) as exc:
-            return RunResult(RunStatus.BLOCKED_LIMIT, run_id, None, str(exc))
+            return RunResult(RunStatus.BLOCKED_LIMIT, run_id, None, str(exc), type(exc))
         except NeedsHuman as exc:
             return RunResult(RunStatus.NEEDS_HUMAN, run_id, None, exc.reason)
         except Exception as exc:

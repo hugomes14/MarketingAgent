@@ -53,6 +53,7 @@ from marketing_agent.strategy.service import StrategyService
 PANEL_FACTORY = "marketing_agent.panel.main:create_app_from_env"
 FORWARDED_ALLOW_IPS = "FORWARDED_ALLOW_IPS"
 WORKER_ROLES = ("copywriter", "revisor")
+EXIT_INTERRUPTED = 130  # convencao do shell para SIGINT
 
 Command = Callable[[argparse.Namespace], int]
 
@@ -210,10 +211,15 @@ def build_worker(settings: Settings, session_factory: sessionmaker[Session]) -> 
 def stop_on_signals(stop: threading.Event) -> Iterator[None]:
     """`SIGINT` e `SIGTERM` ativam `stop` (sem traceback); os tratadores antigos voltam ao sair."""
 
+    handled = (signal.SIGINT, signal.SIGTERM)
+
     def request_stop(signum: int, frame: FrameType | None) -> None:
         stop.set()
+        # O 1o sinal pede paragem ordeira; os tratadores antigos voltam ja, para que um 2o sinal
+        # (o job em curso demora) force a saida pelo caminho normal do processo.
+        for sig, handler in previous.items():
+            signal.signal(sig, handler)
 
-    handled = (signal.SIGINT, signal.SIGTERM)
     previous = {sig: signal.signal(sig, request_stop) for sig in handled}
     try:
         yield
@@ -235,7 +241,14 @@ def cmd_worker(args: argparse.Namespace) -> int:
                 file=sys.stderr,
                 flush=True,
             )
-            worker.run_forever(stop)
+            try:
+                worker.run_forever(stop)
+            except KeyboardInterrupt:  # 2o Ctrl+C: o tratador por omissao interrompe o job em curso
+                print(
+                    "worker interrompido (2o sinal); o job em curso recupera-se no arranque",
+                    file=sys.stderr,
+                )
+                return EXIT_INTERRUPTED
     print("worker terminado", file=sys.stderr)
     return 0
 

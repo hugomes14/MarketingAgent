@@ -110,6 +110,7 @@ class PostReconciler:
         statement = (
             select(Post)
             .where(Post.brand_id == brand_id, Post.slot_key.startswith(f"{week}-", autoescape=True))
+            .order_by(Post.id)  # mesma ordem de `requeue_expired`: sem ciclos entre transacoes
             .with_for_update()
         )
         return {post.slot_key: post for post in session.scalars(statement)}

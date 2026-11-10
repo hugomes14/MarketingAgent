@@ -12,7 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 from marketing_agent.artifacts.store import ArtifactState, ArtifactStore, ArtifactType
-from marketing_agent.budget.controller import BudgetController
+from marketing_agent.budget.controller import BudgetController, RunCostLimitExceeded
 from marketing_agent.budget.pricing import (
     ModelPrice,
     PriceBook,
@@ -28,6 +28,7 @@ from marketing_agent.harness.engine import (
     AgentEngine,
     Loop,
     RunContext,
+    RunLimitExceeded,
     RunResult,
     RunStatus,
 )
@@ -471,6 +472,7 @@ def test_run_cost_limit_blocks_before_call(make_rig: RigFactory) -> None:
     rig = make_rig([response()], output_per_million="10000")
     result = rig.run(OneCallLoop())
     assert result.status is RunStatus.BLOCKED_LIMIT
+    assert result.limit is RunCostLimitExceeded  # distinguivel do limite de passos/duracao
     assert rig.llm.requests == []
     assert rig.step_errors() == ["limit"]
     assert rig.reservations() == []
@@ -482,6 +484,7 @@ def test_max_steps_blocks(make_rig: RigFactory) -> None:
     rig = make_rig([response(BAD), response()])
     result = rig.run(OneCallLoop(), make_spec(max_steps=1))
     assert result.status is RunStatus.BLOCKED_LIMIT
+    assert result.limit is RunLimitExceeded
     assert len(rig.llm.requests) == 1
     assert len(rig.steps()) == 1
 
