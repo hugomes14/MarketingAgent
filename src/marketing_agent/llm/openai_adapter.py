@@ -22,6 +22,7 @@ from marketing_agent.budget.pricing import Usage
 from marketing_agent.config import Capability
 from marketing_agent.llm.transport_errors import classify_connection_cause, classify_http_status
 from marketing_agent.llm.types import (
+    LLM_CALL_TIMEOUT_S,
     ContentPart,
     ImagePart,
     LlmRequest,
@@ -186,7 +187,7 @@ class OpenAiClient:
         api_key_file: Path,
         capabilities: frozenset[Capability],
         base_url: str | None = None,
-        timeout_s: float = 120.0,
+        timeout_s: float = LLM_CALL_TIMEOUT_S,
         sdk_client: openai.OpenAI | None = None,
         system_role: Literal["developer", "system"] = "developer",
     ) -> None:

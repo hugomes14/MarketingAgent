@@ -3,6 +3,7 @@
 import hashlib
 import json
 import threading
+import unicodedata
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date
@@ -19,10 +20,12 @@ from content_rig import (
 from sqlalchemy import select, text, update
 
 from marketing_agent.artifacts.store import ArtifactType
+from marketing_agent.budget.controller import RunCostLimitExceeded
 from marketing_agent.clock import FixedClock
 from marketing_agent.content.revision_store import canonical_revision_hash
-from marketing_agent.content.rounds import AgentRunFailed
+from marketing_agent.content.rounds import AgentRunFailed, describe_stop
 from marketing_agent.db.models import AgentRun, Post
+from marketing_agent.harness.engine import RunLimitExceeded, RunResult, RunStatus
 from marketing_agent.jobs.errors import describe_error
 from marketing_agent.llm import fake_scenarios
 
@@ -577,3 +580,59 @@ def test_two_jobs_in_a_row_each_write_their_own_revision(make_rig: MakeRig) -> N
     assert rig.pipeline.generate(rig.claimed(first)) == "in_review"
     assert rig.pipeline.generate(rig.claimed(second)) == "in_review"
     assert [len(rig.revisions(p)) for p in (first, second)] == [1, 1]
+
+
+def test_canonical_hash_ignores_unicode_normalization_form() -> None:
+    fields = {"hashtags": ["#a"], "call_to_action": "x", "alt_text": "y", "claims": []}
+    composed = canonical_revision_hash(caption="Pão açorda", channels=["instagram"], **fields)
+    decomposed = canonical_revision_hash(
+        caption=unicodedata.normalize("NFD", "Pão açorda"), channels=["instagram"], **fields
+    )
+    assert unicodedata.normalize("NFD", "Pão açorda") != "Pão açorda"
+    assert composed == decomposed
+
+
+def test_describe_stop_keeps_cost_and_step_limits_apart_without_messages() -> None:
+    cost = RunResult(RunStatus.BLOCKED_LIMIT, "r", None, HOSTILE, RunCostLimitExceeded)
+    steps = RunResult(RunStatus.BLOCKED_LIMIT, "r", None, HOSTILE, RunLimitExceeded)
+    human = RunResult(RunStatus.NEEDS_HUMAN, "r", None, HOSTILE)
+    assert describe_stop(cost) == "RunCostLimitExceeded"
+    assert describe_stop(steps) == "RunLimitExceeded"
+    assert describe_stop(human) == "NeedsHuman"
+
+
+def test_job_cancelled_before_begin_leaves_post_and_llm_alone(make_rig: MakeRig) -> None:
+    rig = make_rig(copy_and_review())
+    post_id = rig.seed_post()
+    job = rig.claimed(post_id)
+    with rig.factory.begin() as session:  # a aprovacao de um plano cancela o job entretanto
+        rig.queue.cancel_for_post_in(session, post_id)
+    assert rig.pipeline.generate(job) == "stale"
+    assert rig.post(post_id).lifecycle == "planned"
+    assert rig.llm.requests == [] and rig.revisions(post_id) == []
+    assert rig.job(job.id).status == "cancelled"
+
+
+def test_fail_job_with_lost_lease_does_not_write_the_post(make_rig: MakeRig) -> None:
+    rig = make_rig([])
+    post_id = rig.seed_post(lifecycle="drafting")
+    job = rig.claimed(post_id)
+    steal_lease(rig)()  # o job passa a outro worker (e ao seu post, no futuro)
+    assert rig.pipeline.fail_job(job, "NeedsHuman", retry=False) is None
+    assert rig.post(post_id).last_error is None
+    assert rig.job(job.id).locked_by == "w2"
+
+
+@pytest.mark.parametrize("retry", [True, False])
+def test_fail_job_writes_post_error_only_when_terminal_and_drafting(
+    make_rig: MakeRig, retry: bool
+) -> None:
+    rig = make_rig([])
+    drafting = rig.seed_post(f"{WEEK}-1", lifecycle="drafting")
+    in_review = rig.seed_post(f"{WEEK}-2", lifecycle="in_review")
+    for post_id in (drafting, in_review):
+        job = rig.claimed(post_id)
+        status = rig.pipeline.fail_job(job, "NeedsHuman", retry=retry)
+        assert status == ("queued" if retry else "failed")
+    assert rig.post(drafting).last_error == (None if retry else "NeedsHuman")
+    assert rig.post(in_review).last_error is None

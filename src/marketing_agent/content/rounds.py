@@ -33,8 +33,8 @@ class AgentRunFailed(Exception):
 def describe_stop(result: RunResult) -> str:
     """`last_error` de uma execucao parada por limite ou por pedido de ajuda humana."""
     if result.status is RunStatus.BLOCKED_LIMIT:
-        # A mensagem do motor so tem numeros dos limites (tipo seguro de `describe_error`).
-        return describe_error(RunLimitExceeded(result.message or ""))
+        # So o nome da classe do limite (distingue custo de passos/duracao); sem mensagem.
+        return describe_error((result.limit or RunLimitExceeded)())
     return describe_error(NeedsHuman(""))  # o motivo do motor pode citar o modelo: so a classe
 
 

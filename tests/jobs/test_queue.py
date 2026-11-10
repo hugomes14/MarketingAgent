@@ -362,3 +362,46 @@ def test_queue_module_has_no_domain_imports() -> None:
     )
     result = subprocess.run([sys.executable, "-I", "-c", code], capture_output=True, text=True)
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_fail_in_reports_the_resulting_status(
+    queue: JobQueue, session_factory: Factory, clock: FixedClock
+) -> None:
+    enqueue(queue, session_factory, "k1")
+    outcomes = []
+    for retry in (True, True, True):
+        claimed = queue.claim("w1")
+        assert claimed is not None
+        with session_factory.begin() as session:
+            outcomes.append(queue.fail_in(session, claimed, "Erro", retry))
+        clock.advance(timedelta(minutes=5))
+    assert outcomes == ["queued", "queued", "dead"]
+    claimed = claim_one(queue, session_factory, "k2")
+    with session_factory.begin() as session:
+        assert queue.fail_in(session, claimed, "Erro", retry=False) == "failed"
+    with session_factory.begin() as session:  # lease ja nao e deste token
+        assert queue.fail_in(session, claimed, "Erro", retry=False) is None
+
+
+def test_fail_in_rolls_back_with_the_callers_transaction(
+    queue: JobQueue, session_factory: Factory
+) -> None:
+    claimed = claim_one(queue, session_factory)
+
+    class Abort(Exception):
+        pass
+
+    with pytest.raises(Abort), session_factory.begin() as session:
+        assert queue.fail_in(session, claimed, "Erro", retry=False) == "failed"
+        raise Abort
+    assert load(session_factory, claimed.id).status == "running"
+
+
+def test_holds_lease_in(queue: JobQueue, session_factory: Factory, clock: FixedClock) -> None:
+    claimed = claim_one(queue, session_factory)
+    with session_factory() as session:
+        assert queue.holds_lease_in(session, claimed) is True
+    with session_factory.begin() as session:
+        queue.cancel_for_post_in(session, "post-1")
+    with session_factory() as session:
+        assert queue.holds_lease_in(session, claimed) is False

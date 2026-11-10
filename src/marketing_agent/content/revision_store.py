@@ -8,6 +8,7 @@ do job (a aprovacao de um plano bloqueia posts -> jobs; a ordem contraria daria 
 
 import hashlib
 import json
+import unicodedata
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -73,7 +74,9 @@ def canonical_revision_hash(
         "canais": sorted(channels),
     }
     encoded = json.dumps(body, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
-    return hashlib.sha256(encoded.encode()).hexdigest()
+    # NFC num so sitio: o mesmo texto escrito com acentos compostos ou decompostos (o que o
+    # teclado, o browser ou o modelo produzem) tem de dar o mesmo hash.
+    return hashlib.sha256(unicodedata.normalize("NFC", encoded).encode()).hexdigest()
 
 
 def lock_post(session: Session, post_id: str) -> Post | None:

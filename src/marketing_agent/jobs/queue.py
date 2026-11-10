@@ -8,7 +8,8 @@ job cancelado) nao consegue concluir nem falhar o job.
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta
+from typing import Literal
 
 from sqlalchemy import ColumnElement, case, select, text, update
 from sqlalchemy.dialects.postgresql import insert
@@ -16,7 +17,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from marketing_agent.clock import Clock
 from marketing_agent.db.base import new_id
-from marketing_agent.db.models import ACTIVE_JOB_PREDICATE_SQL, ACTIVE_JOB_STATUSES, Job
+from marketing_agent.db.models import ACTIVE_JOB_PREDICATE_SQL, ACTIVE_JOB_STATUSES, Job, Post
 
 GENERATE_POST_JOB = "generate_post"
 RETRY_BACKOFF = timedelta(seconds=30)  # espera = RETRY_BACKOFF x tentativas ja feitas
@@ -52,7 +53,10 @@ def _active_generate_post(post_id: str) -> tuple[ColumnElement[bool], ...]:
     )
 
 
-def _status_after_failure(job: Job, retry: bool) -> str:
+JobFailure = Literal["queued", "dead", "failed"]
+
+
+def _status_after_failure(job: Job, retry: bool) -> JobFailure:
     """`queued` se ainda ha tentativas; `dead` se esgotou; `failed` se a falha nao e repetivel."""
     if not retry:
         return "failed"
@@ -126,11 +130,27 @@ class JobQueue:
         )
         return session.execute(statement).first() is not None
 
-    def fail(self, job: ClaimedJob, error: str, retry: bool) -> bool:
-        """Regista a falha: nova tentativa, `dead` (esgotado) ou `failed` (sem `retry`).
+    def holds_lease_in(self, session: Session, job: ClaimedJob) -> bool:
+        """O job continua `running` com o `lease_token` deste worker? Leitura sem lock."""
+        statement = select(Job.id).where(
+            Job.id == job.id, Job.lease_token == job.lease_token, Job.status == "running"
+        )
+        return session.execute(statement).first() is not None
 
-        Devolve `False`, sem alterar nada, se o worker perdeu a lease (nao e erro: o job ja
-        pertence a outro worker ou foi cancelado).
+    def fail(self, job: ClaimedJob, error: str, retry: bool) -> bool:
+        """Regista a falha numa transacao propria; `False` se o worker perdeu a lease."""
+        with self._session_factory.begin() as session:
+            return self.fail_in(session, job, error, retry) is not None
+
+    def fail_in(
+        self, session: Session, job: ClaimedJob, error: str, retry: bool
+    ) -> JobFailure | None:
+        """Regista a falha na transacao do chamador e devolve o estado resultante.
+
+        `queued` (nova tentativa), `dead` (tentativas esgotadas) ou `failed` (sem `retry`).
+        Devolve `None`, sem alterar nada, se o worker perdeu a lease (nao e erro: o job ja
+        pertence a outro worker ou foi cancelado). Quem tambem escreve no post deve bloquear o
+        post ANTES de chamar (ordem posts -> jobs, como a aprovacao do plano).
         """
         now = self._clock.now()
         statement = (
@@ -138,37 +158,80 @@ class JobQueue:
             .where(Job.id == job.id, Job.lease_token == job.lease_token, Job.status == "running")
             .with_for_update()
         )
-        with self._session_factory.begin() as session:
-            row = session.execute(statement).scalar_one_or_none()
-            if row is None:
-                return False
-            row.status = _status_after_failure(row, retry)
-            if row.status == "queued":
-                row.run_at = now + RETRY_BACKOFF * row.attempts
-            row.locked_by = None
-            row.locked_until = None
-            row.lease_token = None
-            row.last_error = truncate_error(error)
-            row.updated_at = now
-            return True
+        row = session.execute(statement).scalar_one_or_none()
+        if row is None:
+            return None
+        status = _status_after_failure(row, retry)
+        row.status = status
+        if status == "queued":
+            row.run_at = now + RETRY_BACKOFF * row.attempts
+        row.locked_by = None
+        row.locked_until = None
+        row.lease_token = None
+        row.last_error = truncate_error(error)
+        row.updated_at = now
+        return status
 
     def requeue_expired(self) -> int:
-        """Devolve a `queued` (ou `dead`, se esgotou) os `running` com lease vencida; conta-os."""
+        """Devolve a `queued` (ou `dead`, se esgotou) os `running` com lease vencida; conta-os.
+
+        Os posts dos que ficam `dead` e ainda estao `drafting` recebem `last_error` fixo (senao
+        ficavam em geracao para sempre). Ordem dos locks: posts primeiro, depois os jobs.
+        """
         now = self._clock.now()
+        with self._session_factory.begin() as session:
+            expired = self._expired_running(session, now)
+            if not expired:
+                return 0
+            self._lock_posts(session, {post_id for _, post_id in expired if post_id})
+            updated = self._requeue(session, [job_id for job_id, _ in expired], now)
+            self._mark_posts_failed(
+                session,
+                {
+                    post_id
+                    for job_id, post_id in expired
+                    if post_id and updated.get(job_id) == "dead"
+                },
+            )
+            return len(updated)
+
+    def _expired_running(self, session: Session, now: datetime) -> list[tuple[str, str | None]]:
+        statement = select(Job.id, Job.payload["post_id"].astext).where(
+            Job.status == "running", Job.locked_until < now
+        )
+        return [(job_id, post_id) for job_id, post_id in session.execute(statement)]
+
+    @staticmethod
+    def _lock_posts(session: Session, post_ids: set[str]) -> None:
+        """Bloqueia os posts por ordem de id (sem ciclos entre transacoes iguais)."""
+        statement = select(Post.id).where(Post.id.in_(sorted(post_ids))).order_by(Post.id)
+        session.execute(statement.with_for_update()).all()
+
+    def _requeue(self, session: Session, job_ids: list[str], now: datetime) -> dict[str, str]:
+        """Aplica a recolocacao aos candidatos (que continuem vencidos); devolve id -> estado."""
         exhausted = Job.attempts >= Job.max_attempts
         statement = (
             update(Job)
-            .where(Job.status == "running", Job.locked_until < now)
+            .where(Job.id.in_(job_ids), Job.status == "running", Job.locked_until < now)
             .values(
                 status=case((exhausted, "dead"), else_="queued"),
                 last_error=_LEASE_EXPIRED_ERROR,
                 updated_at=now,
                 **_RELEASED_LOCK,
             )
-            .returning(Job.id)
+            .returning(Job.id, Job.status)
         )
-        with self._session_factory.begin() as session:
-            return len(session.execute(statement).all())
+        return {job_id: status for job_id, status in session.execute(statement)}
+
+    @staticmethod
+    def _mark_posts_failed(session: Session, post_ids: set[str]) -> None:
+        """`last_error` fixo nos posts ainda `drafting` (os outros ja seguiram a sua vida)."""
+        statement = (
+            update(Post)
+            .where(Post.id.in_(post_ids), Post.lifecycle == "drafting")
+            .values(last_error=_LEASE_EXPIRED_ERROR)
+        )
+        session.execute(statement)
 
     def has_active_for_post_in(self, session: Session, post_id: str) -> bool:
         """Ha um `generate_post` `queued` ou `running` do post? Leitura na transacao do chamador."""
