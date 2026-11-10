@@ -122,11 +122,11 @@ def test_sync_prices_loads_repo_file(
 ) -> None:
     path = REPO_ROOT / "config" / "model_prices.yaml"
     code, out, _ = run(capsys, "sync-prices", "--file", str(path))
-    assert code == 0 and out.strip() == "5 precos sincronizados"
+    assert code == 0 and out.strip() == "6 precos sincronizados"
     price = PriceBook(session_factory).get("anthropic", "claude-haiku-5-5")
     assert price.price_version == "2026-11-05"
     code, out, _ = run(capsys, "sync-prices", "--file", str(path))  # repetir e no-op
-    assert code == 0 and out.strip() == "5 precos sincronizados"
+    assert code == 0 and out.strip() == "6 precos sincronizados"
 
 
 def test_sync_prices_default_path_comes_from_settings(
@@ -134,7 +134,7 @@ def test_sync_prices_default_path_comes_from_settings(
 ) -> None:
     monkeypatch.setenv("MODEL_PRICES_PATH", str(REPO_ROOT / "config" / "model_prices.yaml"))
     code, out, _ = run(capsys, "sync-prices")
-    assert code == 0 and "5 precos" in out
+    assert code == 0 and "6 precos" in out
 
 
 def test_sync_prices_several_files(
@@ -149,7 +149,7 @@ def test_sync_prices_several_files(
         "--file",
         str(config / "model_prices.local.yaml"),
     )
-    assert code == 0 and out.strip() == "7 precos sincronizados"
+    assert code == 0 and out.strip() == "9 precos sincronizados"
     assert PriceBook(session_factory).get("openai", "qwen2.5:14b").tiers[0].input_per_million == 0
 
 

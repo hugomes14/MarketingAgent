@@ -6,7 +6,7 @@ ao fornecedor: cada operacao e uma transacao curta.
 """
 
 import calendar
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import ROUND_CEILING, ROUND_HALF_UP, Decimal
@@ -14,7 +14,14 @@ from decimal import ROUND_CEILING, ROUND_HALF_UP, Decimal
 from sqlalchemy import ColumnElement, func, select, update
 from sqlalchemy.orm import InstrumentedAttribute, Session, sessionmaker
 
-from marketing_agent.budget.pricing import PriceBook, Usage, compute_cost_usd
+from marketing_agent.budget.pricing import (
+    ImageUsage,
+    ModelPrice,
+    PriceBook,
+    Usage,
+    compute_cost_usd,
+    compute_image_cost_usd,
+)
 from marketing_agent.clock import Clock
 from marketing_agent.db.base import new_id
 from marketing_agent.db.models import AgentRun, CostEntry, CostReservation
@@ -43,6 +50,35 @@ class ReservationRequest:
     model_id: str
     input_tokens_estimate: int
     max_output_tokens: int
+
+
+@dataclass(frozen=True)
+class ImageReservationRequest:
+    """Pedido de reserva de uma imagem; o preco e fixo por (quality, size)."""
+
+    brand_id: str
+    role: str
+    run_id: str
+    step_id: str
+    provider: str
+    model_id: str
+    size: str
+    quality: str
+
+
+# Campos comuns a todos os pedidos de reserva: o que o bloqueio e a gravacao da reserva usam.
+_AnyReservationRequest = ReservationRequest | ImageReservationRequest
+
+
+@dataclass(frozen=True)
+class _Measured:
+    """Medicao a gravar num `cost_entry`: tudo o que difere entre texto e imagem."""
+
+    cost_usd: Decimal
+    tokens_in: int
+    tokens_out: int
+    tokens_reasoning: int | None
+    units: dict[str, int | str]
 
 
 @dataclass(frozen=True)
@@ -107,65 +143,57 @@ class BudgetController:
         estimate = Usage(request.input_tokens_estimate, request.max_output_tokens)
         # Teto: a retencao nunca fica abaixo da estimativa exata.
         amount = _money(compute_cost_usd(price, estimate), ROUND_CEILING)
-        with self._session_factory.begin() as session:
-            self._lock_run(session, request)
-            committed = self._run_committed_usd(session, request.run_id)
-            if committed + amount > run_cost_limit_usd:
-                raise RunCostLimitExceeded(
-                    f"execucao {request.run_id}: limite {run_cost_limit_usd} USD, "
-                    f"total com a nova reserva {committed + amount} USD"
-                )
-            row = CostReservation(
-                id=new_id(),
-                brand_id=request.brand_id,
-                run_id=request.run_id,
-                step_id=request.step_id,
-                role=request.role,
-                provider=request.provider,
-                model_id=request.model_id,
-                price_version=price.price_version,
-                reserved_usd=amount,
-                status="open",
-                created_at=self._clock.now(),
-            )
-            session.add(row)
-            return Reservation(row.id, amount)
+        return self._reserve_amount(request, price.price_version, amount, run_cost_limit_usd)
+
+    def reserve_image(
+        self, request: ImageReservationRequest, run_cost_limit_usd: Decimal
+    ) -> Reservation:
+        """Reserva o preco da imagem; mesmo bloqueio e mesma soma comprometida que `reserve`.
+
+        O preco por imagem e fixo para cada (quality, size), logo a retencao e igual ao custo
+        esperado. `UnknownPrice` (par sem preco) sai antes de abrir a transacao: nada e gravado.
+        Um fornecedor que cobre de outra forma resolve-se no acerto, que grava o valor da tabela.
+        """
+        price = self._price_book.get(request.provider, request.model_id)
+        usage = ImageUsage(1, request.size, request.quality)
+        amount = _money(compute_image_cost_usd(price, usage), ROUND_CEILING)
+        return self._reserve_amount(request, price.price_version, amount, run_cost_limit_usd)
 
     def settle(self, reservation_id: str, usage: Usage, provider_request_id: str | None) -> Decimal:
         """Lanca o custo medido e fecha a reserva; repetir devolve o mesmo custo."""
-        with self._session_factory.begin() as session:
-            row = self._lock_reservation(session, reservation_id)
-            if row.status == "released":
-                raise ValueError(f"reserva {reservation_id} ja libertada; nao pode ser acertada")
-            if row.status == "settled":
-                return self._entry_cost(session, reservation_id)
-            price = self._price_book.get(row.provider, row.model_id)
+
+        def measure(_: CostReservation, price: ModelPrice) -> _Measured:
             cost = _money(compute_cost_usd(price, usage), ROUND_HALF_UP)
-            now = self._clock.now()
-            session.add(
-                CostEntry(
-                    id=new_id(),
-                    brand_id=row.brand_id,
-                    reservation_id=row.id,
-                    role=row.role,
-                    run_id=row.run_id,
-                    step_id=row.step_id,
-                    provider=row.provider,
-                    model_id=row.model_id,
-                    provider_request_id=provider_request_id,
-                    price_version=price.price_version,
-                    tokens_in=usage.input_tokens,
-                    tokens_out=usage.output_tokens,
-                    tokens_reasoning=usage.reasoning_tokens,
-                    units={},
-                    cost_usd=cost,
-                    kind="measured",
-                    at=now,
-                )
+            return _Measured(
+                cost, usage.input_tokens, usage.output_tokens, usage.reasoning_tokens, {}
             )
-            row.status = "settled"
-            row.settled_at = now
-            return cost
+
+        return self._settle_with(reservation_id, provider_request_id, measure)
+
+    def settle_image(
+        self, reservation_id: str, usage: ImageUsage, provider_request_id: str | None
+    ) -> Decimal:
+        """Lanca o preco da tabela para a imagem gerada e fecha a reserva; idempotente.
+
+        `usage` tem de corresponder ao reservado (1 imagem, mesmo quality/size): a reserva nao
+        guarda quality/size, por isso compara-se o valor retido com o preco do par usado; uma
+        diferenca e erro de programacao (`ValueError`, reserva fica aberta). Se o preco da
+        tabela mudar entre reserva e acerto o erro tambem sai: nunca se grava custo inconsistente.
+        """
+
+        def measure(row: CostReservation, price: ModelPrice) -> _Measured:
+            cost = compute_image_cost_usd(price, usage)
+            reserved = _money(cost, ROUND_CEILING)
+            if usage.images != 1 or reserved != row.reserved_usd:
+                raise ValueError("o uso da imagem difere da reserva (quantidade, quality ou size)")
+            units: dict[str, int | str] = {
+                "images": 1,
+                "size": usage.size,
+                "quality": usage.quality,
+            }
+            return _Measured(_money(cost, ROUND_HALF_UP), 0, 0, None, units)
+
+        return self._settle_with(reservation_id, provider_request_id, measure)
 
     def release(self, reservation_id: str) -> None:
         """Liberta uma reserva aberta (chamada nunca enviada); idempotente."""
@@ -224,6 +252,79 @@ class BudgetController:
             over_reference=total > self._reference_usd,
         )
 
+    def _reserve_amount(
+        self,
+        request: _AnyReservationRequest,
+        price_version: str,
+        amount: Decimal,
+        run_cost_limit_usd: Decimal,
+    ) -> Reservation:
+        """Nucleo comum: bloqueia a execucao, confere o limite e grava a reserva aberta."""
+        with self._session_factory.begin() as session:
+            self._lock_run(session, request)
+            committed = self._run_committed_usd(session, request.run_id)
+            if committed + amount > run_cost_limit_usd:
+                raise RunCostLimitExceeded(
+                    f"execucao {request.run_id}: limite {run_cost_limit_usd} USD, "
+                    f"total com a nova reserva {committed + amount} USD"
+                )
+            row = CostReservation(
+                id=new_id(),
+                brand_id=request.brand_id,
+                run_id=request.run_id,
+                step_id=request.step_id,
+                role=request.role,
+                provider=request.provider,
+                model_id=request.model_id,
+                price_version=price_version,
+                reserved_usd=amount,
+                status="open",
+                created_at=self._clock.now(),
+            )
+            session.add(row)
+            return Reservation(row.id, amount)
+
+    def _settle_with(
+        self,
+        reservation_id: str,
+        provider_request_id: str | None,
+        measure: Callable[[CostReservation, ModelPrice], _Measured],
+    ) -> Decimal:
+        """Nucleo comum do acerto: bloqueia a reserva, grava um so `cost_entry` e fecha-a."""
+        with self._session_factory.begin() as session:
+            row = self._lock_reservation(session, reservation_id)
+            if row.status == "released":
+                raise ValueError(f"reserva {reservation_id} ja libertada; nao pode ser acertada")
+            if row.status == "settled":
+                return self._entry_cost(session, reservation_id)
+            price = self._price_book.get(row.provider, row.model_id)
+            measured = measure(row, price)
+            now = self._clock.now()
+            session.add(
+                CostEntry(
+                    id=new_id(),
+                    brand_id=row.brand_id,
+                    reservation_id=row.id,
+                    role=row.role,
+                    run_id=row.run_id,
+                    step_id=row.step_id,
+                    provider=row.provider,
+                    model_id=row.model_id,
+                    provider_request_id=provider_request_id,
+                    price_version=price.price_version,
+                    tokens_in=measured.tokens_in,
+                    tokens_out=measured.tokens_out,
+                    tokens_reasoning=measured.tokens_reasoning,
+                    units=measured.units,
+                    cost_usd=measured.cost_usd,
+                    kind="measured",
+                    at=now,
+                )
+            )
+            row.status = "settled"
+            row.settled_at = now
+            return measured.cost_usd
+
     def _warn_percent(self, total: Decimal) -> int | None:
         # Compara sem dividir: limiar <= total / referencia * 100.
         reached = [
@@ -245,7 +346,7 @@ class BudgetController:
         )
 
     @staticmethod
-    def _lock_run(session: Session, request: ReservationRequest) -> None:
+    def _lock_run(session: Session, request: _AnyReservationRequest) -> None:
         # Serializa reservas da mesma execucao: o 2o pedido so le a soma apos o commit do 1o.
         locked = session.scalar(
             select(AgentRun.id)

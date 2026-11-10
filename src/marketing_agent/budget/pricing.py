@@ -35,6 +35,15 @@ class PriceTier:
 
 
 @dataclass(frozen=True)
+class ImagePrice:
+    """Valor fixo em USD de uma imagem gerada com `quality` e `size`."""
+
+    quality: str
+    size: str
+    usd: Decimal
+
+
+@dataclass(frozen=True)
 class ModelPrice:
     """Preco de um modelo numa versao; o primeiro escalao comeca em 0 tokens."""
 
@@ -44,6 +53,9 @@ class ModelPrice:
     tiers: tuple[PriceTier, ...]
     # Opcional para quem so calcula custo; obrigatorio para gravar (sync_model_prices).
     valid_from: datetime | None = None
+    # Precos por imagem (modelos de imagem). Guardados ordenados por (quality, size): a forma
+    # canonica torna a comparacao de imutabilidade e a gravacao independentes da ordem do YAML.
+    per_image: tuple[ImagePrice, ...] = ()
 
     def __post_init__(self) -> None:
         key = f"{self.provider}/{self.model_id}/{self.price_version}"
@@ -54,6 +66,14 @@ class ModelPrice:
             raise ValueError(f"{key}: escaloes devem ser estritamente crescentes")
         if any(t.input_per_million < 0 or t.output_per_million < 0 for t in self.tiers):
             raise ValueError(f"{key}: precos negativos nao sao permitidos")
+        if any(image.usd < 0 for image in self.per_image):
+            raise ValueError(f"{key}: precos por imagem negativos nao sao permitidos")
+        pares = [(image.quality, image.size) for image in self.per_image]
+        if len(set(pares)) != len(pares):
+            raise ValueError(f"{key}: par quality/size repetido em per_image")
+        object.__setattr__(
+            self, "per_image", tuple(sorted(self.per_image, key=lambda i: (i.quality, i.size)))
+        )
 
 
 @dataclass(frozen=True)
@@ -77,6 +97,31 @@ def compute_cost_usd(price: ModelPrice, usage: Usage) -> Decimal:
     return total / MILLION
 
 
+@dataclass(frozen=True)
+class ImageUsage:
+    """Imagens geradas num pedido, com a qualidade e o tamanho pedidos."""
+
+    images: int
+    size: str
+    quality: str
+
+
+def compute_image_cost_usd(price: ModelPrice, usage: ImageUsage) -> Decimal:
+    """Custo em USD de `usage.images` imagens; `UnknownPrice` sem linha para (quality, size).
+
+    Funcao pura: o preco por imagem e fixo para cada par, sem arredondar.
+    """
+    if usage.images < 1:
+        raise ValueError("images deve ser pelo menos 1")
+    for image in price.per_image:
+        if image.quality == usage.quality and image.size == usage.size:
+            return image.usd * usage.images
+    raise UnknownPrice(
+        f"sem preco por imagem para {price.provider}/{price.model_id} "
+        f"(quality={usage.quality}, size={usage.size})"
+    )
+
+
 def _parse_money(value: object, where: str) -> Decimal:
     if not isinstance(value, str):
         raise ValueError(f"{where}: valor monetario deve ser texto entre aspas, nao {value!r}")
@@ -97,6 +142,23 @@ def _parse_tier(raw: object, where: str) -> PriceTier:
         _parse_money(raw.get("input_per_million"), where),
         _parse_money(raw.get("output_per_million"), where),
     )
+
+
+def _parse_image_price(raw: object, where: str) -> ImagePrice:
+    if not isinstance(raw, dict):
+        raise ValueError(f"{where}: per_image deve conter mapas")
+    quality, size = raw.get("quality"), raw.get("size")
+    if not (isinstance(quality, str) and quality and isinstance(size, str) and size):
+        raise ValueError(f"{where}: per_image exige quality e size em texto")
+    return ImagePrice(quality, size, _parse_money(raw.get("usd"), where))
+
+
+def _parse_per_image(raw: object, where: str) -> tuple[ImagePrice, ...]:
+    if raw is None:
+        return ()
+    if not isinstance(raw, list):
+        raise ValueError(f"{where}: per_image deve ser uma lista")
+    return tuple(_parse_image_price(item, where) for item in raw)
 
 
 def _parse_model(raw: object, path: Path, index: int) -> ModelPrice:
@@ -122,6 +184,7 @@ def _parse_model(raw: object, path: Path, index: int) -> ModelPrice:
         cast(str, fields["price_version"]),
         tuple(_parse_tier(t, where) for t in tiers),
         valid_from=valid_from,
+        per_image=_parse_per_image(raw.get("per_image"), where),
     )
 
 
@@ -157,6 +220,17 @@ def _tiers_from_json(raw: object) -> tuple[PriceTier, ...]:
     )
 
 
+def _per_image_as_json(price: ModelPrice) -> list[dict[str, str]]:
+    # `price.per_image` ja esta na forma canonica (ordenado), logo a ordem aqui e estavel.
+    return [{"quality": i.quality, "size": i.size, "usd": str(i.usd)} for i in price.per_image]
+
+
+def _per_image_from_json(raw: object) -> tuple[ImagePrice, ...]:
+    # Versoes gravadas antes do preco por imagem nao tem a chave: equivalem a "sem per_image".
+    items = cast(list[dict[str, str]], raw or [])
+    return tuple(ImagePrice(i["quality"], i["size"], Decimal(i["usd"])) for i in items)
+
+
 def _to_model_price(row: ModelPriceRow) -> ModelPrice:
     return ModelPrice(
         row.provider,
@@ -164,6 +238,7 @@ def _to_model_price(row: ModelPriceRow) -> ModelPrice:
         row.price_version,
         _tiers_from_json(row.conditions["tiers"]),
         valid_from=row.valid_from,
+        per_image=_per_image_from_json(row.conditions.get("per_image")),
     )
 
 
@@ -202,7 +277,7 @@ def _to_row(price: ModelPrice, valid_from: datetime) -> ModelPriceRow:
         valid_from=valid_from,
         input_per_million=first.input_per_million,
         output_per_million=first.output_per_million,
-        conditions={"tiers": _tiers_as_json(price)},
+        conditions={"tiers": _tiers_as_json(price), "per_image": _per_image_as_json(price)},
     )
 
 

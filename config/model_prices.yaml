@@ -38,3 +38,13 @@ models:
     valid_from: "2026-11-05T00:00:00+00:00"
     tiers:
       - {min_prompt_tokens: 0, input_per_million: "0", output_per_million: "0"}
+  - provider: fake
+    model_id: fake-image-1
+    price_version: "2026-11-09"
+    valid_from: "2026-11-09T00:00:00+00:00"
+    tiers:
+      - {min_prompt_tokens: 0, input_per_million: "0", output_per_million: "0"}
+    per_image:
+      - {quality: low, size: "1024x1536", usd: "0"}
+      - {quality: medium, size: "1024x1536", usd: "0"}
+      - {quality: high, size: "1024x1536", usd: "0"}
