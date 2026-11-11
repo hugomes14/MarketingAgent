@@ -51,6 +51,8 @@ from marketing_agent.llm.types import LlmNetworkError
 logger = logging.getLogger(__name__)
 
 MIN_GENERATED_SIDE: Final = 1024
+# Imagens geradas (faturadas) por pedido de geracao de uma publicacao (spec 2B, secao 6).
+MAX_IMAGES_PER_REQUEST: Final = 2
 _ALLOWED_FORMATS: Final[frozenset[ImageFormat]] = frozenset({"png", "jpeg", "webp"})
 _MEDIA_TYPES: Final[dict[ImageFormat, str]] = {
     "png": "image/png",
@@ -86,7 +88,7 @@ class ImageAllowance:
     nunca devolvido corresponde a uma imagem que o fornecedor pode ter faturado.
     """
 
-    def __init__(self, limit: int = 2) -> None:
+    def __init__(self, limit: int = MAX_IMAGES_PER_REQUEST) -> None:
         if limit < 0:
             raise ValueError("o limite de imagens nao pode ser negativo")
         self._limit = limit

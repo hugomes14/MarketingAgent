@@ -12,6 +12,9 @@ from marketing_agent.config import Capability
 # de cada passo, por isso uma execucao pode ultrapassa-lo ate este valor: a lease dos jobs e o
 # limiar de reservas orfas somam-no (ver `startup`).
 LLM_CALL_TIMEOUT_S = 120.0
+# Timeout de UMA chamada de geracao de imagem (adaptador de imagens). Uma imagem e mais lenta do
+# que uma resposta de texto; a lease dos jobs e o limiar de reservas orfas somam-no (ver `startup`).
+IMAGE_CALL_TIMEOUT_S = 180.0
 
 
 @dataclass(frozen=True)

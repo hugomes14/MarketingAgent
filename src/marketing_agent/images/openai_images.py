@@ -33,12 +33,10 @@ from marketing_agent.images.generation import (
     ImageResult,
 )
 from marketing_agent.llm.openai_adapter import classify_transport_error
+from marketing_agent.llm.types import IMAGE_CALL_TIMEOUT_S
 from marketing_agent.secrets import read_secret_file
 
 OFFICIAL_BASE_URL: Final = "https://api.openai.com/v1"
-# Uma imagem e mais lenta do que uma resposta de texto (LLM_CALL_TIMEOUT_S = 120 s).
-IMAGE_CALL_TIMEOUT_S: Final = 180.0
-
 _PNG_SIGNATURE: Final = b"\x89PNG\r\n\x1a\n"
 _MODERATION_BLOCKED: Final = "moderation_blocked"
 # Comprimento maximo do base64 de MAX_IMAGE_BYTES (4 caracteres por 3 bytes, com preenchimento).

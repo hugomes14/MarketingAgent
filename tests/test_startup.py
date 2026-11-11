@@ -1,6 +1,7 @@
 """Pecas de arranque partilhadas: duracoes dos specs e a lease dos trabalhos de conteudo."""
 
 import inspect
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -8,6 +9,7 @@ from pathlib import Path
 import pytest
 from sqlalchemy.orm import Session, sessionmaker
 
+from marketing_agent import startup
 from marketing_agent.budget.pricing import (
     ImagePrice,
     ModelPrice,
@@ -16,15 +18,19 @@ from marketing_agent.budget.pricing import (
     sync_model_prices,
 )
 from marketing_agent.config import RoleRoute, Settings
-from marketing_agent.content.specs import load_content_specs
+from marketing_agent.content.specs import ContentSpecs, load_content_specs
+from marketing_agent.harness.engine import NETWORK_BACKOFF_S
+from marketing_agent.harness.image_calls import MAX_IMAGES_PER_REQUEST
+from marketing_agent.images.openai_images import OpenAiImageGenerator
 from marketing_agent.llm.anthropic_adapter import AnthropicClient
 from marketing_agent.llm.openai_adapter import OpenAiClient
-from marketing_agent.llm.types import LLM_CALL_TIMEOUT_S
+from marketing_agent.llm.types import IMAGE_CALL_TIMEOUT_S, LLM_CALL_TIMEOUT_S
 from marketing_agent.startup import (
     StartupError,
     check_content_routes,
     content_job_lease,
     director_max_duration_s,
+    max_spec_duration_s,
     worker_stale_after,
 )
 
@@ -35,30 +41,77 @@ def test_adapters_use_the_shared_call_timeout() -> None:
         assert default == LLM_CALL_TIMEOUT_S == 120.0
 
 
-def test_content_job_lease_covers_three_passes_with_overrun_of_each_call() -> None:
-    specs = load_content_specs()
-    run_limits = specs.copywriter.limits.max_duration_s + specs.reviewer.limits.max_duration_s
+def package_per_pass(specs: ContentSpecs) -> float:
+    """Uma passagem do pacote no pior caso, componente a componente (ver `content_job_lease`)."""
+    run_limits = sum(
+        spec.limits.max_duration_s for spec in (specs.copywriter, specs.designer, specs.reviewer)
+    )
     # O motor so verifica a duracao ANTES de cada passo: cada papel pode exceder o limite em
-    # uma chamada (timeout do adaptador).
-    per_pass = run_limits + 2 * LLM_CALL_TIMEOUT_S
-    assert content_job_lease() == timedelta(seconds=3 * per_pass + 60)
-    assert content_job_lease() == timedelta(minutes=31)  # 3 x (180 + 180 + 240) + 60 = 1860 s
+    # uma chamada (timeout do adaptador de texto).
+    overrun = 3 * LLM_CALL_TIMEOUT_S
+    # Cada geracao possivel pode ser tentada 1 + repeticoes de rede vezes, ate ao timeout de imagem.
+    images = MAX_IMAGES_PER_REQUEST * (1 + len(NETWORK_BACKOFF_S)) * IMAGE_CALL_TIMEOUT_S
+    return run_limits + overrun + images
+
+
+def test_lease_covers_three_package_rounds() -> None:
+    specs = load_content_specs()
+    assert (specs.copywriter.limits.max_duration_s, specs.designer.limits.max_duration_s) == (
+        180,
+        300,
+    )
+    assert specs.reviewer.limits.max_duration_s == 180
+    assert (MAX_IMAGES_PER_REQUEST, len(NETWORK_BACKOFF_S)) == (2, 2)
+    expected = timedelta(seconds=3 * package_per_pass(specs) + 60)
+    assert content_job_lease() == expected
+    # 3 x (180 + 300 + 180 + 3 x 120 + 2 x 3 x 180) + 60 = 6360 s
+    assert content_job_lease() == timedelta(seconds=6360)
+
+
+def test_lease_grows_with_the_designer_and_with_each_image_allowance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    specs = load_content_specs()
+    base = content_job_lease()
+
+    def with_designer_duration(seconds: int) -> ContentSpecs:
+        limits = specs.designer.limits.model_copy(update={"max_duration_s": seconds})
+        return replace(specs, designer=specs.designer.model_copy(update={"limits": limits}))
+
+    monkeypatch.setattr(startup, "load_content_specs", lambda: with_designer_duration(400))
+    assert content_job_lease() == base + timedelta(seconds=3 * 100)  # as 3 passagens
+    monkeypatch.setattr(startup, "MAX_IMAGES_PER_REQUEST", 3)
+    assert content_job_lease() > base + timedelta(seconds=3 * 100)
+    # Sem o Designer na conta (a regra do 2A) a lease seria menor: nunca cobriria o pacote.
+    assert base > timedelta(seconds=3 * (180 + 180 + 240) + 60)
+
+
+def test_image_timeout_is_one_shared_constant_used_by_the_images_adapter() -> None:
+    default = inspect.signature(OpenAiImageGenerator).parameters["timeout_s"].default
+    assert default == IMAGE_CALL_TIMEOUT_S == 180.0 > LLM_CALL_TIMEOUT_S
 
 
 def test_content_job_lease_is_longer_than_the_director_rule_it_replaces() -> None:
     assert content_job_lease() > timedelta(seconds=director_max_duration_s() + 60) * 3
 
 
-def test_worker_stale_reservation_threshold_covers_the_longest_single_run() -> None:
+def test_max_spec_duration_is_the_longest_of_all_specs() -> None:
     specs = load_content_specs()
     longest = max(
         director_max_duration_s(),
         specs.copywriter.limits.max_duration_s,
+        specs.designer.limits.max_duration_s,
         specs.reviewer.limits.max_duration_s,
     )
-    # Uma execucao pode ultrapassar `max_duration_s` em uma chamada: o limiar soma-a.
-    assert worker_stale_after() == timedelta(seconds=longest + LLM_CALL_TIMEOUT_S)
-    assert worker_stale_after() >= timedelta(seconds=LLM_CALL_TIMEOUT_S)
+    assert max_spec_duration_s() == longest == 300  # o Designer e o mais longo
+
+
+def test_worker_stale_reservation_threshold_outlives_a_live_image_reservation() -> None:
+    # Uma reserva de imagem fica aberta durante a chamada (ate IMAGE_CALL_TIMEOUT_S): o limiar
+    # do arranque do painel nunca a pode dar como orfa enquanto o worker a espera.
+    expected = timedelta(seconds=max_spec_duration_s() + IMAGE_CALL_TIMEOUT_S)
+    assert worker_stale_after() == expected == timedelta(seconds=480)
+    assert worker_stale_after() > timedelta(seconds=IMAGE_CALL_TIMEOUT_S + 60)  # com margem
     assert worker_stale_after() < content_job_lease()  # uma execucao cabe numa lease
 
 

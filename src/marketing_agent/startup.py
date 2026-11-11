@@ -36,9 +36,11 @@ from marketing_agent.config import IMAGE_ROUTE, RoleRoute, Settings
 from marketing_agent.content.design import GENERATED_SIZE
 from marketing_agent.content.specs import ContentSpecs, load_content_specs
 from marketing_agent.db.base import make_engine, make_session_factory
+from marketing_agent.harness.engine import NETWORK_BACKOFF_S
+from marketing_agent.harness.image_calls import MAX_IMAGES_PER_REQUEST
 from marketing_agent.harness.spec import AgentSpec, SpecLoadError, load_agent_spec
 from marketing_agent.images.factory import build_image_backend
-from marketing_agent.llm.types import LLM_CALL_TIMEOUT_S
+from marketing_agent.llm.types import IMAGE_CALL_TIMEOUT_S, LLM_CALL_TIMEOUT_S
 from marketing_agent.planning.schemas import PlanoSemanal
 
 logger = logging.getLogger(__name__)
@@ -211,35 +213,57 @@ def _call_timeout() -> timedelta:
     return timedelta(seconds=LLM_CALL_TIMEOUT_S)
 
 
-def content_job_lease() -> timedelta:
-    """Lease de um job `generate_post`: 3 x (Copywriter + Revisor + 2 chamadas) + 60 s.
+def _image_call_bound() -> timedelta:
+    """Pior caso das chamadas de imagem de uma passagem do pacote.
 
-    Um job faz ate 3 passagens (1 + 2 voltas), cada uma com um Copywriter e um Revisor. O motor
-    so verifica `max_duration_s` ANTES de cada passo: uma execucao que inicia a chamada perto do
-    limite pode correr mais `LLM_CALL_TIMEOUT_S`. Por isso cada papel soma uma chamada em
-    excesso (2 por passagem); os 60 s finais cobrem as esperas de rede e a gravacao. Com uma
-    lease mais curta outro worker reclamaria um job ainda vivo.
+    Cada geracao possivel (`MAX_IMAGES_PER_REQUEST`) pode ser tentada `1 + len(NETWORK_BACKOFF_S)`
+    vezes (uma repeticao por falha de rede) e cada tentativa pode durar `IMAGE_CALL_TIMEOUT_S`.
+    """
+    attempts = MAX_IMAGES_PER_REQUEST * (1 + len(NETWORK_BACKOFF_S))
+    return attempts * timedelta(seconds=IMAGE_CALL_TIMEOUT_S)
+
+
+def content_job_lease() -> timedelta:
+    """Lease de um job `generate_post`: 3 x (Copywriter + Designer + Revisor + chamadas) + 60 s.
+
+    Um job faz ate 3 passagens (1 + 2 voltas), cada uma com Copywriter, Designer e Revisor. O
+    motor so verifica `max_duration_s` ANTES de cada passo: uma execucao que inicia a chamada
+    perto do limite pode correr mais `LLM_CALL_TIMEOUT_S`, por isso cada um dos tres papeis soma
+    uma chamada em excesso. A isso soma-se, por passagem, o pior caso das chamadas de imagem
+    (`_image_call_bound`: `IMAGE_CALL_TIMEOUT_S` por tentativa, com as repeticoes de rede); e um
+    limite superior folgado de proposito, porque so custa tempo de recuperacao depois de um
+    worker morto. Os 60 s finais cobrem esperas de rede e a gravacao. Com uma lease mais curta
+    outro worker reclamaria um job ainda vivo.
     """
     specs = _content_specs()
-    run_limits = specs.copywriter.limits.max_duration_s + specs.reviewer.limits.max_duration_s
-    per_pass = timedelta(seconds=run_limits) + 2 * _call_timeout()
+    run_limits = sum(
+        spec.limits.max_duration_s for spec in (specs.copywriter, specs.designer, specs.reviewer)
+    )
+    per_pass = timedelta(seconds=run_limits) + 3 * _call_timeout() + _image_call_bound()
     return 3 * per_pass + timedelta(seconds=60)
+
+
+def max_spec_duration_s() -> int:
+    """Maior `max_duration_s` de TODOS os specs: Diretor, Copywriter, Designer e Revisor."""
+    specs = _content_specs()
+    return max(
+        director_max_duration_s(),
+        specs.copywriter.limits.max_duration_s,
+        specs.designer.limits.max_duration_s,
+        specs.reviewer.limits.max_duration_s,
+    )
 
 
 def worker_stale_after() -> timedelta:
     """Idade a partir da qual uma reserva aberta e de um processo morto, vista pelo worker.
 
     A execucao mais longa possivel de QUALQUER papel (o painel partilha a base com o worker):
-    o maior `max_duration_s` mais uma chamada em excesso (`LLM_CALL_TIMEOUT_S`). Uma reserva mais
-    nova que isto pode ser de uma execucao viva do outro processo.
+    o maior `max_duration_s` mais uma chamada em excesso, a mais lenta de todas (a de imagem,
+    `IMAGE_CALL_TIMEOUT_S`). Uma reserva mais nova que isto pode ser de uma execucao viva do
+    outro processo; uma reserva de imagem em voo nunca e dada como orfa.
     """
-    specs = _content_specs()
-    longest = max(
-        director_max_duration_s(),
-        specs.copywriter.limits.max_duration_s,
-        specs.reviewer.limits.max_duration_s,
-    )
-    return timedelta(seconds=longest) + _call_timeout()
+    longest_call = max(LLM_CALL_TIMEOUT_S, IMAGE_CALL_TIMEOUT_S)
+    return timedelta(seconds=max_spec_duration_s() + longest_call)
 
 
 def database_error_message(exc: SQLAlchemyError) -> str:
