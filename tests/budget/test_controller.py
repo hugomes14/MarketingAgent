@@ -531,3 +531,78 @@ def test_concurrent_image_reservations_respect_run_limit(
                 .where(CostReservation.run_id == run_id)
             )
         assert count == 1
+
+
+def sync_image_price_v2(session_factory: Factory, quality_usd: Decimal) -> None:
+    """Publica a versao v2 do modelo de imagem, mais recente, com outro preco para "medium"."""
+    price = ModelPrice(
+        "fake",
+        "img-1",
+        "v2",
+        (PriceTier(0, Decimal(0), Decimal(0)),),
+        valid_from=datetime(2026, 11, 8, tzinfo=UTC),
+        per_image=(ImagePrice("medium", SIZE, quality_usd),),
+    )
+    sync_model_prices(session_factory, [price])
+
+
+def test_settle_image_uses_the_reserved_price_version(
+    image_controller: BudgetController, session_factory: Factory, brand_id: str
+) -> None:
+    run_id, step_id = make_run(session_factory, brand_id)
+    reservation = image_controller.reserve_image(
+        image_request(brand_id, run_id, step_id, "medium"), RUN_LIMIT
+    )
+    sync_image_price_v2(session_factory, Decimal("0.07"))  # v2 e a mais recente e custa mais
+    cost = image_controller.settle_image(reservation.id, ImageUsage(1, SIZE, "medium"), "rq")
+    assert cost == Decimal("0.05")
+    with session_factory() as session:
+        entry = session.scalars(select(CostEntry)).one()
+    assert (entry.price_version, entry.cost_usd) == ("v1", Decimal("0.05"))
+
+
+def test_settle_image_mismatch_still_refused_after_a_new_price_version(
+    image_controller: BudgetController, session_factory: Factory, brand_id: str
+) -> None:
+    run_id, step_id = make_run(session_factory, brand_id)
+    reservation = image_controller.reserve_image(
+        image_request(brand_id, run_id, step_id, "medium"), RUN_LIMIT
+    )
+    sync_image_price_v2(session_factory, Decimal("0.07"))
+    with pytest.raises(ValueError, match="difere da reserva"):
+        image_controller.settle_image(reservation.id, ImageUsage(1, SIZE, "high"), "rq")
+    assert count_rows(session_factory, CostEntry) == 0
+
+
+def test_mark_unknown_image_reservation_keeps_it_pending(
+    image_controller: BudgetController, session_factory: Factory, brand_id: str
+) -> None:
+    run_id, step_id = make_run(session_factory, brand_id)
+    reservation = image_controller.reserve_image(
+        image_request(brand_id, run_id, step_id), RUN_LIMIT
+    )
+    image_controller.mark_unknown(reservation.id)
+    image_controller.mark_unknown(reservation.id)  # idempotente
+    with session_factory() as session:
+        row = session.get(CostReservation, reservation.id)
+    assert row is not None and row.status == "unknown_outcome"
+    assert count_rows(session_factory, CostEntry) == 0
+    assert image_controller.status(brand_id).unknown_usd == UNIT
+    with pytest.raises(ValueError, match="unknown_outcome"):
+        image_controller.release(reservation.id)
+
+
+def test_recover_stale_marks_open_image_reservation_unknown(
+    image_controller: BudgetController, session_factory: Factory, brand_id: str, clock: FixedClock
+) -> None:
+    run_id, step_id = make_run(session_factory, brand_id)
+    reservation = image_controller.reserve_image(
+        image_request(brand_id, run_id, step_id), RUN_LIMIT
+    )
+    clock.advance(timedelta(hours=2))
+    assert image_controller.recover_stale(timedelta(hours=1)) == 1
+    with session_factory() as session:
+        row = session.get(CostReservation, reservation.id)
+    assert row is not None and row.status == "unknown_outcome"
+    assert count_rows(session_factory, CostEntry) == 0
+    assert image_controller.status(brand_id).unknown_usd == UNIT

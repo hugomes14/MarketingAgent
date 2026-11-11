@@ -120,6 +120,34 @@ def _sum_money(
     return Decimal(total) if total is not None else Decimal(0)
 
 
+def _cost_entry(
+    row: CostReservation,
+    price: ModelPrice,
+    measured: _Measured,
+    provider_request_id: str | None,
+    now: datetime,
+) -> CostEntry:
+    return CostEntry(
+        id=new_id(),
+        brand_id=row.brand_id,
+        reservation_id=row.id,
+        role=row.role,
+        run_id=row.run_id,
+        step_id=row.step_id,
+        provider=row.provider,
+        model_id=row.model_id,
+        provider_request_id=provider_request_id,
+        price_version=price.price_version,
+        tokens_in=measured.tokens_in,
+        tokens_out=measured.tokens_out,
+        tokens_reasoning=measured.tokens_reasoning,
+        units=measured.units,
+        cost_usd=measured.cost_usd,
+        kind="measured",
+        at=now,
+    )
+
+
 class BudgetController:
     """Reserva, acerta e consulta custos; o estado vive todo na base."""
 
@@ -168,7 +196,10 @@ class BudgetController:
                 cost, usage.input_tokens, usage.output_tokens, usage.reasoning_tokens, {}
             )
 
-        return self._settle_with(reservation_id, provider_request_id, measure)
+        def latest(row: CostReservation) -> ModelPrice:
+            return self._price_book.get(row.provider, row.model_id)
+
+        return self._settle_with(reservation_id, provider_request_id, latest, measure)
 
     def settle_image(
         self, reservation_id: str, usage: ImageUsage, provider_request_id: str | None
@@ -177,8 +208,9 @@ class BudgetController:
 
         `usage` tem de corresponder ao reservado (1 imagem, mesmo quality/size): a reserva nao
         guarda quality/size, por isso compara-se o valor retido com o preco do par usado; uma
-        diferenca e erro de programacao (`ValueError`, reserva fica aberta). Se o preco da
-        tabela mudar entre reserva e acerto o erro tambem sai: nunca se grava custo inconsistente.
+        diferenca e erro de programacao (`ValueError`, reserva fica aberta). O preco e o da
+        versao reservada (`price_version` da reserva, imutavel): um `sync-prices` entre reserva
+        e acerto nao transforma uma imagem ja faturada numa recusa; o lancamento fica com ela.
         """
 
         def measure(row: CostReservation, price: ModelPrice) -> _Measured:
@@ -193,7 +225,10 @@ class BudgetController:
             }
             return _Measured(_money(cost, ROUND_HALF_UP), 0, 0, None, units)
 
-        return self._settle_with(reservation_id, provider_request_id, measure)
+        def reserved_version(row: CostReservation) -> ModelPrice:
+            return self._price_book.get_version(row.provider, row.model_id, row.price_version)
+
+        return self._settle_with(reservation_id, provider_request_id, reserved_version, measure)
 
     def release(self, reservation_id: str) -> None:
         """Liberta uma reserva aberta (chamada nunca enviada); idempotente."""
@@ -288,39 +323,24 @@ class BudgetController:
         self,
         reservation_id: str,
         provider_request_id: str | None,
+        price_of: Callable[[CostReservation], ModelPrice],
         measure: Callable[[CostReservation, ModelPrice], _Measured],
     ) -> Decimal:
-        """Nucleo comum do acerto: bloqueia a reserva, grava um so `cost_entry` e fecha-a."""
+        """Nucleo comum do acerto: bloqueia a reserva, grava um so `cost_entry` e fecha-a.
+
+        `price_of` escolhe o preco (o mais recente no texto, a versao reservada na imagem);
+        `measure` converte-o na medicao a gravar.
+        """
         with self._session_factory.begin() as session:
             row = self._lock_reservation(session, reservation_id)
             if row.status == "released":
                 raise ValueError(f"reserva {reservation_id} ja libertada; nao pode ser acertada")
             if row.status == "settled":
                 return self._entry_cost(session, reservation_id)
-            price = self._price_book.get(row.provider, row.model_id)
+            price = price_of(row)
             measured = measure(row, price)
             now = self._clock.now()
-            session.add(
-                CostEntry(
-                    id=new_id(),
-                    brand_id=row.brand_id,
-                    reservation_id=row.id,
-                    role=row.role,
-                    run_id=row.run_id,
-                    step_id=row.step_id,
-                    provider=row.provider,
-                    model_id=row.model_id,
-                    provider_request_id=provider_request_id,
-                    price_version=price.price_version,
-                    tokens_in=measured.tokens_in,
-                    tokens_out=measured.tokens_out,
-                    tokens_reasoning=measured.tokens_reasoning,
-                    units=measured.units,
-                    cost_usd=measured.cost_usd,
-                    kind="measured",
-                    at=now,
-                )
-            )
+            session.add(_cost_entry(row, price, measured, provider_request_id, now))
             row.status = "settled"
             row.settled_at = now
             return measured.cost_usd

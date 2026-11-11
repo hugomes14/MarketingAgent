@@ -298,3 +298,37 @@ def test_repo_price_files_define_fake_image_prices() -> None:
         assert {(i.quality, i.size, i.usd) for i in price.per_image} == {
             (q, "1024x1536", Decimal("0")) for q in ("low", "medium", "high")
         }
+
+
+NON_FINITE = ["Infinity", "-Infinity", "NaN", "sNaN"]
+
+
+@pytest.mark.parametrize("value", NON_FINITE)
+def test_loader_rejects_non_finite_per_image_money(tmp_path: Path, value: str) -> None:
+    path = write_image_yaml(tmp_path, f"  - {{quality: low, size: '1024x1536', usd: '{value}'}}\n")
+    with pytest.raises(ValueError, match=r"img\.yaml.*fake/img-1.*invalido"):
+        load_model_prices(path)
+
+
+@pytest.mark.parametrize("value", NON_FINITE)
+def test_loader_rejects_non_finite_tier_money(tmp_path: Path, value: str) -> None:
+    path = tmp_path / "p.yaml"
+    path.write_text(
+        "models:\n- provider: x\n  model_id: y\n  price_version: v\n"
+        "  valid_from: '2026-11-05T00:00:00+00:00'\n"
+        "  tiers:\n  - {min_prompt_tokens: 0, output_per_million: '1', "
+        f"input_per_million: '{value}'}}\n"
+    )
+    with pytest.raises(ValueError, match=r"p\.yaml.*x/y.*invalido"):
+        load_model_prices(path)
+
+
+def test_price_book_get_version_returns_the_stored_version(session_factory: Factory) -> None:
+    old = make_image_price(version="2026-11-09")
+    new = make_image_price((ImagePrice("low", "1024x1536", Decimal("9")),), version="2026-12-01")
+    sync_model_prices(session_factory, [old, new])
+    book = PriceBook(session_factory)
+    assert book.get_version("fake", "img-1", "2026-11-09") == old
+    assert book.get("fake", "img-1").price_version == "2026-12-01"
+    with pytest.raises(UnknownPrice, match="fake/img-1/nada"):
+        book.get_version("fake", "img-1", "nada")

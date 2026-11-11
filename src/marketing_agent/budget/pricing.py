@@ -126,9 +126,13 @@ def _parse_money(value: object, where: str) -> Decimal:
     if not isinstance(value, str):
         raise ValueError(f"{where}: valor monetario deve ser texto entre aspas, nao {value!r}")
     try:
-        return Decimal(value)
+        amount = Decimal(value)
     except InvalidOperation:
         raise ValueError(f"{where}: valor monetario invalido {value!r}") from None
+    # Infinity e NaN/sNaN constroem-se sem erro mas envenenariam toda a aritmetica de custo.
+    if not amount.is_finite():
+        raise ValueError(f"{where}: valor monetario invalido {value!r}")
+    return amount
 
 
 def _parse_tier(raw: object, where: str) -> PriceTier:
@@ -299,4 +303,17 @@ class PriceBook:
             row = session.scalar(stmt)
             if row is None:
                 raise UnknownPrice(f"sem preco para {provider}/{model_id}")
+            return _to_model_price(row)
+
+    def get_version(self, provider: str, model_id: str, price_version: str) -> ModelPrice:
+        """Preco de uma versao concreta (imutavel); `UnknownPrice` se nao existir."""
+        stmt = select(ModelPriceRow).where(
+            ModelPriceRow.provider == provider,
+            ModelPriceRow.model_id == model_id,
+            ModelPriceRow.price_version == price_version,
+        )
+        with self._session_factory() as session:
+            row = session.scalar(stmt)
+            if row is None:
+                raise UnknownPrice(f"sem preco para {provider}/{model_id}/{price_version}")
             return _to_model_price(row)

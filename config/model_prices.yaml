@@ -1,4 +1,5 @@
-# Precos por milhao de tokens, em USD. Valores monetarios SEMPRE como texto (aspas):
+# Precos em USD: por milhao de tokens (`tiers`) e, nos modelos de imagem, por imagem
+# (`per_image`, por qualidade e tamanho). Valores monetarios SEMPRE como texto (aspas):
 # o carregador recusa numeros para evitar float. Uma price_version e imutavel: para
 # mudar um preco, acrescentar uma entrada nova com outra price_version.
 # Fonte: plano mestre secao 8.2, consultada em 2026-11-05.

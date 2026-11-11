@@ -1,6 +1,6 @@
 # Precos dos modelos LOCAIS servidos pelo Ollama (rota `openai` com OPENAI_BASE_URL local).
-# Correm na propria maquina, por isso o custo por token e zero. Valores monetarios sempre como
-# texto (aspas). Usar este ficheiro so em desenvolvimento local; nunca em producao.
+# Correm na propria maquina, por isso o custo por token e por imagem e zero. Valores monetarios
+# sempre como texto (aspas). Usar este ficheiro so em desenvolvimento local; nunca em producao.
 # Sincronizar com: uv run marketing-agent sync-prices --file config/model_prices.local.yaml
 models:
   - provider: openai
