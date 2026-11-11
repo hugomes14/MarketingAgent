@@ -311,22 +311,27 @@ class ImageCaller:
     ) -> Decimal:
         """Acerta com o par RESERVADO (nao o devolvido); qualquer falha deixa `unknown_outcome`."""
         usage = ImageUsage(1, request.size, request.quality)
+        failure: str
         try:
             with self.steps.unknown_if_unsettled(step_id, reservation_id):
                 return self.budget.settle_image(reservation_id, usage, result.provider_request_id)
         except Exception as exc:
-            logger.error(
-                "execucao %s: acerto da imagem falhou (%s)", self.run_id, type(exc).__name__
-            )
-            raise NeedsHuman(SETTLE_FAILED_MESSAGE) from None
+            failure = type(exc).__name__
+        # Fora do `except`: o `NeedsHuman` nao fica com o erro da BD em `__context__` (traz os
+        # parametros da instrucao, como o `provider_request_id`).
+        logger.error("execucao %s: acerto da imagem falhou (%s)", self.run_id, failure)
+        raise NeedsHuman(SETTLE_FAILED_MESSAGE)
 
     def _validate_or_close(self, sent: _Sent, summary: str) -> ImageFormat:
         """Valida os bytes DEPOIS do acerto: o custo fica lancado mesmo com imagem invalida."""
         try:
             return _validated_format(sent.result.data)
         except Exception:
-            self.steps.close_step(sent.step_id, "invalid_output", summary)
-            raise NeedsHuman(INVALID_IMAGE_MESSAGE) from None
+            pass
+        # Fora do `except`: nem o `NeedsHuman` nem uma falha de `close_step` encadeiam o erro de
+        # validacao (que pode citar dimensoes ou formato da imagem do fornecedor).
+        self.steps.close_step(sent.step_id, "invalid_output", summary)
+        raise NeedsHuman(INVALID_IMAGE_MESSAGE)
 
 
 def _verify_prompt(prompt_fixo: PromptFixo) -> None:

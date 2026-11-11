@@ -49,6 +49,7 @@ MAX_PHOTOS_IN_PROMPT: Final = 50
 GENERATED_SIZE: Final = "1024x1536"
 
 type ComponentType = Literal["fotografia", "gerada", "logotipo", "texto", "upload"]
+_STORED_ASSET_TYPES: Final = frozenset({"fotografia", "logotipo", "upload"})
 
 
 class Componente(BaseModel):
@@ -81,6 +82,12 @@ class Componente(BaseModel):
                 raise ValueError("o componente texto nao tem ref")
         elif not self.ref:
             raise ValueError(f"o componente {self.tipo} exige ref")
+        if self.modelo is not None and self.tipo != "gerada":
+            raise ValueError(f"o componente {self.tipo} nao tem modelo")
+        # Ativos ja guardados: o ref e o proprio asset. Uma divergencia gravaria na revisao uma
+        # proveniencia que nao bate com o ficheiro. A imagem gerada so ganha asset depois.
+        if self.tipo in _STORED_ASSET_TYPES and self.asset_id not in (None, self.ref):
+            raise ValueError(f"o componente {self.tipo} exige asset_id igual a ref")
         return self
 
     def label(self) -> str:

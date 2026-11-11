@@ -222,6 +222,26 @@ def test_component_ref_is_required_except_for_text() -> None:
         Componente(tipo="texto", ref=None, extra=1)  # type: ignore[call-arg]
 
 
+@pytest.mark.parametrize("tipo", ["fotografia", "logotipo", "upload"])
+def test_component_asset_id_must_equal_ref_for_stored_assets(tipo: str) -> None:
+    Componente(tipo=tipo, ref="ast-1", asset_id="ast-1")  # type: ignore[arg-type]
+    Componente(tipo=tipo, ref="ast-1")  # type: ignore[arg-type]
+    with pytest.raises(ValidationError):
+        Componente(tipo=tipo, ref="ast-1", asset_id="ast-2")  # type: ignore[arg-type]
+
+
+def test_generated_component_may_have_a_distinct_asset_id() -> None:
+    component = Componente(tipo="gerada", ref="step-9", modelo="m", asset_id="ast-new")
+    assert component.asset_id == "ast-new"
+
+
+@pytest.mark.parametrize("tipo", ["fotografia", "logotipo", "upload", "texto"])
+def test_component_model_is_only_for_generated(tipo: str) -> None:
+    ref = None if tipo == "texto" else "ast-1"
+    with pytest.raises(ValidationError):
+        Componente(tipo=tipo, ref=ref, modelo="gpt-image-1")  # type: ignore[arg-type]
+
+
 def test_component_is_frozen_and_round_trips_through_json() -> None:
     component = Componente(tipo="gerada", ref="step-9", modelo="gpt-image-1")
     with pytest.raises(ValidationError):

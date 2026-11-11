@@ -449,3 +449,60 @@ def test_needs_human_from_a_generator_failure_has_no_chain(
     assert isinstance(error, NeedsHuman)
     assert error.__cause__ is None and error.__context__ is None
     assert "SEGREDO" not in chain_text(error)
+
+
+def test_needs_human_from_a_settle_failure_has_no_chain(
+    session_factory: Factory,
+    clock: FixedClock,
+    brand_id: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def broken(*args: object, **kwargs: object) -> None:
+        raise RuntimeError(HOSTILE)  # um erro da BD traz parametros como o provider_request_id
+
+    rig = make_image_rig(session_factory, clock, brand_id, FakeImageGenerator(), price="0.04")
+    monkeypatch.setattr(BudgetController, "settle_image", broken)
+    errors: list[BaseException] = []
+    rig.run(lambda ctx: capture(errors, ctx), ImageAllowance(2))
+    [error] = errors
+    assert isinstance(error, NeedsHuman)
+    assert error.__cause__ is None and error.__context__ is None
+    assert "SEGREDO" not in chain_text(error)
+
+
+def test_needs_human_from_an_invalid_image_has_no_chain(
+    session_factory: Factory, clock: FixedClock, brand_id: str
+) -> None:
+    bad = ImageResult(b"nao e uma imagem", None, "m", SIZE, "medium")
+    rig = make_image_rig(
+        session_factory, clock, brand_id, ScriptedImageGenerator([bad]), price="0.04"
+    )
+    errors: list[BaseException] = []
+    rig.run(lambda ctx: capture(errors, ctx), ImageAllowance(2))
+    [error] = errors
+    assert isinstance(error, NeedsHuman)
+    assert error.__cause__ is None and error.__context__ is None
+
+
+def test_close_step_failure_after_an_invalid_image_does_not_chain_the_validation_error(
+    session_factory: Factory,
+    clock: FixedClock,
+    brand_id: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def broken(*args: object, **kwargs: object) -> None:
+        raise RuntimeError("falha de registo")
+
+    bad = ImageResult(b"nao e uma imagem", None, "m", SIZE, "medium")
+    rig = make_image_rig(
+        session_factory, clock, brand_id, ScriptedImageGenerator([bad]), price="0.04"
+    )
+    monkeypatch.setattr(RunContext, "_close_step", broken)
+    errors: list[BaseException] = []
+    rig.run(lambda ctx: capture(errors, ctx), ImageAllowance(2))
+    [error] = errors
+    assert isinstance(error, RuntimeError)
+    assert error.__cause__ is None and error.__context__ is None
+    # O custo ja estava lancado: a falha de registo nao o desfaz.
+    assert [r.status for r in rig.reservations()] == ["settled"]
+    assert len(rig.entries()) == 1
