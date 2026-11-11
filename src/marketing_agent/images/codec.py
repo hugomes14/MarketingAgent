@@ -170,6 +170,18 @@ def encode_jpeg(image: Image.Image) -> bytes:
         raise ImageRejected("Não foi possível codificar a imagem.") from error
 
 
+def encode_png(image: Image.Image) -> bytes:
+    """Codifica RGB em PNG sem metadados (uma imagem nova nao herda EXIF, ICC nem texto)."""
+    try:
+        clean = Image.new("RGB", image.size)
+        clean.paste(image)
+        output = BytesIO()
+        clean.save(output, "PNG")
+        return output.getvalue()
+    except Exception as error:
+        raise ImageRejected("Não foi possível codificar a imagem.") from error
+
+
 def sha256_hex(data: bytes) -> str:
     """Calcula o resumo hexadecimal SHA-256 dos bytes."""
     return sha256(data).hexdigest()

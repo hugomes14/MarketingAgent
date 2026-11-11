@@ -4,10 +4,11 @@ import threading
 from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from pathlib import Path
 from typing import cast
 
 import pytest
-from content_rig import WEEK, ContentRig, Factory, Script, build_rig, copy_and_review
+from content_rig import WEEK, ContentRig, Factory, Script, build_rig, package_pass
 from sqlalchemy import select
 from sqlalchemy.exc import DBAPIError, IntegrityError
 
@@ -138,9 +139,13 @@ MakeReview = Callable[..., Review]
 
 
 @pytest.fixture
-def make_review(session_factory: Factory, clock: FixedClock, brand_id: str) -> MakeReview:
+def make_review(
+    session_factory: Factory, clock: FixedClock, brand_id: str, tmp_path: Path
+) -> MakeReview:
     def make(script: Script | None = None) -> Review:
-        rig = build_rig(session_factory, clock, brand_id, script or [])
+        rig = build_rig(
+            session_factory, clock, brand_id, script or [], media_dir=tmp_path / "media"
+        )
         service = ReviewService(
             rig.factory, rig.feedback, rig.queue, rig.kb, rig.clock, max_comment_chars=MAX_COMMENT
         )
@@ -359,7 +364,7 @@ def test_edit_cancels_a_queued_generation_job(review: Review) -> None:
 
 
 def test_edit_makes_a_running_job_end_stale(make_review: MakeReview) -> None:
-    review = make_review(copy_and_review())
+    review = make_review(package_pass())
     seeded = review.seed()
     job = review.rig.claimed(seeded.post_id, "changes", "comentario")  # worker com o job
     new_id = review.edit(seeded)
@@ -373,7 +378,7 @@ def test_edit_makes_a_running_job_end_stale(make_review: MakeReview) -> None:
 
 
 def test_edit_is_refused_while_a_job_runs_on_a_drafting_post(make_review: MakeReview) -> None:
-    review = make_review(copy_and_review())
+    review = make_review(package_pass())
     seeded = review.seed()
     review.service.request_changes(
         review.rig.brand_id, seeded.post_id, seeded.revision_id, "x", "a"
@@ -558,7 +563,7 @@ def test_request_changes_enqueues_with_comment(review: Review) -> None:
 
 
 def test_request_changes_then_worker_regenerates_with_the_comment(make_review: MakeReview) -> None:
-    review = make_review(copy_and_review(legenda="Versao dois."))
+    review = make_review(package_pass(legenda="Versao dois."))
     seeded = review.seed()
     review.service.request_changes(
         review.rig.brand_id, seeded.post_id, seeded.revision_id, "Tom mais informal", "ana"

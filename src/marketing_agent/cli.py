@@ -32,18 +32,22 @@ from marketing_agent.budget.pricing import (
     sync_model_prices,
 )
 from marketing_agent.cli_parser import build_parser
-from marketing_agent.clock import SystemClock
-from marketing_agent.config import Settings
+from marketing_agent.clock import Clock, SystemClock
+from marketing_agent.config import IMAGE_ROUTE, Settings
 from marketing_agent.content.pipeline import ContentPipeline
 from marketing_agent.dev_proxy import DevProxyServer, build_dev_proxy
 from marketing_agent.feedback.service import FeedbackService
 from marketing_agent.harness.engine import AgentEngine
+from marketing_agent.images.factory import ImageBackend, build_image_backend
 from marketing_agent.jobs.queue import JobQueue
 from marketing_agent.jobs.worker import Worker
 from marketing_agent.kb.service import KbService
 from marketing_agent.llm.factory import build_llm_router
 from marketing_agent.llm.router import LlmRouter
 from marketing_agent.loopback import is_loopback_host, parse_loopback_endpoint
+from marketing_agent.media.brand_kit import BrandKitService
+from marketing_agent.media.library import MediaLibrary
+from marketing_agent.media.store import LocalMediaStore, MediaStoreError
 from marketing_agent.startup import (
     StartupError,
     build_budget_controller,
@@ -56,9 +60,12 @@ from marketing_agent.startup import (
 )
 from marketing_agent.strategy.service import StrategyService
 
+logger = logging.getLogger(__name__)
+
 PANEL_FACTORY = "marketing_agent.panel.main:create_app_from_env"
 FORWARDED_ALLOW_IPS = "FORWARDED_ALLOW_IPS"
-WORKER_ROLES = ("copywriter", "revisor")
+# O pacote de 2B corre sempre o Designer (com o gerador falso se nao ha rota `designer_imagem`).
+WORKER_ROLES = ("copywriter", "designer", "revisor")
 EXIT_INTERRUPTED = 130  # convencao do shell para SIGINT
 
 Command = Callable[[argparse.Namespace], int]
@@ -175,7 +182,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
 
 
 def _build_worker_router(settings: Settings) -> LlmRouter:
-    """Router do worker: exige as rotas do Copywriter e do Revisor e recusa o fornecedor `fake`."""
+    """Router do worker: exige as rotas dos tres papeis e recusa o fornecedor `fake`."""
     missing = [role for role in WORKER_ROLES if role not in settings.role_routes]
     if missing:
         raise StartupError(f"ROLE_ROUTES: faltam as rotas de {', '.join(missing)}")
@@ -187,6 +194,18 @@ def _build_worker_router(settings: Settings) -> LlmRouter:
         raise StartupError(str(exc)) from exc
 
 
+def _build_image_backend(settings: Settings) -> ImageBackend:
+    """Gerador de imagens do worker; avisa (so nomes) quando os fundos sao simulados."""
+    try:
+        backend = build_image_backend(settings)
+    except ValueError as exc:  # a mensagem nomeia a variavel, nunca o conteudo da chave
+        raise StartupError(str(exc)) from exc
+    if IMAGE_ROUTE not in settings.role_routes:
+        # Local por omissao (spec 2B, secao 6), mas em producao seria um erro silencioso.
+        logger.warning("fundos simulados: sem rota %s", IMAGE_ROUTE)
+    return backend
+
+
 def build_worker(settings: Settings, session_factory: sessionmaker[Session]) -> Worker:
     """Liga motor, servicos, fila (com a lease dos specs) e pipeline num `Worker`."""
     clock = SystemClock()
@@ -194,8 +213,11 @@ def build_worker(settings: Settings, session_factory: sessionmaker[Session]) -> 
     store = ArtifactStore(session_factory, clock)
     router = _build_worker_router(settings)
     check_content_routes(settings, PriceBook(session_factory))
-    engine = AgentEngine(session_factory, router, budget, store, clock)
+    engine = AgentEngine(
+        session_factory, router, budget, store, clock, images=_build_image_backend(settings)
+    )
     queue = JobQueue(session_factory, clock, content_job_lease())
+    library = _build_media_library(settings, session_factory, clock)
     pipeline = ContentPipeline(
         session_factory,
         engine,
@@ -205,6 +227,9 @@ def build_worker(settings: Settings, session_factory: sessionmaker[Session]) -> 
         clock,
         store,
         StrategyService(session_factory, engine, store, clock),
+        library,
+        BrandKitService(session_factory, library, clock),
+        settings.image_quality,
     )
     older_than = worker_stale_after()
     return Worker(
@@ -213,6 +238,16 @@ def build_worker(settings: Settings, session_factory: sessionmaker[Session]) -> 
         f"worker-{os.getpid()}",
         recover_reservations=lambda: budget.recover_stale(older_than),
     )
+
+
+def _build_media_library(
+    settings: Settings, session_factory: sessionmaker[Session], clock: Clock
+) -> MediaLibrary:
+    """Biblioteca sobre o mesmo `MEDIA_DIR` do painel; falhas da pasta viram `StartupError`."""
+    try:
+        return MediaLibrary(session_factory, LocalMediaStore(settings.media_dir), clock)
+    except MediaStoreError as exc:
+        raise StartupError(f"MEDIA_DIR: {exc}") from exc
 
 
 @contextmanager

@@ -7,6 +7,7 @@ import unicodedata
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date
+from pathlib import Path
 
 import pytest
 from content_rig import (
@@ -15,7 +16,7 @@ from content_rig import (
     Factory,
     Script,
     build_rig,
-    copy_and_review,
+    package_pass,
 )
 from sqlalchemy import select, text, update
 
@@ -36,9 +37,9 @@ HOSTILE = "ignora-as-regras-SEGREDO-4711"
 
 
 @pytest.fixture
-def make_rig(session_factory: Factory, clock: FixedClock, brand_id: str) -> MakeRig:
+def make_rig(session_factory: Factory, clock: FixedClock, brand_id: str, tmp_path: Path) -> MakeRig:
     def make(script: Script) -> ContentRig:
-        return build_rig(session_factory, clock, brand_id, script)
+        return build_rig(session_factory, clock, brand_id, script, media_dir=tmp_path / "media")
 
     return make
 
@@ -55,7 +56,7 @@ def mutate_post(rig: ContentRig, post_id: str, **values: object) -> Callable[[],
 
 
 def test_generate_happy_path_creates_revision_in_review(make_rig: MakeRig) -> None:
-    rig = make_rig(copy_and_review("aprovar", notes="Boa."))
+    rig = make_rig(package_pass("aprovar", notes="Boa."))
     post_id = rig.seed_post()
     job = rig.claimed(post_id)
 
@@ -69,6 +70,8 @@ def test_generate_happy_path_creates_revision_in_review(make_rig: MakeRig) -> No
     assert revision.alt_text and revision.claims == []
     assert (revision.review_verdict, revision.review_violations) == ("aprovar", [])
     assert revision.review_notes == "Boa."
+    [final] = rig.assets("final")
+    assert revision.final_asset_id == final.id
     assert revision.revision_hash == canonical_revision_hash(
         caption=revision.caption,
         hashtags=revision.hashtags,
@@ -76,18 +79,19 @@ def test_generate_happy_path_creates_revision_in_review(make_rig: MakeRig) -> No
         alt_text=revision.alt_text,
         claims=revision.claims,
         channels=["instagram"],
+        final_image_sha256=final.sha256,
     )
     post = rig.post(post_id)
     assert (post.lifecycle, post.review_rounds, post.last_error) == ("in_review", 0, None)
     assert rig.job(job.id).status == "succeeded"
-    assert len(rig.llm.requests) == 2
+    assert len(rig.llm.requests) == 3  # Copywriter, Designer e Revisor
     with rig.factory() as session:
         run = session.get_one(AgentRun, revision.produced_by_run_id)
     assert (run.role, run.status) == ("copywriter", "succeeded")
 
 
 def test_generate_moves_planned_post_to_drafting_while_running(make_rig: MakeRig) -> None:
-    rig = make_rig(copy_and_review())
+    rig = make_rig(package_pass())
     post_id = rig.seed_post()
     seen: list[str] = []
     rig.llm.hooks[1] = lambda: seen.append(rig.post(post_id).lifecycle)
@@ -102,7 +106,8 @@ def test_generate_stores_claims_and_cites_only_valid_kb_items(make_rig: MakeRig)
     rig.llm.load(
         [
             *fake_scenarios.caption_draft("Pao a 12,50 EUR.", alegacoes=[claim]),
-            *fake_scenarios.review("aprovar"),
+            *fake_scenarios.visual_draft(),
+            *fake_scenarios.review("aprovar", imagem_verificada=True),
         ]
     )
     post_id = rig.seed_post(kb_refs=[price_id, "item-que-nao-existe"])
@@ -113,7 +118,7 @@ def test_generate_stores_claims_and_cites_only_valid_kb_items(make_rig: MakeRig)
 
 
 def test_feedback_examples_reach_the_copywriter_request(make_rig: MakeRig) -> None:
-    rig = make_rig(copy_and_review())
+    rig = make_rig(package_pass())
     other = rig.seed_post(f"{WEEK}-2")
     revision_id = rig.add_owner_revision(other)
     with rig.factory.begin() as session:
@@ -134,7 +139,7 @@ def test_feedback_examples_reach_the_copywriter_request(make_rig: MakeRig) -> No
 
 
 def test_owner_comment_and_changes_reason_reach_the_copywriter(make_rig: MakeRig) -> None:
-    rig = make_rig(copy_and_review())
+    rig = make_rig(package_pass())
     post_id = rig.seed_post(lifecycle="in_review")
     rig.add_owner_revision(post_id, 1, "agente")
     job = rig.claimed(post_id, "changes", "Mais curto, por favor.")
@@ -149,9 +154,9 @@ def test_owner_comment_and_changes_reason_reach_the_copywriter(make_rig: MakeRig
 
 def test_reviewer_rever_twice_then_goes_to_owner_with_notes(make_rig: MakeRig) -> None:
     script = (
-        copy_and_review("rever", ["voz_incoerente"], "NOTA-UM", legenda="Rascunho um")
-        + copy_and_review("rever", ["fora_do_tema"], "NOTA-DOIS", legenda="Rascunho dois")
-        + copy_and_review("rever", ["limite_canal"], "NOTA-TRES", legenda="Rascunho tres")
+        package_pass("rever", ["voz_incoerente"], "NOTA-UM", legenda="Rascunho um")
+        + package_pass("rever", ["fora_do_tema"], "NOTA-DOIS", legenda="Rascunho dois")
+        + package_pass("rever", ["limite_canal"], "NOTA-TRES", legenda="Rascunho tres")
     )
     rig = make_rig(script)
     post_id = rig.seed_post()
@@ -159,35 +164,37 @@ def test_reviewer_rever_twice_then_goes_to_owner_with_notes(make_rig: MakeRig) -
 
     assert rig.pipeline.generate(job) == "in_review"
 
-    assert len(rig.llm.requests) == 6  # 3 rascunhos, 2 voltas: nunca uma quarta passagem
+    assert len(rig.llm.requests) == 9  # 3 pacotes, 2 voltas: nunca uma quarta passagem
     [revision] = rig.revisions(post_id)
     assert revision.caption == "Rascunho tres"
     assert (revision.review_verdict, revision.review_violations) == ("rever", ["limite_canal"])
     assert revision.review_notes == "NOTA-TRES"
     assert rig.post(post_id).review_rounds == 2
     # Cada volta leva so as notas do parecer anterior.
-    assert "NOTA-UM" in rig.llm.request_text(3) and "NOTA-DOIS" not in rig.llm.request_text(3)
-    assert "NOTA-DOIS" in rig.llm.request_text(5) and "NOTA-UM" not in rig.llm.request_text(5)
+    # Pedidos: 1 copia | 2 design | 3 revisao | 4 copia | 5 design | 6 revisao | 7 copia ...
+    assert "NOTA-UM" in rig.llm.request_text(4) and "NOTA-DOIS" not in rig.llm.request_text(4)
+    assert "NOTA-DOIS" in rig.llm.request_text(7) and "NOTA-UM" not in rig.llm.request_text(7)
+    assert "NOTA-UM" in rig.llm.request_text(5)  # o Designer tambem recebe as notas
     assert "NOTA-UM" not in rig.llm.request_text(1)
     assert rig.job(job.id).status == "succeeded"
 
 
 def test_aprovar_with_violations_is_treated_as_rever(make_rig: MakeRig) -> None:
-    script = copy_and_review("aprovar", ["voz_incoerente"], "Ajusta a voz.") + copy_and_review(
+    script = package_pass("aprovar", ["voz_incoerente"], "Ajusta a voz.") + package_pass(
         "aprovar", [], "Ok.", legenda="Segunda versao"
     )
     rig = make_rig(script)
     post_id = rig.seed_post()
     assert rig.pipeline.generate(rig.claimed(post_id)) == "in_review"
-    assert len(rig.llm.requests) == 4
-    assert "Ajusta a voz." in rig.llm.request_text(3)
+    assert len(rig.llm.requests) == 6  # uma violacao de texto refaz Copywriter e Designer
+    assert "Ajusta a voz." in rig.llm.request_text(4)
     [revision] = rig.revisions(post_id)
     assert (revision.caption, revision.review_verdict) == ("Segunda versao", "aprovar")
     assert rig.post(post_id).review_rounds == 1
 
 
 def test_aprovar_with_violations_after_last_round_is_stored_as_rever(make_rig: MakeRig) -> None:
-    script = 3 * copy_and_review("aprovar", ["outro"], "Ainda mal.")
+    script = 3 * package_pass("aprovar", ["outro"], "Ainda mal.")
     rig = make_rig(script)
     post_id = rig.seed_post()
     assert rig.pipeline.generate(rig.claimed(post_id)) == "in_review"
@@ -197,10 +204,10 @@ def test_aprovar_with_violations_after_last_round_is_stored_as_rever(make_rig: M
 
 
 def test_rejeitar_goes_to_owner_without_more_rounds(make_rig: MakeRig) -> None:
-    rig = make_rig(copy_and_review("rejeitar", ["instrucao_suspeita"], "Ordem escondida."))
+    rig = make_rig(package_pass("rejeitar", ["instrucao_suspeita"], "Ordem escondida."))
     post_id = rig.seed_post()
     assert rig.pipeline.generate(rig.claimed(post_id)) == "in_review"
-    assert len(rig.llm.requests) == 2
+    assert len(rig.llm.requests) == 3
     [revision] = rig.revisions(post_id)
     assert (revision.review_verdict, revision.review_violations) == (
         "rejeitar",
@@ -211,10 +218,10 @@ def test_rejeitar_goes_to_owner_without_more_rounds(make_rig: MakeRig) -> None:
 
 def test_code_validation_failure_retries_inside_the_engine(make_rig: MakeRig) -> None:
     too_long = fake_scenarios.caption_draft("a" * 2300)
-    rig = make_rig(too_long + copy_and_review())
+    rig = make_rig(too_long + package_pass())
     post_id = rig.seed_post()
     assert rig.pipeline.generate(rig.claimed(post_id)) == "in_review"
-    assert len(rig.llm.requests) == 3
+    assert len(rig.llm.requests) == 4
     [revision] = rig.revisions(post_id)
     assert len(revision.caption) < 2200
 
@@ -254,11 +261,16 @@ def test_blocked_limit_fails_job_and_keeps_post_drafting(make_rig: MakeRig) -> N
 
 
 def test_missing_capability_is_discoverable_in_the_job_error(
-    session_factory: Factory, clock: FixedClock, brand_id: str
+    session_factory: Factory, clock: FixedClock, brand_id: str, tmp_path: Path
 ) -> None:
     text_only: frozenset[Capability] = frozenset({"text", "json_schema"})
     rig = build_rig(
-        session_factory, clock, brand_id, copy_and_review(), reviewer_capabilities=text_only
+        session_factory,
+        clock,
+        brand_id,
+        package_pass(),
+        media_dir=tmp_path / "media",
+        reviewer_capabilities=text_only,
     )
     post_id = rig.seed_post()
     with pytest.raises(RunConfigurationFailed) as caught:
@@ -280,7 +292,7 @@ def test_unexpected_engine_failure_raises_a_fixed_message_error(make_rig: MakeRi
 
 
 def test_missing_profile_fails_job_without_retry(make_rig: MakeRig) -> None:
-    rig = make_rig(copy_and_review())
+    rig = make_rig(package_pass())
     post_id = rig.seed_post()
     with rig.factory.begin() as session:
         session.execute(text("DELETE FROM artifact_head WHERE type = 'perfil_marca'"))
@@ -309,7 +321,7 @@ def test_malformed_payload_fails_job_without_retry(make_rig: MakeRig) -> None:
 
 
 def test_owner_revision_during_job_is_not_overwritten(make_rig: MakeRig) -> None:
-    rig = make_rig(copy_and_review())
+    rig = make_rig(package_pass())
     post_id = rig.seed_post()
     job = rig.claimed(post_id)
     rig.llm.hooks[2] = lambda: rig.add_owner_revision(post_id)  # o responsavel edita a meio
@@ -323,7 +335,7 @@ def test_owner_revision_during_job_is_not_overwritten(make_rig: MakeRig) -> None
 
 
 def test_cancelled_post_job_completes_without_writing(make_rig: MakeRig) -> None:
-    rig = make_rig(copy_and_review())
+    rig = make_rig(package_pass())
     post_id = rig.seed_post(lifecycle="cancelled")
     job = rig.claimed(post_id)
     assert rig.pipeline.generate(job) == "stale"
@@ -333,7 +345,7 @@ def test_cancelled_post_job_completes_without_writing(make_rig: MakeRig) -> None
 
 
 def test_post_cancelled_during_job_is_not_written(make_rig: MakeRig) -> None:
-    rig = make_rig(copy_and_review())
+    rig = make_rig(package_pass())
     post_id = rig.seed_post()
     job = rig.claimed(post_id)
 
@@ -350,21 +362,21 @@ def test_post_cancelled_during_job_is_not_written(make_rig: MakeRig) -> None:
 
 @pytest.mark.parametrize("lifecycle", ["approved", "rejected"])
 def test_finished_post_is_not_generated_again(make_rig: MakeRig, lifecycle: str) -> None:
-    rig = make_rig(copy_and_review())
+    rig = make_rig(package_pass())
     post_id = rig.seed_post(lifecycle=lifecycle)
     assert rig.pipeline.generate(rig.claimed(post_id)) == "stale"
     assert rig.llm.requests == [] and rig.post(post_id).lifecycle == lifecycle
 
 
 def test_in_review_post_is_only_regenerated_on_changes_request(make_rig: MakeRig) -> None:
-    rig = make_rig(copy_and_review())
+    rig = make_rig(package_pass())
     post_id = rig.seed_post(lifecycle="in_review")
     assert rig.pipeline.generate(rig.claimed(post_id, "plan")) == "stale"
     assert rig.llm.requests == [] and rig.revisions(post_id) == []
 
 
 def test_missing_post_completes_job_as_stale(make_rig: MakeRig) -> None:
-    rig = make_rig(copy_and_review())
+    rig = make_rig(package_pass())
     job = rig.claimed("00000000-0000-0000-0000-000000000000")
     assert rig.pipeline.generate(job) == "stale"
     assert rig.job(job.id).status == "succeeded"
@@ -388,7 +400,7 @@ def stale_mutations(rig: ContentRig, post_id: str) -> dict[str, Callable[[], Non
      "planeado_de_novo"],
 )  # fmt: skip
 def test_stale_detection_cases(make_rig: MakeRig, case: str) -> None:
-    rig = make_rig(copy_and_review())
+    rig = make_rig(package_pass())
     post_id = rig.seed_post()
     job = rig.claimed(post_id)
     rig.llm.hooks[2] = stale_mutations(rig, post_id)[case]
@@ -400,7 +412,7 @@ def test_stale_detection_cases(make_rig: MakeRig, case: str) -> None:
 
 def test_repointed_artifact_pointers_are_not_stale(make_rig: MakeRig) -> None:
     """Aprovar um plano identico repoe `plan_artifact_id`/`strategy_artifact_id` dos posts."""
-    rig = make_rig(copy_and_review())
+    rig = make_rig(package_pass())
     post_id = rig.seed_post()
     job = rig.claimed(post_id)
     other_plan = rig.store.create(rig.brand_id, ArtifactType.PLANO, {"semana": WEEK, "slots": []})
@@ -427,7 +439,7 @@ def steal_lease(rig: ContentRig) -> Callable[[], None]:
 
 
 def test_lost_lease_rolls_back_the_whole_write(make_rig: MakeRig) -> None:
-    rig = make_rig(copy_and_review())
+    rig = make_rig(package_pass())
     post_id = rig.seed_post()
     job = rig.claimed(post_id)
     rig.llm.hooks[2] = steal_lease(rig)
@@ -456,13 +468,17 @@ def test_queue_fail_false_path_writes_nothing_else(make_rig: MakeRig) -> None:
 
 
 def test_slow_executor_after_lease_loss_does_not_duplicate_the_revision(make_rig: MakeRig) -> None:
-    # Pedidos: 1 copia A | 2 copia B | 3 revisao B | 4 revisao A (a sua gravacao e obsoleta).
+    # Pedidos: 1 copia A | 2 copia B | 3 design B | 4 revisao B | 5 design A | 6 revisao A (a
+    # gravacao de A e obsoleta). O executor B corre inteiro dentro do pedido 2 de A.
+    approve = fake_scenarios.review("aprovar", imagem_verificada=True)
     rig = make_rig(
         [
             *fake_scenarios.caption_draft("Executor A"),
             *fake_scenarios.caption_draft("Executor B"),
-            *fake_scenarios.review("aprovar"),
-            *fake_scenarios.review("aprovar"),
+            *fake_scenarios.visual_draft(),
+            *approve,
+            *fake_scenarios.visual_draft(),
+            *approve,
         ]
     )
     post_id = rig.seed_post()
@@ -508,7 +524,7 @@ def wait_for_lock_waiter(factory: Factory, timeout_s: float = 10.0) -> None:
 
 def test_plan_reapproval_during_save_does_not_deadlock(make_rig: MakeRig) -> None:
     """A aprovacao bloqueia posts -> jobs; o pipeline tem de fazer o mesmo (nunca job -> post)."""
-    rig = make_rig(copy_and_review())
+    rig = make_rig(package_pass())
     post_id = rig.seed_post()
     job = rig.claimed(post_id)
     reached, approval_holds_post = threading.Event(), threading.Event()
@@ -593,7 +609,7 @@ def test_canonical_hash_changes_with_each_field(change: dict[str, object]) -> No
 
 
 def test_two_jobs_in_a_row_each_write_their_own_revision(make_rig: MakeRig) -> None:
-    rig = make_rig(copy_and_review() + copy_and_review())
+    rig = make_rig(package_pass() + package_pass())
     first, second = rig.seed_post(f"{WEEK}-1"), rig.seed_post(f"{WEEK}-2")
     assert rig.pipeline.generate(rig.claimed(first)) == "in_review"
     assert rig.pipeline.generate(rig.claimed(second)) == "in_review"
@@ -620,7 +636,7 @@ def test_describe_stop_keeps_cost_and_step_limits_apart_without_messages() -> No
 
 
 def test_job_cancelled_before_begin_leaves_post_and_llm_alone(make_rig: MakeRig) -> None:
-    rig = make_rig(copy_and_review())
+    rig = make_rig(package_pass())
     post_id = rig.seed_post()
     job = rig.claimed(post_id)
     with rig.factory.begin() as session:  # a aprovacao de um plano cancela o job entretanto

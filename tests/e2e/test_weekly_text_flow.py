@@ -13,6 +13,7 @@ from datetime import date
 from decimal import Decimal
 
 import pytest
+from image_factory import make_png
 from panel_rig import LOGIN, PanelRig, Script
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session, sessionmaker
@@ -35,6 +36,7 @@ from marketing_agent.jobs.worker import Worker
 from marketing_agent.kb.service import KbService, NewKbEntry
 from marketing_agent.llm import fake_scenarios
 from marketing_agent.llm.types import LlmResponse, TextPart
+from marketing_agent.media.brand_kit import BrandKitInput
 from marketing_agent.startup import content_job_lease
 
 Factory = sessionmaker[Session]
@@ -59,6 +61,9 @@ class WeeklyRig:
             panel.clock,
             panel.store,
             panel.strategy,
+            panel.media.library,
+            panel.media.kits,
+            "medium",
         )
         self.worker = Worker(queue, pipeline, "worker-e2e")
 
@@ -127,11 +132,12 @@ def plan_citing(price_id: str) -> LlmResponse:
 
 
 def text_pass(price_id: str, label: str) -> Script:
-    """Uma passagem Copywriter (com alegacao do preco da base) e Revisor que aprova."""
+    """Uma passagem do pacote: Copywriter (com alegacao do preco), Designer e Revisor que aprova."""
     claim = {"texto": "Pao a 12,50 EUR.", "kb_ref": price_id}
     return [
         *fake_scenarios.caption_draft(f"Pao quente {label} a 12,50 EUR.", alegacoes=[claim]),
-        *fake_scenarios.review("aprovar", notas=f"Parecer {label}."),
+        *fake_scenarios.visual_draft(),
+        *fake_scenarios.review("aprovar", notas=f"Parecer {label}.", imagem_verificada=True),
     ]
 
 
@@ -167,6 +173,8 @@ def make_weekly(
             script.extend(text_pass(price_id, label))
         panel = make_panel(script)
         panel.approve_strategy()
+        kit = BrandKitInput(cor_primaria="#1F3A5F", cor_secundaria="#FFFFFF", fonte="inter-bold")
+        panel.media.kits.save(brand_id, kit, make_png(240, 240, alpha=True), "ana")
         return WeeklyRig(panel)
 
     return make

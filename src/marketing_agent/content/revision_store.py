@@ -12,6 +12,7 @@ import unicodedata
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime
+from decimal import Decimal
 from typing import Literal
 
 from sqlalchemy import func, select
@@ -41,14 +42,43 @@ class PostSnapshot:
 
 @dataclass(frozen=True)
 class GeneratedText:
-    """Resultado de uma geracao: o rascunho final, o parecer efetivo e as voltas gastas."""
+    """Resultado de uma geracao: o rascunho final, o parecer efetivo e as voltas gastas.
+
+    `verdict` e `notes` sao `None` quando nao houve parecer (a imagem falhou antes do Revisor).
+    """
 
     draft: RascunhoTexto
-    verdict: str
+    verdict: str | None
     violations: list[str]
-    notes: str
+    notes: str | None
     rounds: int
     run_id: str
+
+
+@dataclass(frozen=True)
+class RevisionImage:
+    """A parte de imagem de uma revisao do pacote (colunas da migracao 0003).
+
+    `components` e a lista JSON de `Componente` (ja com o `asset_id` do que foi guardado) e
+    `alt_text` e o do Designer, que substitui o do Copywriter quando ha imagem.
+    """
+
+    asset_id: str
+    sha256: str
+    layout: str
+    layout_version: int
+    components: list[JsonObject]
+    is_ai_generated: bool
+    alt_text: str
+    review_image_checked: bool
+
+
+@dataclass(frozen=True)
+class RevisionCosts:
+    """Custos (USD) do pedido: so a imagem e o pacote todo (ver `package_costs`)."""
+
+    image_usd: Decimal
+    package_usd: Decimal
 
 
 def canonical_revision_hash(
@@ -59,13 +89,15 @@ def canonical_revision_hash(
     alt_text: str | None,
     claims: Sequence[Mapping[str, str | None]],
     channels: Sequence[str],
+    final_image_sha256: str | None = None,
 ) -> str:
     """SHA-256 do JSON de chaves ordenadas do texto e dos canais (a ordem dos canais nao conta).
 
     Partilhado por quem cria revisoes (o pipeline e a edicao do responsavel): so assim o hash
-    de uma aprovacao identifica o mesmo texto, venha de onde vier.
+    de uma aprovacao identifica o mesmo texto, venha de onde vier. `final_image_sha256` entra no
+    JSON so quando existe: o hash de uma revisao so de texto continua igual ao do Plano 2A.
     """
-    body = {
+    body: dict[str, object] = {
         "legenda": caption,
         "hashtags": list(hashtags),
         "apelo": call_to_action,
@@ -73,6 +105,8 @@ def canonical_revision_hash(
         "alegacoes": [dict(claim) for claim in claims],
         "canais": sorted(channels),
     }
+    if final_image_sha256 is not None:
+        body["imagem_sha256"] = final_image_sha256
     encoded = json.dumps(body, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
     # NFC num so sitio: o mesmo texto escrito com acentos compostos ou decompostos (o que o
     # teclado, o browser ou o modelo produzem) tem de dar o mesmo hash.
@@ -146,41 +180,62 @@ def _claims(draft: RascunhoTexto) -> list[dict[str, str | None]]:
 
 
 def save_generated(
-    session: Session, post: Post, generated: GeneratedText, snapshot: PostSnapshot, now: datetime
+    session: Session,
+    post: Post,
+    generated: GeneratedText,
+    snapshot: PostSnapshot,
+    now: datetime,
+    *,
+    image: RevisionImage | None = None,
+    costs: RevisionCosts | None = None,
 ) -> None:
-    """Grava a revisao do agente e passa o post a `in_review`, na transacao do chamador.
+    """Grava a revisao do agente (so de texto, ou pacote com `image`) na transacao do chamador.
 
     `rev_no` e o seguinte ao que o job viu; como o post esta bloqueado e nao e obsoleto, nenhuma
-    outra revisao pode ter aparecido (e `UNIQUE (post_id, rev_no)` e a rede de seguranca).
+    outra revisao pode ter aparecido (e `UNIQUE (post_id, rev_no)` e a rede de seguranca). O
+    estado do post nao muda aqui: quem chama decide (`in_review` ou continua `drafting`).
     """
     draft, claims = generated.draft, _claims(generated.draft)
+    alt_text = image.alt_text if image is not None else draft.alt_text
     revision_hash = canonical_revision_hash(
         caption=draft.legenda,
         hashtags=draft.hashtags,
         call_to_action=draft.apelo_a_acao,
-        alt_text=draft.alt_text,
+        alt_text=alt_text,
         claims=claims,
         channels=post.channels,
+        final_image_sha256=image.sha256 if image is not None else None,
     )
-    session.add(
-        PostRevision(
-            brand_id=post.brand_id,
-            post_id=post.id,
-            rev_no=snapshot.last_rev_no + 1,
-            revision_hash=revision_hash,
-            caption=draft.legenda,
-            hashtags=list(draft.hashtags),
-            call_to_action=draft.apelo_a_acao,
-            alt_text=draft.alt_text,
-            claims=claims,
-            review_verdict=generated.verdict,
-            review_violations=generated.violations,
-            review_notes=generated.notes,
-            origin=AGENT_ORIGIN,
-            produced_by_run_id=generated.run_id,
-            created_at=now,
-        )
+    revision = PostRevision(
+        brand_id=post.brand_id,
+        post_id=post.id,
+        rev_no=snapshot.last_rev_no + 1,
+        revision_hash=revision_hash,
+        caption=draft.legenda,
+        hashtags=list(draft.hashtags),
+        call_to_action=draft.apelo_a_acao,
+        alt_text=alt_text,
+        claims=claims,
+        review_verdict=generated.verdict,
+        review_violations=generated.violations,
+        review_notes=generated.notes,
+        origin=AGENT_ORIGIN,
+        produced_by_run_id=generated.run_id,
+        created_at=now,
     )
-    post.lifecycle = "in_review"
+    if image is not None:
+        _set_image(revision, image)
+    if costs is not None:
+        revision.image_cost_usd = costs.image_usd
+        revision.package_cost_usd = costs.package_usd
+    session.add(revision)
     post.review_rounds = generated.rounds
-    post.last_error = None
+
+
+def _set_image(revision: PostRevision, image: RevisionImage) -> None:
+    revision.final_asset_id = image.asset_id
+    revision.layout = image.layout
+    revision.layout_version = image.layout_version
+    revision.components = image.components
+    revision.is_ai_generated = image.is_ai_generated
+    revision.review_image_checked = image.review_image_checked

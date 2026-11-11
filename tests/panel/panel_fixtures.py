@@ -24,10 +24,18 @@ from panel_rig import (
 
 from marketing_agent.artifacts.store import ArtifactStore
 from marketing_agent.budget.controller import BudgetController
-from marketing_agent.budget.pricing import ModelPrice, PriceBook, PriceTier, sync_model_prices
+from marketing_agent.budget.pricing import (
+    ImagePrice,
+    ModelPrice,
+    PriceBook,
+    PriceTier,
+    sync_model_prices,
+)
 from marketing_agent.clock import FixedClock
 from marketing_agent.config import RoleRoute
 from marketing_agent.harness.engine import AgentEngine
+from marketing_agent.images.factory import ImageBackend
+from marketing_agent.images.generation import FAKE_IMAGE_MODEL, FakeImageGenerator
 from marketing_agent.interview.service import InterviewService
 from marketing_agent.llm.fake import FakeLlmClient
 from marketing_agent.llm.router import LlmRouter
@@ -42,8 +50,13 @@ def make_panel(
     session_factory: Factory, clock: FixedClock, brand_id: str, tmp_path: Path
 ) -> Callable[[Script], PanelRig]:
     free = PriceTier(0, Decimal(0), Decimal(0))
+    per_image = tuple(ImagePrice(q, "1024x1536", Decimal(0)) for q in ("low", "medium", "high"))
     sync_model_prices(
-        session_factory, [ModelPrice("fake", "fake-1", "v1", (free,), valid_from=VALID_FROM)]
+        session_factory,
+        [
+            ModelPrice("fake", "fake-1", "v1", (free,), valid_from=VALID_FROM),
+            ModelPrice("fake", FAKE_IMAGE_MODEL, "v1", (free,), VALID_FROM, per_image),
+        ],
     )
 
     def make(script: Script, *, peer: str = PEER) -> PanelRig:
@@ -57,11 +70,15 @@ def make_panel(
         store = ArtifactStore(session_factory, clock)
         engine = AgentEngine(
             session_factory,
-            LlmRouter({"diretor": route, "copywriter": route, "revisor": route}, {"fake": llm}),
+            LlmRouter(
+                {"diretor": route, "copywriter": route, "designer": route, "revisor": route},
+                {"fake": llm},
+            ),
             budget,
             store,
             clock,
             sleep=lambda seconds: None,
+            images=ImageBackend(FakeImageGenerator(), "fake", FAKE_IMAGE_MODEL, "medium"),
         )
         interview = InterviewService(session_factory, engine, store, settings, clock)
         strategy = StrategyService(session_factory, engine, store, clock)

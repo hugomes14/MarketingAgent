@@ -4,10 +4,12 @@ import logging
 import threading
 from collections.abc import Callable
 from datetime import timedelta
+from decimal import Decimal
+from pathlib import Path
 from typing import Literal
 
 import pytest
-from content_rig import ContentRig, Factory, build_rig, copy_and_review
+from content_rig import ContentRig, Factory, build_rig, package_pass
 from pydantic import BaseModel, ValidationError
 from sqlalchemy import select
 
@@ -249,22 +251,30 @@ def test_run_forever_survives_an_error_outside_the_job(
 
 
 @pytest.fixture
-def rig(session_factory: Factory, clock: FixedClock, brand_id: str) -> ContentRig:
-    return build_rig(session_factory, clock, brand_id, copy_and_review())
+def rig(session_factory: Factory, clock: FixedClock, brand_id: str, tmp_path: Path) -> ContentRig:
+    return build_rig(
+        session_factory,
+        clock,
+        brand_id,
+        package_pass(),
+        media_dir=tmp_path / "media",
+        image_price="0.04",
+    )
 
 
 def test_worker_killed_mid_job_requeued_once(rig: ContentRig) -> None:
     post_id = rig.seed_post()
     job_id = rig.enqueue(post_id)
 
-    def kill() -> None:  # morte do processo depois do Copywriter e antes do Revisor
-        rig.llm.load(copy_and_review())  # o guiao da segunda execucao
+    def kill() -> None:  # morte do processo depois da imagem faturada e antes do Revisor
+        rig.llm.load(package_pass())  # o guiao da segunda execucao
         raise SystemExit("kill -9")
 
-    rig.llm.hooks[2] = kill
+    rig.llm.hooks[3] = kill
     with pytest.raises(SystemExit):
         Worker(rig.queue, rig.pipeline, "w1").run_once()
     assert rig.job(job_id).status == "running" and rig.revisions(post_id) == []
+    assert len(rig.image_entries()) == 1  # a imagem ja foi faturada e fica lancada
 
     rig.expire_leases()  # a lease do worker morto vence
     stop, sleeps = threading.Event(), []
@@ -276,6 +286,11 @@ def test_worker_killed_mid_job_requeued_once(rig: ContentRig) -> None:
     stored = rig.job(job_id)
     assert (stored.status, stored.attempts, stored.locked_by) == ("succeeded", 2, None)
     assert rig.post(post_id).lifecycle == "in_review"
+    # No maximo 2 imagens faturadas por pedido, somando as duas tentativas; o custo do pacote
+    # conta as duas (a da tentativa morta incluida).
+    assert len(rig.image_entries()) == 2
+    assert revision.image_cost_usd == revision.package_cost_usd == Decimal("0.08")
+    assert len(rig.assets("final")) == 1
 
 
 def test_worker_with_real_pipeline_never_stores_model_text_in_errors(rig: ContentRig) -> None:

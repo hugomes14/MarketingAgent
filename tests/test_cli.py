@@ -1,6 +1,7 @@
 """CLI de operacao: marca, precos, reservas, migracoes, painel e worker."""
 
 import json
+import logging
 import os
 import selectors
 import signal
@@ -27,6 +28,7 @@ from marketing_agent.clock import Clock, SystemClock
 from marketing_agent.db.base import make_engine, make_session_factory
 from marketing_agent.db.models import AgentRun, Brand, CostReservation
 from marketing_agent.jobs.worker import Worker
+from marketing_agent.startup import load_settings
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 Factory = sessionmaker[Session]
@@ -410,7 +412,7 @@ WORKER_ROUTES = {
         "model_id": "modelo",
         "capabilities": ["text", "json_schema", *(["image_input"] if role == "revisor" else [])],
     }
-    for role in ("diretor", "copywriter", "revisor")
+    for role in ("diretor", "copywriter", "designer", "revisor")
 }
 
 
@@ -430,6 +432,7 @@ def worker_environment(
         "ROLE_ROUTES": json.dumps(WORKER_ROUTES),
         "OPENAI_API_KEY_FILE": str(key_file),
         "OPENAI_BASE_URL": "http://127.0.0.1:9/v1",
+        "MEDIA_DIR": str(tmp_path / "media"),
     }
     for name, value in values.items():
         monkeypatch.setenv(name, value)
@@ -479,6 +482,10 @@ def test_worker_cli_stops_cleanly(
         text=True,
     )
     try:
+        # O aviso dos fundos simulados e visivel no arranque (sem rota `designer_imagem`).
+        assert "fundos simulados: sem rota designer_imagem" in read_line_with_timeout(
+            process.stderr, 30
+        )
         assert read_line_with_timeout(process.stderr, 30).startswith("worker a escutar")
         process.send_signal(sent)
         process.wait(timeout=15)
@@ -492,12 +499,36 @@ def test_worker_cli_stops_cleanly(
     assert process.stdout.read() == ""
 
 
-def test_worker_requires_copywriter_and_reviewer_routes(
+def test_worker_requires_copywriter_designer_and_reviewer_routes(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     monkeypatch.setenv("ROLE_ROUTES", "{}")
     code, _, err = run(capsys, "worker")
-    assert code == 2 and "copywriter" in err and "revisor" in err and "Traceback" not in err
+    assert code == 2 and "Traceback" not in err
+    assert err.strip() == "erro: ROLE_ROUTES: faltam as rotas de copywriter, designer, revisor"
+
+
+def test_worker_refuses_a_missing_designer_route(
+    worker_environment: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # O pacote corre sempre o Designer: sem rota o worker nao arranca (nada e faturado).
+    routes = {role: route for role, route in WORKER_ROUTES.items() if role != "designer"}
+    monkeypatch.setenv("ROLE_ROUTES", json.dumps(routes))
+    code, out, err = run(capsys, "worker")
+    assert code == 2 and out == "" and "Traceback" not in err
+    assert err.strip() == "erro: ROLE_ROUTES: faltam as rotas de designer"
+
+
+def test_worker_warns_about_simulated_backgrounds_without_an_image_route(
+    session_factory: Factory,
+    worker_environment: dict[str, str],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.WARNING, logger="marketing_agent.cli")
+    cli.build_worker(load_settings(), session_factory)
+    assert "fundos simulados: sem rota designer_imagem" in caplog.text
 
 
 def test_worker_refuses_a_text_only_reviewer_route(
@@ -538,7 +569,7 @@ def test_worker_refuses_fake_provider(
 ) -> None:
     routes = {
         role: {"provider": "fake", "model_id": "m", "capabilities": ["text", "json_schema"]}
-        for role in ("copywriter", "revisor")
+        for role in ("copywriter", "designer", "revisor")
     }
     monkeypatch.setenv("ROLE_ROUTES", json.dumps(routes))
     code, _, err = run(capsys, "worker")

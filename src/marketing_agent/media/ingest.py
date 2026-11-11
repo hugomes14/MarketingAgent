@@ -11,6 +11,7 @@ from marketing_agent.images.codec import (
     ImageRejected,
     convert_to_srgb,
     encode_jpeg,
+    encode_png,
     open_bounded,
     sha256_hex,
     to_srgb_rgb,
@@ -99,3 +100,25 @@ def _normalize_logo(data: bytes) -> NormalizedImage:
         clean.save(output, "PNG")
         encoded = output.getvalue()
         return NormalizedImage(encoded, "image/png", clean.width, clean.height, sha256_hex(encoded))
+
+
+def normalize_generated(data: bytes) -> NormalizedImage:
+    """Valida um fundo gerado por IA e produz PNG sRGB opaco sem metadados.
+
+    Os bytes do fornecedor nunca se guardam como vieram (podem trazer metadados, perfis ou um
+    formato inesperado): descodificam-se dentro dos limites e codificam-se de novo.
+    """
+    try:
+        with _NORMALIZATION_SLOT:
+            return _normalize_generated(data)
+    except ImageRejected:
+        raise
+    except Exception as error:
+        raise ImageRejected("Não foi possível normalizar a imagem gerada.") from error
+
+
+def _normalize_generated(data: bytes) -> NormalizedImage:
+    with open_bounded(data, frozenset({"png", "jpeg", "webp"})) as image:
+        rgb = to_srgb_rgb(image)
+        encoded = encode_png(rgb)
+        return NormalizedImage(encoded, "image/png", rgb.width, rgb.height, sha256_hex(encoded))

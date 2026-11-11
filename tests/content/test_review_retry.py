@@ -3,9 +3,10 @@
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import timedelta
+from pathlib import Path
 
 import pytest
-from content_rig import WEEK, ContentRig, Factory, Script, build_rig, copy_and_review
+from content_rig import WEEK, ContentRig, Factory, Script, build_rig, package_pass
 from sqlalchemy import select
 from sqlalchemy.exc import DBAPIError
 from test_review import other_brand, race
@@ -68,9 +69,13 @@ MakeRetry = Callable[..., Retry]
 
 
 @pytest.fixture
-def make_retry(session_factory: Factory, clock: FixedClock, brand_id: str) -> MakeRetry:
+def make_retry(
+    session_factory: Factory, clock: FixedClock, brand_id: str, tmp_path: Path
+) -> MakeRetry:
     def make(script: Script | None = None) -> Retry:
-        rig = build_rig(session_factory, clock, brand_id, script or [])
+        rig = build_rig(
+            session_factory, clock, brand_id, script or [], media_dir=tmp_path / "media"
+        )
         service = ReviewService(
             rig.factory, rig.feedback, rig.queue, rig.kb, rig.clock, max_comment_chars=200
         )
@@ -242,7 +247,7 @@ def test_retry_and_plan_reapproval_race_do_not_deadlock(retry: Retry) -> None:
 
 
 def test_pipeline_generates_the_retried_post_without_revision(make_retry: MakeRetry) -> None:
-    retry = make_retry(copy_and_review(legenda="Versao nova."))
+    retry = make_retry(package_pass(legenda="Versao nova."))
     post_id = retry.seed(lifecycle="drafting")
     retry.fail_job(post_id)
     retry.retry(post_id)
@@ -258,7 +263,7 @@ def test_pipeline_generates_the_retried_post_without_revision(make_retry: MakeRe
 
 
 def test_pipeline_generates_a_retried_planned_post(make_retry: MakeRetry) -> None:
-    retry = make_retry(copy_and_review())
+    retry = make_retry(package_pass())
     post_id = retry.seed(lifecycle="planned", last_error=None)
     retry.retry(post_id)
     job = retry.rig.queue.claim("w1")
@@ -268,7 +273,7 @@ def test_pipeline_generates_a_retried_planned_post(make_retry: MakeRetry) -> Non
 
 
 def test_pipeline_retries_a_failed_changes_job_with_the_comment(make_retry: MakeRetry) -> None:
-    retry = make_retry(copy_and_review(legenda="Versao dois."))
+    retry = make_retry(package_pass(legenda="Versao dois."))
     post_id = retry.seed(lifecycle="drafting", revisions=1)
     retry.fail_job(post_id, "changes", "Tom mais informal")
     retry.retry(post_id)

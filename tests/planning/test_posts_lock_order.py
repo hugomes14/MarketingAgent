@@ -1,6 +1,7 @@
 """Os posts da semana bloqueiam-se por ordem de id (o mesmo criterio de `requeue_expired`)."""
 
 import re
+from pathlib import Path
 
 from content_rig import WEEK, Factory, build_rig
 from sqlalchemy import event
@@ -12,9 +13,9 @@ from marketing_agent.planning.schemas import PlanoSemanal
 
 
 def test_week_posts_are_locked_in_id_order(
-    session_factory: Factory, clock: FixedClock, brand_id: str
+    session_factory: Factory, clock: FixedClock, brand_id: str, tmp_path: Path
 ) -> None:
-    rig = build_rig(session_factory, clock, brand_id, [])
+    rig = build_rig(session_factory, clock, brand_id, [], media_dir=tmp_path / "media")
     rig.seed_post(f"{WEEK}-2")
     rig.seed_post(f"{WEEK}-1")
     statements: list[str] = []
