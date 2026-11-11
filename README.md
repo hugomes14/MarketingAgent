@@ -18,8 +18,8 @@ nunca em logs, mensagens de erro ou no `.env`.
 
 - Python 3.12 e [uv](https://docs.astral.sh/uv/).
 - Docker (ou um Postgres 17 próprio) para a base de dados.
-- Para correr com modelos locais: [Ollama](https://ollama.com) com `qwen2.5:14b` (Diretor e
-  Copywriter) e `qwen2.5vl:7b` (Revisor com visão, modelo distinto de propósito). Para usar modelos na
+- Para correr com modelos locais: [Ollama](https://ollama.com) com `qwen2.5:14b` (Diretor,
+  Copywriter e Designer) e `qwen2.5vl:7b` (Revisor com visão, modelo distinto de propósito). Para usar modelos na
   nuvem: ficheiros com chaves da Anthropic e/ou da OpenAI.
 
 ## Estrutura do repositório
@@ -73,7 +73,9 @@ Tudo corre em `127.0.0.1`. Execute a partir da raiz do repositório.
 
 4. **Ollama**: confirme que está a servir em `http://127.0.0.1:11434` e que os dois modelos
    existem (`ollama pull qwen2.5:14b` e `ollama pull qwen2.5vl:7b`). O `.env.local.example` liga
-   `diretor` e `copywriter` ao primeiro e `revisor` ao segundo.
+   `diretor`, `copywriter` e `designer` ao primeiro e `revisor` ao segundo. O Revisor recebe a
+   imagem final (uma imagem consome cerca de 1900 tokens de contexto): use
+   `OLLAMA_CONTEXT_LENGTH` de 8192 ou mais.
 
    **Contexto do Ollama**: o contexto por omissão é de 4096 tokens e o Ollama **trunca em
    silêncio** os prompts mais longos (perfil, base, exemplos e brief juntos podem ultrapassá-lo).
@@ -229,12 +231,12 @@ mesmo limiar nos dois processos).
 | `recover-reservations --older-than-minutes N` | Marca como `unknown_outcome` as reservas abertas há mais de N minutos |
 | `migrate` | Aplica as migrações (`upgrade head`) na base de `DATABASE_URL` |
 | `serve [--host 127.0.0.1] [--port 8000]` | Serve o painel com o uvicorn (recusa `FORWARDED_ALLOW_IPS` e hosts fora do loopback) |
-| `worker` | Processa a fila de geração de texto (Copywriter e Revisor) até `SIGINT`/`SIGTERM`; exige as rotas `copywriter` e `revisor` e recusa o fornecedor `fake` |
+| `worker` | Processa a fila de geração de publicações (pacote texto e imagem: Copywriter, Designer e Revisor com visão) até `SIGINT`/`SIGTERM`; exige as rotas `copywriter`, `designer` e `revisor` e recusa o fornecedor `fake` |
 | `dev-proxy --login LOGIN [--name NOME] [--listen 127.0.0.1:8001] [--upstream 127.0.0.1:8000]` | Só desenvolvimento: proxy local que injeta a identidade |
 
 Códigos de saída: `0` sucesso (também no `worker` parado por sinal), `2` erro de uso ou de
 configuração (uma linha em stderr), `1` erro inesperado. O arranque do painel marca como `unknown_outcome` as reservas abertas há mais
-do que o maior `max_duration_s` dos specs do Diretor. Equivalente direto ao `serve`:
+do que o maior `max_duration_s` de todos os specs mais o timeout de uma chamada de imagem (480 s). Equivalente direto ao `serve`:
 `uvicorn --factory marketing_agent.panel.main:create_app_from_env --no-proxy-headers`.
 
 ## Configuração
@@ -243,7 +245,8 @@ Copie `.env.example` (ou `.env.local.example`) para `.env`. O `.env` contém ape
 `Settings`: uma chave desconhecida (por exemplo `ANTHROPIC_API_KEY` ou `TEST_DATABASE_URL`) faz o
 arranque falhar, sem repetir o valor. `DATABASE_URL` é obrigatório e não tem valor por omissão.
 Campos compostos (`ROLE_ROUTES`, `BUDGET_WARN_PERCENTS`, `PANEL_*`) são JSON. `ROLE_ROUTES`
-tem uma rota por papel: `diretor` (painel), e `copywriter` e `revisor` (worker). O Revisor deve
+tem uma rota por papel: `diretor` (painel), e `copywriter`, `designer` e `revisor` (worker; o pacote
+corre sempre o Designer, por isso a rota `designer`, com `text` e `json_schema`, é obrigatória). O Revisor deve
 usar um modelo diferente do Copywriter e a rota `revisor` tem de declarar `image_input` (o papel
 exige-o mesmo nas publicações só de texto). O arranque do `worker` recusa rotas sem as
 capacidades do spec ou sem preço (corra `marketing-agent sync-prices`; para o Ollama use
@@ -253,7 +256,13 @@ o segredo CSRF vão em ficheiros apontados por `ANTHROPIC_API_KEY_FILE`, `OPENAI
 `PANEL_CSRF_SECRET_FILE` (o segredo CSRF exige pelo menos 32 caracteres). A rota `fake` só existe
 nos testes e o `serve` recusa-a.
 
-**Imagens.** Sem rota `designer_imagem` em `ROLE_ROUTES` o motor usa o gerador falso (custo 0).
+**Imagens.** Sem rota `designer_imagem` em `ROLE_ROUTES` o motor usa o gerador falso (custo 0):
+os fundos são gradientes simulados e o `worker` regista no arranque o aviso
+`fundos simulados: sem rota designer_imagem` (em produção, defina a rota). Cada pedido de
+geração fatura no máximo 2 imagens, contadas na base (`cost_entry` e reservas), por isso um job
+reclamado depois de um worker morto não excede o limite. A lease dos jobs (cerca de 106 minutos)
+cobre 3 passagens do pacote com as chamadas de imagem no pior caso: um job de um worker morto só
+é recolocado depois disso.
 Com a rota (só `openai`, capacidade `image_output`) a chave vem de `OPENAI_IMAGES_API_KEY_FILE`
 (nunca a do texto) e o cliente fala sempre com `https://api.openai.com/v1`, sem repetições
 automáticas. `base_url` e `api_key` são explícitos, mas o cliente continua a herdar do ambiente do
@@ -289,8 +298,12 @@ com um LLM falso).
 uv run python scripts/smoke_ollama.py --posts 3     # --help descreve todas as opções
 ```
 
-Corre o percurso real (entrevista, estratégia, item de preço, plano, worker uma vez, lote) contra
-o Ollama e imprime o tempo de cada passo, as voltas do Revisor e as saídas inválidas por papel.
+Corre o percurso real (entrevista, estratégia, item de preço, foto e kit de marca, plano, worker
+uma vez, lote) contra o Ollama e imprime o tempo de cada passo, por publicação o layout, os
+componentes, `imagem_verificada`, o parecer, as voltas e o tempo de cada execução, e as saídas
+inválidas por papel. `PHOTO=<ficheiro>` usa uma foto sua (por omissão, uma foto sintética) e
+`REVIEWER_MODEL` muda o modelo do Revisor (por omissão `qwen2.5vl:7b`). Os fundos são os do
+gerador falso: nunca contacta uma API paga.
 **Usa uma base descartável** (`marketing_agent_smoke_<aleatório>`) criada e apagada no Postgres de
 teste (porta 5433) e recusa as bases de desenvolvimento (porta 5434, base `marketing_agent`) e
 do pytest. Com `--database-url` só aceita uma base cujo **nome** comece por
@@ -323,8 +336,9 @@ conhecimento, contexto e registos ficam em [`AgentDATA/`](AgentDATA/). Detalhes 
 
 ## O que ainda não está feito
 
-- Imagem (Plano 02b), comparação de variantes (02c), oficina 3D (02d/Plano 4), publicação
-  (Plano 3), revisão mensal e triagem (Plano 5). O 2A só produz e aprova **texto**.
+- Painel da imagem (Plano 02b, tarefas 14 a 16), comparação de variantes (02c), oficina 3D (02d/Plano 4), publicação
+  (Plano 3), revisão mensal e triagem (Plano 5). O worker já produz o pacote texto e imagem; o
+  painel do lote ainda não mostra a imagem nem permite editar o texto sem perdê-la (2B, 14 a 16).
 - Verificação no browser: as páginas do painel só foram exercitadas por testes de HTTP.
 - Limitações conhecidas do plano semanal de texto:
   - se uma edição for recusada com 422 (por exemplo, hashtags a mais), o texto escrito perde-se

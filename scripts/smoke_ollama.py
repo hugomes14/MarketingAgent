@@ -1,10 +1,14 @@
-"""Teste de fumo do texto semanal contra modelos locais servidos pelo Ollama.
+"""Teste de fumo do pacote semanal (texto e imagem) contra modelos locais servidos pelo Ollama.
 
 Percurso com os servicos reais, numa base descartavel: entrevista (ate 6 respostas), perfil,
-diagnostico e estrategia; um item de preco na base de conhecimento; o plano semanal do Diretor
-(`--posts` publicacoes), aprovado; o worker a esvaziar a fila uma vez (Copywriter e Revisor); e o
-lote da semana. No fim imprime o tempo de cada passo, as voltas do Revisor por publicacao e as
-saidas invalidas por papel. Sem custos: os modelos locais tem preco 0.
+diagnostico e estrategia; um item de preco na base de conhecimento; uma foto na biblioteca (a
+indicada em `PHOTO` ou uma foto sintetica gerada aqui) e o kit de marca com um logotipo
+sintetico; o plano semanal do Diretor (`--posts` publicacoes), aprovado; o worker a esvaziar a
+fila uma vez (Copywriter, Designer e Revisor com visao); e o lote da semana. No fim imprime o
+tempo de cada passo, e por publicacao o layout, os componentes, `imagem_verificada`, o parecer,
+as voltas e o tempo de cada execucao, mais as saidas invalidas por papel. Sem custos: os
+modelos locais tem preco 0 e os fundos gerados sao os do gerador falso (sem rota
+`designer_imagem`, nunca se contacta nenhuma API paga).
 
 SEGURANCA. Nunca toca na base de desenvolvimento nem nas portas do painel: por omissao cria uma
 base `marketing_agent_smoke_<aleatorio>` no Postgres de teste (127.0.0.1:5433), migra-a, usa-a e
@@ -14,6 +18,9 @@ mas so se o NOME comecar por `marketing_agent_smoke_`; recusa tambem a porta 543
 loopback. Nunca descarrega modelos: se o Ollama estiver em baixo ou faltar um modelo, termina com
 uma mensagem fixa.
 
+Variaveis opcionais: `MODEL` (Diretor, Copywriter e Designer), `REVIEWER_MODEL` (Revisor, por
+omissao `qwen2.5vl:7b`) e `PHOTO` (caminho de uma foto; so e lida, nunca alterada).
+
 Requisitos: Ollama em `--ollama-url` com os modelos pedidos (`ollama list`); Postgres de
 `compose.test.yaml` a correr. Escreve um ficheiro de chave descartavel num diretorio temporario.
 Codigos de saida: 0 tudo correu e as publicacoes ficaram `in_review`; 1 um passo ou uma
@@ -21,6 +28,7 @@ publicacao falhou; 2 argumentos invalidos; 3 Ollama inacessivel ou modelo em fal
 
 Uso, a partir da raiz do repositorio:
     uv run python scripts/smoke_ollama.py --posts 3
+    PHOTO=/caminho/foto.jpg uv run python scripts/smoke_ollama.py --posts 3
     uv run python scripts/smoke_ollama.py --database-url postgresql+psycopg://u:p@127.0.0.1:5433/x
 """
 
@@ -34,15 +42,17 @@ import tempfile
 import time
 import urllib.error
 import urllib.request
-from collections.abc import Collection, Iterator, Sequence
+from collections.abc import Collection, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import timedelta
 from decimal import Decimal
+from io import BytesIO
 from pathlib import Path
 
 from alembic import command
 from alembic.config import Config
+from PIL import Image, ImageDraw
 from sqlalchemy import create_engine, func, select
 from sqlalchemy.engine import URL, make_url
 from sqlalchemy.exc import ArgumentError
@@ -54,11 +64,23 @@ from marketing_agent.budget.pricing import sync_model_prices as store_model_pric
 from marketing_agent.cli import build_worker
 from marketing_agent.clock import SystemClock
 from marketing_agent.config import Capability, RoleRoute, Settings
-from marketing_agent.db.models import AgentRun, AgentStep, Brand, CostEntry, Post, PostRevision
+from marketing_agent.content.package_costs import RUN_STEPS, run_trigger
+from marketing_agent.db.models import (
+    AgentRun,
+    AgentStep,
+    Brand,
+    CostEntry,
+    Job,
+    Post,
+    PostRevision,
+)
 from marketing_agent.harness.engine import AgentEngine, RunResult, RunStatus
 from marketing_agent.interview.service import InterviewService
 from marketing_agent.kb.service import NewKbEntry
 from marketing_agent.llm.factory import build_llm_router
+from marketing_agent.media.brand_kit import BrandKitInput, BrandKitService
+from marketing_agent.media.library import MediaLibrary, PhotoUpload
+from marketing_agent.media.store import LocalMediaStore
 from marketing_agent.panel.assembly import build_content_services
 from marketing_agent.panel.queries import PanelQueries
 from marketing_agent.startup import build_budget_controller, open_database
@@ -122,6 +144,7 @@ class SmokeArgs:
     model: str
     reviewer_model: str
     posts: int
+    photo: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -136,13 +159,22 @@ class StepTiming:
 
 @dataclass(frozen=True)
 class PostOutcome:
-    """Estado final de uma publicacao do lote."""
+    """Estado final de uma publicacao do lote.
+
+    `layout`, `components` (rotulos `tipo:ref`) e `image_checked` (`imagem_verificada` do
+    Revisor) so existem se a revisao mais recente tem imagem. `timings` sao as execucoes do job
+    do post (papel e segundos), por ordem de inicio.
+    """
 
     slot_key: str
     lifecycle: str
     review_rounds: int
     verdict: str | None
     last_error: str | None
+    layout: str | None = None
+    components: tuple[str, ...] = ()
+    image_checked: bool | None = None
+    timings: tuple[tuple[str, float], ...] = ()
 
 
 @dataclass
@@ -155,6 +187,7 @@ class SmokeReport:
     invalid_outputs: dict[str, dict[str, int]] = field(default_factory=dict)
     runs: dict[str, int] = field(default_factory=dict)
     cost_entries: int = 0
+    ollama_contexts: dict[str, int] = field(default_factory=dict)
 
     @property
     def is_success(self) -> bool:
@@ -194,13 +227,21 @@ def parse_args(argv: Sequence[str] | None = None) -> SmokeArgs:
     )
     parser.add_argument(
         "--reviewer-model",
-        default="qwen2.5vl:7b",
-        help="modelo do Revisor, com visao (distinto do Copywriter)",
+        default=os.environ.get("REVIEWER_MODEL", "qwen2.5vl:7b"),
+        help="modelo do Revisor, com visao (por omissao a variavel REVIEWER_MODEL ou qwen2.5vl:7b)",
+    )
+    parser.add_argument(
+        "--photo",
+        type=Path,
+        default=os.environ.get("PHOTO") or None,
+        help="foto a pôr na biblioteca (por omissao a variavel PHOTO ou uma foto sintetica)",
     )
     parser.add_argument("--posts", type=int, default=3, help="publicacoes do plano (1 a 14)")
     parsed = parser.parse_args(argv)
     if not 1 <= parsed.posts <= 14:
         parser.error("--posts tem de estar entre 1 e 14")
+    if parsed.photo is not None and not parsed.photo.is_file():
+        parser.error("--photo/PHOTO: ficheiro nao encontrado")
     try:
         check_server_url(parsed.server_url)
         if parsed.database_url:
@@ -214,6 +255,7 @@ def parse_args(argv: Sequence[str] | None = None) -> SmokeArgs:
         parsed.model,
         parsed.reviewer_model,
         parsed.posts,
+        parsed.photo,
     )
 
 
@@ -307,6 +349,19 @@ def require_models(base_url: str, required: Collection[str]) -> None:
 # ---------------------------------------------------------------- relatorio
 
 
+def _image_lines(post: PostOutcome) -> list[str]:
+    """Layout, componentes, `imagem_verificada` e tempos das execucoes de uma publicacao."""
+    lines = []
+    if post.layout is not None:
+        checked = {True: "sim", False: "nao", None: "-"}[post.image_checked]
+        lines.append(f"      imagem: layout={post.layout}; imagem_verificada={checked}")
+        lines.append(f"      componentes: {', '.join(post.components) or '-'}")
+    if post.timings:
+        timings = ", ".join(f"{role} {seconds:.1f}s" for role, seconds in post.timings)
+        lines.append(f"      tempos: {timings}")
+    return lines
+
+
 def format_report(report: SmokeReport) -> str:
     """Texto do relatorio final: passos com tempo, voltas do Revisor e saidas invalidas."""
     lines = ["", "=== Relatorio do teste de fumo", f"Semana do plano: {report.week or '-'}", ""]
@@ -324,7 +379,11 @@ def format_report(report: SmokeReport) -> str:
             f"  {post.slot_key}: {post.lifecycle}, voltas do revisor={post.review_rounds}, "
             f"parecer={post.verdict or '-'}{error}"
         )
+        lines += _image_lines(post)
     lines.append(f"Voltas do revisor (total): {sum(p.review_rounds for p in report.posts)}")
+    checked = sum(1 for post in report.posts if post.image_checked)
+    with_image = sum(1 for post in report.posts if post.layout is not None)
+    lines.append(f"imagem_verificada=true: {checked} de {with_image} publicacoes com imagem")
     lines += ["", "Saidas invalidas por papel:"]
     if not any(report.invalid_outputs.values()):
         lines.append("  nenhuma")
@@ -334,6 +393,8 @@ def format_report(report: SmokeReport) -> str:
             lines.append(f"  {role}: {detail}")
     runs = ", ".join(f"{key}={count}" for key, count in sorted(report.runs.items()))
     lines += ["", f"Execucoes: {runs or '-'}", f"cost_entry: {report.cost_entries}"]
+    contexts = ", ".join(f"{name}={size}" for name, size in sorted(report.ollama_contexts.items()))
+    lines.append(f"Contexto efetivo no Ollama (/api/ps): {contexts or 'indisponivel'}")
     lines.append("RESULTADO: " + ("OK" if report.is_success else "FALHOU"))
     return "\n".join(lines)
 
@@ -364,8 +425,11 @@ def timed(report: SmokeReport, name: str) -> Iterator[Note]:
     print(f"[{elapsed:5.1f}s] {name}: {note.detail or 'ok'}", flush=True)
 
 
-def build_settings(args: SmokeArgs, database_url: str, key_file: Path) -> Settings:
-    """Definicoes do teste: tres papeis no Ollama, sem ler o `.env` do desenvolvimento."""
+def build_settings(args: SmokeArgs, database_url: str, key_file: Path, media_dir: Path) -> Settings:
+    """Definicoes do teste: quatro papeis no Ollama, sem ler o `.env` do desenvolvimento.
+
+    Sem rota `designer_imagem`: os fundos vem do gerador falso (custo 0, sem rede).
+    """
 
     def route(model: str, *, has_vision: bool = False) -> RoleRoute:
         capabilities: set[Capability] = {"text", "json_schema"}
@@ -381,10 +445,12 @@ def build_settings(args: SmokeArgs, database_url: str, key_file: Path) -> Settin
         role_routes={
             "diretor": route(args.model),
             "copywriter": route(args.model),
+            "designer": route(args.model),
             "revisor": route(args.reviewer_model, has_vision=True),
         },
         plan_max_posts_per_week=args.posts,
         plan_max_posts_per_day=1,
+        media_dir=media_dir,
     )
 
 
@@ -436,6 +502,57 @@ def build_services(settings: Settings, session_factory: sessionmaker[Session]) -
     interview = InterviewService(session_factory, engine, store, settings, clock)
     strategy = StrategyService(session_factory, engine, store, clock)
     return Services(settings, session_factory, store, interview, strategy, engine, clock)
+
+
+def synthetic_photo() -> bytes:
+    """Foto sintetica 1200x1500 (ceu, sol e um pao estilizado) para a biblioteca.
+
+    So serve para o percurso: o Revisor com visao deve ver algo reconhecivel, nao um quadro liso.
+    """
+    image = Image.new("RGB", (1200, 1500), (135, 190, 235))
+    draw = ImageDraw.Draw(image)
+    draw.rectangle((0, 1000, 1200, 1500), fill=(120, 85, 50))
+    draw.ellipse((880, 120, 1080, 320), fill=(250, 220, 90))
+    draw.ellipse((250, 760, 950, 1200), fill=(210, 150, 80))
+    for x in (400, 580, 760):
+        draw.line((x, 800, x - 60, 1000), fill=(150, 95, 40), width=14)
+    output = BytesIO()
+    image.save(output, "JPEG", quality=92)
+    return output.getvalue()
+
+
+def synthetic_logo() -> bytes:
+    """Logotipo sintetico: PNG 256x256 com transparencia (um circulo com um 'P')."""
+    image = Image.new("RGBA", (256, 256), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(image)
+    draw.ellipse((8, 8, 248, 248), fill=(31, 58, 95, 255))
+    draw.rectangle((96, 70, 120, 190), fill=(255, 255, 255, 255))
+    draw.ellipse((96, 70, 180, 140), outline=(255, 255, 255, 255), width=18)
+    output = BytesIO()
+    image.save(output, "PNG")
+    return output.getvalue()
+
+
+def seed_media(report: SmokeReport, services: Services, brand_id: str, photo: Path | None) -> None:
+    """Uma foto de produto na biblioteca e o kit de marca (logotipo sintetico e cores)."""
+    settings = services.settings
+    library = MediaLibrary(
+        services.session_factory, LocalMediaStore(settings.media_dir), services.clock
+    )
+    with timed(report, "biblioteca e kit de marca") as note:
+        data = photo.read_bytes() if photo is not None else synthetic_photo()
+        meta = PhotoUpload(
+            mostra="produto",
+            descricao="Pao de fermentacao natural (foto de teste)",
+            origem="propria",
+            tem_autorizacao_pessoas=False,
+        )
+        library.upload_photo(brand_id, data, meta, ACTOR)
+        kit = BrandKitInput(cor_primaria="#1F3A5F", cor_secundaria="#FFFFFF", fonte="inter-bold")
+        BrandKitService(services.session_factory, library, services.clock).save(
+            brand_id, kit, synthetic_logo(), ACTOR
+        )
+        note.detail = "foto fornecida" if photo is not None else "foto sintetica"
 
 
 def run_interview(report: SmokeReport, services: Services, brand_id: str) -> None:
@@ -541,25 +658,76 @@ def collect_statistics(session_factory: sessionmaker[Session], report: SmokeRepo
         report.cost_entries = session.scalar(select(func.count()).select_from(CostEntry)) or 0
 
 
+def _component_label(component: Mapping[str, object]) -> str:
+    """Rotulo de proveniencia de um componente guardado (`tipo:ref`, ou `texto`)."""
+    kind, ref = component.get("tipo"), component.get("ref")
+    return f"{kind}:{ref}" if ref else str(kind)
+
+
+def _post_timings(session: Session, post_id: str) -> tuple[tuple[str, float], ...]:
+    """Papel e duracao de cada execucao dos jobs do post, por ordem de inicio."""
+    job_ids = list(
+        session.scalars(
+            select(Job.id)
+            .where(Job.payload["post_id"].astext == post_id)
+            .order_by(Job.created_at, Job.id)
+        )
+    )
+    triggers = [run_trigger(step, job_id) for job_id in job_ids for step in RUN_STEPS]
+    runs = session.scalars(
+        select(AgentRun).where(AgentRun.trigger.in_(triggers)).order_by(AgentRun.started_at)
+    )
+    return tuple(
+        (run.role, (run.ended_at - run.started_at).total_seconds())
+        for run in runs
+        if run.ended_at is not None
+    )
+
+
 def post_outcomes(session_factory: sessionmaker[Session], week: str) -> list[PostOutcome]:
-    """Estado, voltas do Revisor e ultimo parecer de cada publicacao da semana."""
+    """Estado, voltas, parecer, imagem (layout, componentes) e tempos de cada publicacao."""
     outcomes = []
     with session_factory() as session:
         for post in session.scalars(select(Post).order_by(Post.slot_key)):
             if not post.slot_key.startswith(week):
                 continue
-            verdict = session.scalar(
-                select(PostRevision.review_verdict)
+            revision = session.scalars(
+                select(PostRevision)
                 .where(PostRevision.post_id == post.id)
                 .order_by(PostRevision.rev_no.desc())
                 .limit(1)
-            )
+            ).one_or_none()
+            has_image = revision is not None and revision.final_asset_id is not None
             outcomes.append(
                 PostOutcome(
-                    post.slot_key, post.lifecycle, post.review_rounds, verdict, post.last_error
+                    post.slot_key,
+                    post.lifecycle,
+                    post.review_rounds,
+                    revision.review_verdict if revision else None,
+                    post.last_error,
+                    layout=revision.layout if revision and has_image else None,
+                    components=tuple(_component_label(c) for c in revision.components)
+                    if revision and has_image
+                    else (),
+                    image_checked=revision.review_image_checked if revision and has_image else None,
+                    timings=_post_timings(session, post.id),
                 )
             )
     return outcomes
+
+
+def ollama_contexts(base_url: str) -> dict[str, int]:
+    """Contexto efetivo dos modelos carregados (`/api/ps`); vazio se o Ollama nao o indica."""
+    try:
+        with urllib.request.urlopen(f"{base_url}/api/ps", timeout=5) as response:
+            body = json.load(response)
+        return {
+            str(model["name"]): int(model["context_length"])
+            for model in body["models"]
+            if "context_length" in model
+        }
+    except (OSError, ValueError, KeyError, TypeError, urllib.error.URLError):
+        return {}
 
 
 def _new_brand(session_factory: sessionmaker[Session]) -> str:
@@ -580,7 +748,7 @@ def run_smoke(args: SmokeArgs, database_url: str, report: SmokeReport) -> None:
     with tempfile.TemporaryDirectory() as directory:
         key_file = Path(directory) / "ollama_key"
         key_file.write_text("local\n", encoding="utf-8")
-        settings = build_settings(args, database_url, key_file)
+        settings = build_settings(args, database_url, key_file, Path(directory) / "media")
         with open_database(settings) as session_factory:
             store_model_prices(session_factory, local_prices({args.model, args.reviewer_model}))
             services = build_services(settings, session_factory)
@@ -588,10 +756,12 @@ def run_smoke(args: SmokeArgs, database_url: str, report: SmokeReport) -> None:
                 brand_id = _new_brand(session_factory)
                 run_interview(report, services, brand_id)
                 run_strategy(report, services, brand_id)
+                seed_media(report, services, brand_id, args.photo)
                 run_weekly_text(report, services, brand_id)
             finally:
                 collect_statistics(session_factory, report)
                 report.posts = post_outcomes(session_factory, report.week)
+                report.ollama_contexts = ollama_contexts(args.ollama_url)
 
 
 def main(argv: Sequence[str] | None = None) -> int:

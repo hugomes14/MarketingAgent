@@ -12,6 +12,14 @@ from types import ModuleType
 import pytest
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import make_url
+from sqlalchemy.orm import Session, sessionmaker
+
+from marketing_agent.clock import FixedClock
+from marketing_agent.media.brand_kit import BrandKitService
+from marketing_agent.media.library import MediaLibrary
+from marketing_agent.media.store import LocalMediaStore
+
+Factory = sessionmaker[Session]
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "smoke_ollama.py"
 DEV_URL = "postgresql+psycopg://marketing_agent:segredo-dev@127.0.0.1:5434/marketing_agent"
@@ -231,3 +239,118 @@ def test_report_flags_failures_and_posts_without_a_review() -> None:
     assert "FALHOU" in smoke.format_report(failed) and not failed.is_success
     empty = smoke.SmokeReport()
     assert not empty.is_success and "nenhuma" in smoke.format_report(empty)
+
+
+# --- pacote com imagem: foto, kit, relatorio e opcoes -----------------------------------------
+
+
+def test_photo_and_reviewer_model_come_from_the_environment(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    photo = tmp_path / "foto.jpg"
+    photo.write_bytes(smoke.synthetic_photo())
+    monkeypatch.setenv("PHOTO", str(photo))
+    monkeypatch.setenv("REVIEWER_MODEL", "outro-modelo-vl:7b")
+    args = smoke.parse_args([])
+    assert args.photo == photo and args.reviewer_model == "outro-modelo-vl:7b"
+    monkeypatch.delenv("PHOTO")
+    monkeypatch.delenv("REVIEWER_MODEL")
+    args = smoke.parse_args([])
+    assert args.photo is None and args.reviewer_model == "qwen2.5vl:7b"
+
+
+def test_missing_photo_file_is_a_usage_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("PHOTO", str(tmp_path / "nao-existe.jpg"))
+    with pytest.raises(SystemExit) as exc:
+        smoke.parse_args([])
+    assert exc.value.code == 2
+    assert "nao-existe" not in capsys.readouterr().err  # a mensagem nao repete o caminho
+
+
+def test_synthetic_media_is_accepted_by_the_real_library_and_kit() -> None:
+    from marketing_agent.media.ingest import normalize_logo, normalize_photo
+
+    photo, logo = normalize_photo(smoke.synthetic_photo()), normalize_logo(smoke.synthetic_logo())
+    assert photo.mime == "image/jpeg" and min(photo.width, photo.height) >= 1080
+    assert logo.mime == "image/png" and (logo.width, logo.height) == (256, 256)
+
+
+def test_settings_route_the_designer_to_the_text_model_and_use_no_paid_image_route(
+    tmp_path: Path,
+) -> None:
+    args = smoke.parse_args([])
+    settings = smoke.build_settings(
+        args, "postgresql+psycopg://u:p@127.0.0.1:5543/x", tmp_path / "k", tmp_path / "m"
+    )
+    routes = settings.role_routes
+    assert routes["designer"].model_id == args.model
+    assert routes["revisor"].model_id == args.reviewer_model
+    assert "image_input" in routes["revisor"].capabilities
+    assert "designer_imagem" not in routes  # fundos do gerador falso: nunca uma API paga
+    assert settings.media_dir == tmp_path / "m"
+
+
+def test_report_shows_layout_components_image_check_and_timings() -> None:
+    report = sample_report()
+    report.posts[0] = smoke.PostOutcome(
+        "2026-W47-1", "in_review", 1, "aprovar", None,
+        layout="fundo_ia_titulo",
+        components=("gerada:passo-1", "logotipo:logo-1", "texto"),
+        image_checked=True,
+        timings=(("copywriter", 12.0), ("designer", 30.5), ("revisor", 20.25)),
+    )  # fmt: skip
+    report.ollama_contexts = {"qwen2.5vl:7b": 8192}
+    out = smoke.format_report(report)
+    assert "imagem: layout=fundo_ia_titulo; imagem_verificada=sim" in out
+    assert "componentes: gerada:passo-1, logotipo:logo-1, texto" in out
+    assert "tempos: copywriter 12.0s, designer 30.5s, revisor 20.2s" in out
+    assert "imagem_verificada=true: 1 de 1 publicacoes com imagem" in out
+    assert "qwen2.5vl:7b=8192" in out
+    assert "indisponivel" in smoke.format_report(sample_report())  # sem /api/ps
+
+
+def test_ollama_contexts_is_empty_when_ollama_is_down() -> None:
+    assert smoke.ollama_contexts("http://127.0.0.1:9") == {}
+
+
+def test_component_labels() -> None:
+    assert smoke._component_label({"tipo": "texto", "ref": None}) == "texto"
+    assert smoke._component_label({"tipo": "gerada", "ref": "p1"}) == "gerada:p1"
+
+
+def test_seed_media_puts_a_photo_and_a_kit_in_the_brand(
+    session_factory: Factory, clock: FixedClock, brand_id: str, tmp_path: Path
+) -> None:
+    args = smoke.parse_args([])
+    settings = smoke.build_settings(
+        args, "postgresql+psycopg://u:p@127.0.0.1:5543/x", tmp_path / "k", tmp_path / "m"
+    )
+    services = smoke.Services(settings, session_factory, None, None, None, None, clock)  # type: ignore[arg-type]
+    report = smoke.SmokeReport()
+    smoke.seed_media(report, services, brand_id, None)
+    library = MediaLibrary(session_factory, LocalMediaStore(settings.media_dir), clock)
+    assert len(library.photo_refs(brand_id)) == 1
+    kit = BrandKitService(session_factory, library, clock).active(brand_id)
+    assert kit is not None and kit.cor_primaria == "#1F3A5F"
+    assert [step.name for step in report.steps] == ["biblioteca e kit de marca"]
+
+
+def test_post_outcomes_reports_image_fields_and_run_timings(
+    session_factory: Factory, clock: FixedClock, brand_id: str, tmp_path: Path
+) -> None:
+    from content_rig import build_rig, package_pass
+
+    rig = build_rig(session_factory, clock, brand_id, package_pass(), media_dir=tmp_path / "m")
+    post_id = rig.seed_post()
+    assert rig.pipeline.generate(rig.claimed(post_id)) == "in_review"
+    [outcome] = smoke.post_outcomes(session_factory, "2026-W46")
+    assert (outcome.lifecycle, outcome.verdict, outcome.layout) == (
+        "in_review",
+        "aprovar",
+        "fundo_ia_titulo",
+    )
+    assert outcome.image_checked is True
+    assert [c.split(":")[0] for c in outcome.components] == ["gerada", "logotipo", "texto"]
+    assert sorted(role for role, _ in outcome.timings) == ["copywriter", "designer", "revisor"]
