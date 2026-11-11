@@ -5,13 +5,13 @@ from pathlib import Path
 
 import pytest
 
-from marketing_agent.config import Capability, RoleRoute, Settings
+from marketing_agent.config import IMAGE_ROUTE, Capability, RoleRoute, Settings
 from marketing_agent.harness.spec import AgentLimits, AgentSpec, LoopType
 from marketing_agent.llm.anthropic_adapter import AnthropicClient
 from marketing_agent.llm.factory import build_llm_router
 from marketing_agent.llm.fake import FakeLlmClient
 from marketing_agent.llm.openai_adapter import OpenAiClient
-from marketing_agent.llm.router import LlmRouter, MissingCapability
+from marketing_agent.llm.router import LlmRouter, MissingCapability, RouteNotConfigured
 from marketing_agent.llm.types import LlmClient
 
 _SEGREDO = "sk-segredo-de-teste"
@@ -153,3 +153,25 @@ def test_router_enforces_capabilities_per_route(tmp_path: Path) -> None:
     assert router.resolve(_spec("b", {"image_input"}))[1].model_id == "m"
     with pytest.raises(MissingCapability):
         router.resolve(_spec("a", {"image_input"}))
+
+
+def test_llm_router_ignores_image_route() -> None:
+    # Sem chave de texto: a rota de imagem (openai) nao faz o router pedir OPENAI_API_KEY_FILE.
+    image_route = _route("openai", {"image_output"})
+    settings = _settings({IMAGE_ROUTE: image_route})
+    router = build_llm_router(settings)
+    assert _clients(router) == {}
+    with pytest.raises(RouteNotConfigured):
+        router.resolve(_spec(IMAGE_ROUTE, {"text"}))
+
+
+def test_llm_router_keeps_text_routes_next_to_image_route(tmp_path: Path) -> None:
+    settings = _settings(
+        {
+            "diretor": _route("openai", {"text"}),
+            IMAGE_ROUTE: _route("openai", {"image_output"}),
+        },
+        openai_api_key_file=_key(tmp_path, "openai.key"),
+    )
+    client = _clients(build_llm_router(settings))["openai"]
+    assert client.capabilities == frozenset({"text"})

@@ -4,7 +4,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Literal
 
-from marketing_agent.config import Capability, RoleRoute, Settings
+from marketing_agent.config import IMAGE_ROUTE, Capability, RoleRoute, Settings
 from marketing_agent.llm.anthropic_adapter import AnthropicClient
 from marketing_agent.llm.fake import FakeLlmClient
 from marketing_agent.llm.openai_adapter import OpenAiClient
@@ -57,14 +57,19 @@ def _build_openai(settings: Settings, capabilities: frozenset[Capability]) -> Ll
 def build_llm_router(settings: Settings, fake: FakeLlmClient | None = None) -> LlmRouter:
     """Constroi o router com um cliente por fornecedor referido em `settings.role_routes`.
 
-    As capacidades de cada cliente sao a uniao das das rotas que o usam.
+    As capacidades de cada cliente sao a uniao das das rotas que o usam. A rota `designer_imagem`
+    e ignorada: o router de texto nunca a ve (ver `images.factory.build_image_backend`).
 
     Raises:
         ValueError: se faltar a chave de um fornecedor (a mensagem nomeia a variavel `*_FILE`,
             nunca o conteudo) ou se uma rota `fake` for usada sem o argumento `fake`.
     """
+    # A rota de imagem e do gerador de imagens: aqui nao cria cliente nem exige chave de texto.
+    text_routes = {
+        role: route for role, route in settings.role_routes.items() if role != IMAGE_ROUTE
+    }
     clients: dict[str, LlmClient] = {}
-    for provider, capabilities in _capabilities_by_provider(settings.role_routes).items():
+    for provider, capabilities in _capabilities_by_provider(text_routes).items():
         if provider == "anthropic":
             clients[provider] = _build_anthropic(settings, capabilities)
         elif provider == "openai":
@@ -73,4 +78,4 @@ def build_llm_router(settings: Settings, fake: FakeLlmClient | None = None) -> L
             raise ValueError("o fornecedor 'fake' exige o argumento 'fake'")
         else:
             clients[provider] = fake
-    return LlmRouter(settings.role_routes, clients)
+    return LlmRouter(text_routes, clients)

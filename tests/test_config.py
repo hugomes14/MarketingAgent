@@ -6,7 +6,7 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from marketing_agent.config import Settings, get_settings
+from marketing_agent.config import IMAGE_ROUTE, Settings, get_settings
 
 TEST_DATABASE_URL = "postgresql+psycopg://u:p@127.0.0.1:5433/db"
 
@@ -205,3 +205,63 @@ def test_local_example_uses_ollama_route_and_local_prices(
     assert settings.model_prices_path == Path("config/model_prices.local.yaml")
     assert settings.panel_allowed_logins == ["dono@local"]
     assert ":5434/" in settings.database_url
+
+
+# --- rota de imagem (`designer_imagem`) -----------------------------------------------------
+
+
+def _routes_env(monkeypatch: pytest.MonkeyPatch, routes: dict[str, Any]) -> None:
+    monkeypatch.setenv("ROLE_ROUTES", json.dumps(routes))
+
+
+def _route(provider: str, capabilities: list[str], model_id: str = "m") -> dict[str, Any]:
+    return {"provider": provider, "model_id": model_id, "capabilities": capabilities}
+
+
+def test_image_route_requires_openai_and_image_output(monkeypatch: pytest.MonkeyPatch) -> None:
+    assert IMAGE_ROUTE == "designer_imagem"
+    _routes_env(monkeypatch, {IMAGE_ROUTE: _route("openai", ["image_output"], "img-1")})
+    settings = Settings(_env_file=None)  # type: ignore[call-arg]
+    assert settings.role_routes[IMAGE_ROUTE].capabilities == frozenset({"image_output"})
+    bad_routes = [
+        _route("anthropic", ["image_output"]),
+        _route("fake", ["image_output"]),
+        _route("openai", ["text"]),
+        _route("openai", []),
+    ]
+    for bad in bad_routes:
+        _routes_env(monkeypatch, {IMAGE_ROUTE: bad})
+        with pytest.raises(ValidationError, match=IMAGE_ROUTE):
+            Settings(_env_file=None)  # type: ignore[call-arg]
+
+
+def test_no_other_route_may_declare_image_output(monkeypatch: pytest.MonkeyPatch) -> None:
+    _routes_env(monkeypatch, {"diretor": _route("openai", ["text", "image_output"])})
+    with pytest.raises(ValidationError, match="image_output"):
+        Settings(_env_file=None)  # type: ignore[call-arg]
+
+
+def test_image_settings_defaults_and_validation(monkeypatch: pytest.MonkeyPatch) -> None:
+    settings = Settings(_env_file=None)  # type: ignore[call-arg]
+    assert settings.image_quality == "medium"
+    assert settings.openai_images_api_key_file is None
+    monkeypatch.setenv("OPENAI_IMAGES_API_KEY_FILE", "AgentDATA/secrets/openai_images_api_key")
+    monkeypatch.setenv("IMAGE_QUALITY", "high")
+    settings = Settings(_env_file=None)  # type: ignore[call-arg]
+    assert settings.openai_images_api_key_file == Path("AgentDATA/secrets/openai_images_api_key")
+    assert settings.image_quality == "high"
+    monkeypatch.setenv("IMAGE_QUALITY", "ultra")
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None)  # type: ignore[call-arg]
+
+
+def test_blank_images_key_file_means_unset(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OPENAI_IMAGES_API_KEY_FILE", "  ")
+    assert Settings(_env_file=None).openai_images_api_key_file is None  # type: ignore[call-arg]
+
+
+def test_image_route_error_hides_input(monkeypatch: pytest.MonkeyPatch) -> None:
+    _routes_env(monkeypatch, {IMAGE_ROUTE: _route("anthropic", ["image_output"], "modelo-secreto")})
+    with pytest.raises(ValidationError) as excinfo:
+        Settings(_env_file=None)  # type: ignore[call-arg]
+    assert "modelo-secreto" not in str(excinfo.value)

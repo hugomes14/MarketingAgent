@@ -4,10 +4,14 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-Capability = Literal["text", "image_input", "json_schema"]
+Capability = Literal["text", "image_input", "image_output", "json_schema"]
+
+# Papel que gera imagens (fundos). Nao e um papel de texto: o router LLM ignora esta rota e a
+# fabrica de imagens (`images.factory`) e a unica que a le.
+IMAGE_ROUTE = "designer_imagem"
 
 # Limiares de aviso do orcamento: nao vazio, cada um entre 1 e 100 por cento.
 WarnPercents = Annotated[tuple[Annotated[int, Field(ge=1, le=100)], ...], Field(min_length=1)]
@@ -44,6 +48,9 @@ class Settings(BaseSettings):
     anthropic_api_key_file: Path | None = None
     openai_api_key_file: Path | None = None
     openai_base_url: str | None = None
+    # Chave propria das imagens (fatura a parte); nunca reutiliza a do texto nem `openai_base_url`.
+    openai_images_api_key_file: Path | None = None
+    image_quality: Literal["low", "medium", "high"] = "medium"
     # Lista vazia nega todos os logins: falha segura quando nada foi configurado.
     panel_allowed_logins: list[str] = []
     panel_trusted_proxy: list[str] = ["127.0.0.1", "::1"]
@@ -62,6 +69,7 @@ class Settings(BaseSettings):
     @field_validator(
         "anthropic_api_key_file",
         "openai_api_key_file",
+        "openai_images_api_key_file",
         "openai_base_url",
         "panel_csrf_secret_file",
         mode="before",
@@ -72,6 +80,24 @@ class Settings(BaseSettings):
         if isinstance(value, str) and not value.strip():
             return None
         return value
+
+    @model_validator(mode="after")
+    def _check_image_route(self) -> "Settings":
+        """So `designer_imagem` gera imagens, e so pela OpenAI (unico gerador implementado).
+
+        Nenhuma outra rota pode declarar `image_output`: o router de texto nunca deve escolher
+        um modelo de imagem para um papel de texto.
+        """
+        for role, route in self.role_routes.items():
+            declares_image = "image_output" in route.capabilities
+            if role != IMAGE_ROUTE:
+                if declares_image:
+                    raise ValueError(f"so a rota {IMAGE_ROUTE!r} pode declarar 'image_output'")
+            elif route.provider != "openai" or not declares_image:
+                raise ValueError(
+                    f"a rota {IMAGE_ROUTE!r} exige provider 'openai' e a capacidade 'image_output'"
+                )
+        return self
 
 
 def get_settings() -> Settings:
