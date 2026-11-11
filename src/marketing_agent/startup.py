@@ -114,7 +114,9 @@ def _content_specs() -> ContentSpecs:
     try:
         return load_content_specs()
     except SpecLoadError as exc:
-        raise StartupError(f"spec do Copywriter ou do Revisor invalido: {exc}") from exc
+        raise StartupError(
+            f"spec do Copywriter, do Revisor ou do Designer invalido: {exc}"
+        ) from exc
 
 
 def _call_timeout() -> timedelta:

@@ -230,6 +230,30 @@ def caption_draft(
     return [_json_response(body)]
 
 
+_VISUAL_DEFAULTS: Final[dict[str, str | None]] = {
+    "layout": "fundo_ia_titulo",
+    "foto_id": None,
+    "titulo": "Pao quente",
+    "tema_fundo": "manha de verao com luz dourada",
+    "estilo": "aguarela",
+    "alt_text": "Pao acabado de sair do forno sobre um fundo de aguarela.",
+    "justificacao": "Sem foto adequada, um fundo abstrato com o titulo.",
+}
+
+
+def visual_draft(**campos: str | None) -> Script:
+    """Rascunho visual valido por omissao (`fundo_ia_titulo`); cada campo e ajustavel.
+
+    `campos` substitui os campos de `RascunhoVisual` pelo nome (`None` anula um campo), por
+    exemplo `visual_draft(layout="foto_titulo", foto_id="f1", tema_fundo=None, estilo=None)`.
+    Nome de campo desconhecido levanta `ValueError`.
+    """
+    unknown = sorted(set(campos) - set(_VISUAL_DEFAULTS))
+    if unknown:
+        raise ValueError(f"campo desconhecido de RascunhoVisual: {unknown}")
+    return [_json_response({**_VISUAL_DEFAULTS, **campos})]
+
+
 def review(veredicto: str, violacoes: Sequence[str] = (), notas: str = "") -> Script:
     """Parecer do Revisor com o veredicto e as violacoes dados (strings do enum `Violacao`)."""
     body: dict[str, object] = {

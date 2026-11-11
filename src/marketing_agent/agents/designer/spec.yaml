@@ -1,0 +1,28 @@
+# Spec do Designer: escolhe o layout, a foto ou o tema do fundo, o titulo e o texto alternativo.
+# Valores monetarios SEMPRE como texto entre aspas (o carregador recusa numeros).
+# `writes: []`: o rascunho visual e a imagem compostas sao valores devolvidos ao chamador, que
+# guarda os ficheiros e a `post_revision` pelo servico. As regras por layout, a autorizacao de
+# pessoas e o ajuste do titulo verificam-se em `content.visual` via `extra_validator` do motor.
+# `max_steps` conta TODOS os passos da execucao: cada chamada de texto (ate 3 por saida invalida,
+# mais as repeticoes de rede), cada geracao de imagem e cada repeticao de rede da geracao. Com
+# 6 cabem, por exemplo, 3 chamadas de texto + 1 imagem + 2 repeticoes de rede; o fundo so e
+# gerado depois de o rascunho passar a validacao.
+role: designer
+name: visual
+version: 1
+loop_type: structured
+prompt_file: prompt.md
+output_schema: RascunhoVisual
+required_capabilities: [text, json_schema]
+tools: []
+reads: [kit_marca, biblioteca]
+writes: []
+validators: []
+limits:
+  max_steps: 6
+  max_tokens: 40000
+  max_cost_usd: "0.50"
+  max_duration_s: 300
+max_output_tokens: 1200
+budget_share_hint: "0.15"
+escalation: Sem rascunho valido ou limite atingido, a publicacao fica so com o texto e o responsavel pode carregar a imagem a mao.

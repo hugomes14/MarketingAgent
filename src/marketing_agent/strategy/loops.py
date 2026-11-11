@@ -16,8 +16,9 @@ from marketing_agent.artifacts.store import ArtifactRecord, ArtifactType
 from marketing_agent.harness.engine import RunContext
 from marketing_agent.llm.types import Message, TextPart
 
-# Unica lista de etiquetas de dados dos prompts do Diretor, do Copywriter e do Revisor: o padrao
-# de neutralizacao nasce dela e `wrap_data` recusa etiquetas que nao estejam nela.
+# Unica lista de etiquetas de dados dos prompts do Diretor, do Copywriter, do Revisor e do
+# Designer: o padrao de neutralizacao nasce dela e `wrap_data` recusa etiquetas que nao estejam
+# nela.
 DATA_TAGS: Final = (
     "perfil_marca",
     "diagnostico",
@@ -30,6 +31,9 @@ DATA_TAGS: Final = (
     "rascunho",
     "comentario_responsavel",
     "notas_revisor",
+    "texto_post",
+    "kit_marca",
+    "fotos_biblioteca",
 )
 
 # Tolera espacos e as quebras de linha ja escapadas pelo JSON (`\n` literal). Depois do nome

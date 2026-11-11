@@ -16,6 +16,9 @@ NEW_TAGS = (
     "rascunho",
     "comentario_responsavel",
     "notas_revisor",
+    "texto_post",
+    "kit_marca",
+    "fotos_biblioteca",
 )
 
 

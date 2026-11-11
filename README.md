@@ -26,7 +26,7 @@ nunca em logs, mensagens de erro ou no `.env`.
 
 | Caminho | Conteúdo |
 | --- | --- |
-| `src/marketing_agent/` | Código: `config`, `secrets`, `clock`, `db`, `budget`, `llm`, `harness`, `artifacts`, `interview`, `strategy`, `kb`, `planning`, `jobs` (fila e worker), `content` (pipeline Copywriter e Revisor), `feedback`, `agents/{diretor,copywriter,revisor}`, `panel`, `cli` |
+| `src/marketing_agent/` | Código: `config`, `secrets`, `clock`, `db`, `budget`, `llm`, `harness`, `artifacts`, `interview`, `strategy`, `kb`, `planning`, `jobs` (fila e worker), `content` (pipeline Copywriter e Revisor), `feedback`, `agents/{diretor,copywriter,revisor,designer}`, `panel`, `cli` |
 | `src/marketing_agent/panel/` | Painel FastAPI (autenticação por proxy, CSRF, páginas) e a fábrica `panel.main` |
 | `migrations/`, `alembic.ini` | Migrações da base (Alembic) |
 | `config/` | Preços dos modelos (`model_prices.yaml` e `model_prices.local.yaml`) |

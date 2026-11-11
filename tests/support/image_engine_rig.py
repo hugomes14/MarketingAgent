@@ -21,7 +21,7 @@ from marketing_agent.budget.pricing import (
 from marketing_agent.clock import FixedClock
 from marketing_agent.config import RoleRoute
 from marketing_agent.db.models import AgentRun, AgentStep, CostEntry, CostReservation
-from marketing_agent.harness.engine import AgentEngine, RunContext, RunResult
+from marketing_agent.harness.engine import AgentEngine, Loop, RunContext, RunResult
 from marketing_agent.harness.image_calls import ImageAllowance
 from marketing_agent.harness.spec import AgentLimits, AgentSpec, LoopType
 from marketing_agent.images.factory import ImageBackend
@@ -34,6 +34,7 @@ from marketing_agent.images.generation import (
 from marketing_agent.images.prompts import PromptFixo, build_background_prompt
 from marketing_agent.llm.fake import FakeLlmClient
 from marketing_agent.llm.router import LlmRouter
+from marketing_agent.llm.types import LlmResponse
 
 VALID_FROM = datetime(2026, 11, 1, tzinfo=UTC)
 SIZE = "1024x1536"
@@ -110,6 +111,19 @@ class ImageRig:
     factory: sessionmaker[Session]
     brand_id: str
     sleeps: list[float] = field(default_factory=list)
+    llm: FakeLlmClient = field(default_factory=lambda: FakeLlmClient([]))
+
+    def run_loop[TIn, TOut](
+        self,
+        spec: AgentSpec,
+        loop: Loop[TIn, TOut],
+        payload: TIn,
+        allowance: ImageAllowance | None = None,
+    ) -> RunResult:
+        """Corre um ciclo real (por exemplo o do Designer) com a quota de imagens dada."""
+        return self.engine.run(
+            spec, self.brand_id, "test", loop, payload, image_allowance=allowance
+        )
 
     def run(
         self,
@@ -159,12 +173,21 @@ def make_image_rig(
     model_id: str = "fake-image-1",
     with_backend: bool = True,
     with_image_prices: bool = True,
+    llm_script: Sequence[LlmResponse | Exception] = (),
 ) -> ImageRig:
-    """Sincroniza `price` USD por imagem para todas as qualidades e monta o motor."""
+    """Sincroniza `price` USD por imagem para todas as qualidades e monta o motor.
+
+    `llm_script` e o guiao do papel `designer` (modelo `fake-1`, preco 0); cada resposta deve ter
+    `provider_request_id` proprio. Sem guiao, qualquer chamada de texto falha.
+    """
     per_image = tuple(ImagePrice(q, SIZE, Decimal(price)) for q in QUALITIES if with_image_prices)
     tier = PriceTier(0, Decimal(0), Decimal(0))
     sync_model_prices(
-        factory, [ModelPrice(provider, model_id, "vtest", (tier,), VALID_FROM, per_image)]
+        factory,
+        [
+            ModelPrice(provider, model_id, "vtest", (tier,), VALID_FROM, per_image),
+            ModelPrice("fake", "fake-1", "vtest", (tier,), VALID_FROM),
+        ],
     )
     route = RoleRoute(
         provider="fake", model_id="fake-1", capabilities=frozenset({"text", "json_schema"})
@@ -172,13 +195,14 @@ def make_image_rig(
     budget = BudgetController(factory, PriceBook(factory), clock, Decimal(20), (50, 80, 100))
     backend = ImageBackend(generator, provider, model_id, "medium")
     sleeps: list[float] = []
+    llm = FakeLlmClient(llm_script)
     engine = AgentEngine(
         factory,
-        LlmRouter({"designer": route}, {"fake": FakeLlmClient([])}),
+        LlmRouter({"designer": route}, {"fake": llm}),
         budget,
         ArtifactStore(factory, clock),
         clock,
         sleep=sleeps.append,
         images=backend if with_backend else None,
     )
-    return ImageRig(engine, backend, clock, factory, brand_id, sleeps)
+    return ImageRig(engine, backend, clock, factory, brand_id, sleeps, llm)
