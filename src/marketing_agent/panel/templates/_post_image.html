@@ -1,0 +1,15 @@
+{# O selo de IA fica sempre visivel, fora de detalhes recolhiveis. #}
+{% set image = card.image %}
+<section aria-label="Imagem da publicação">
+  <h3>Imagem</h3>
+  {% if image.is_ai_generated %}<strong class="etiqueta etiqueta-submitted">Gerada por IA</strong>{% endif %}
+  {% if image.final_asset_id %}
+  <img class="imagem-publicacao" src="/media/{{ image.final_asset_id }}" alt="{{ rev.alt_text or '' }}" width="1080" height="1350" loading="lazy">
+  <p>Layout: {{ image.layout|layout_label }}</p>
+  <ul>{% for component in image.components %}<li>{{ component.label }}{% if component.detail %}: {{ component.detail }}{% endif %}</li>{% endfor %}</ul>
+  <p{% if not image.review_image_checked %} class="alerta"{% endif %}>Imagem verificada pelo Revisor: {{ 'sim' if image.review_image_checked else 'não' }}</p>
+  {% else %}
+  <p class="nota">Sem imagem: {{ image.missing_reason }}</p>
+  {% endif %}
+  {% if rev %}<p>Custo do pacote: {{ image.package_cost_usd|usd }} USD (imagem: {{ image.image_cost_usd|usd }} USD)</p>{% endif %}
+</section>

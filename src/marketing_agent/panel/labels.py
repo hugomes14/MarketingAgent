@@ -36,6 +36,11 @@ _VIOLATION: Final = {
     "promessa_indevida": "promessa indevida",
     "dados_pessoais": "dados pessoais",
     "instrucao_suspeita": "instrução suspeita",
+    "pessoa_ou_produto_gerado": "pessoa ou produto gerado por IA",
+    "texto_ilegivel": "texto ilegível",
+    "imagem_inadequada": "imagem inadequada",
+    "marca_incoerente": "marca incoerente",
+    "alt_text_inadequado": "texto alternativo inadequado",
     "outro": "outro",
 }
 _DECISION: Final = {
@@ -72,6 +77,14 @@ def _labeller(labels: Mapping[str, str]) -> Callable[[str], str]:
 
 def install_label_filters(environment: Environment) -> None:
     """Regista os filtros `lifecycle_label`, `verdict_label`, `violation_label`, etc."""
+    environment.filters["layout_label"] = _labeller(
+        {
+            "foto_inteira": "Fotografia inteira",
+            "foto_titulo": "Fotografia com título",
+            "fundo_ia_titulo": "Fundo gerado por IA com título",
+            "manual": "Imagem carregada à mão",
+        }
+    )
     environment.filters["lifecycle_label"] = _labeller(_LIFECYCLE)
     environment.filters["outcome_label"] = _labeller(_OUTCOME)
     environment.filters["verdict_label"] = _labeller(_VERDICT)

@@ -7,7 +7,8 @@ aprovação explícita do responsável no painel web. O **plano semanal de texto
 base de conhecimento, um plano semanal proposto pelo Diretor, a geração do texto de cada
 publicação em segundo plano (Copywriter e Revisor, num processo `worker`) e uma sessão semanal
 de revisão no painel (aprovar, editar, pedir alterações, rejeitar), com feedback que volta aos
-prompts seguintes. Ainda **não publica** nada nem gera imagens.
+prompts seguintes. O worker já compõe imagens e o lote mostra o pacote texto e imagem.
+Ainda **não publica** nada.
 
 Princípios: o texto do utilizador é dado, nunca instrução; só o código decide estados de
 artefactos; todo o custo de LLM passa por um registo único (reserva, acerto e auditoria); o
@@ -158,6 +159,9 @@ Percurso no painel, depois de ter o perfil, o diagnóstico e a estratégia aprov
    No fim a publicação fica "por rever" (`in_review`).
 4. **`/lote/{semana}`** (`/lote` leva à semana com publicações por rever): um cartão por
    publicação, com o texto, as alegações e a origem na base, o parecer do Revisor e as voltas.
+   Mostra também a imagem final, o layout, os componentes e a sua proveniência, o selo
+   «Gerada por IA», a confirmação de revisão visual e os custos do pacote e da imagem.
+   Se não houver imagem, mostra o motivo disponível.
 
 Em cada cartão há quatro ações de revisão (mais «Gerar de novo», abaixo); todas dizem sobre que
 revisão decidem e, se entretanto surgiu outra (uma edição noutra aba, uma geração nova), recusam
@@ -336,9 +340,10 @@ conhecimento, contexto e registos ficam em [`AgentDATA/`](AgentDATA/). Detalhes 
 
 ## O que ainda não está feito
 
-- Painel da imagem (Plano 02b, tarefas 14 a 16), comparação de variantes (02c), oficina 3D (02d/Plano 4), publicação
-  (Plano 3), revisão mensal e triagem (Plano 5). O worker já produz o pacote texto e imagem; o
-  painel do lote ainda não mostra a imagem nem permite editar o texto sem perdê-la (2B, 14 a 16).
+- Ações de imagem no lote e fecho do Plano 02b (tarefas 15 e 16), comparação de variantes
+  (02c), oficina 3D (02d/Plano 4), publicação (Plano 3), revisão mensal e triagem (Plano 5).
+  O lote já mostra a imagem; trocar foto, carregar uma imagem à mão e editar o texto
+  preservando a imagem ainda estão por implementar (2B, tarefa 15).
 - Verificação no browser: as páginas do painel só foram exercitadas por testes de HTTP.
 - Limitações conhecidas do plano semanal de texto:
   - se uma edição for recusada com 422 (por exemplo, hashtags a mais), o texto escrito perde-se

@@ -10,6 +10,7 @@ from collections import Counter
 from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime
+from decimal import Decimal
 from typing import Final
 
 from sqlalchemy import select
@@ -17,7 +18,14 @@ from sqlalchemy.dialects.postgresql import distinct_on
 from sqlalchemy.orm import Session
 
 from marketing_agent.content.revision_store import kb_ref_ids
-from marketing_agent.db.models import ACTIVE_JOB_STATUSES, Approval, Job, Post, PostRevision
+from marketing_agent.db.models import (
+    ACTIVE_JOB_STATUSES,
+    Approval,
+    Job,
+    MediaAsset,
+    Post,
+    PostRevision,
+)
 from marketing_agent.jobs.queue import GENERATE_POST_JOB
 from marketing_agent.kb.service import KbEntry
 from marketing_agent.panel.queries_content import IN_REVIEW, kb_titles
@@ -78,6 +86,28 @@ class RevisionView:
 
 
 @dataclass(frozen=True)
+class ComponentView:
+    """Proveniencia legivel de um componente, sem expor prompts ou bytes."""
+
+    label: str
+    detail: str
+
+
+@dataclass(frozen=True)
+class PostImageView:
+    """Imagem e custos persistidos do pacote; nao provoca geracao nem leitura de ficheiros."""
+
+    final_asset_id: str | None
+    layout: str | None
+    components: list[ComponentView]
+    is_ai_generated: bool
+    review_image_checked: bool
+    image_cost_usd: Decimal
+    package_cost_usd: Decimal
+    missing_reason: str | None
+
+
+@dataclass(frozen=True)
 class PostCard:
     """Publicacao do lote: estado, ultima revisao e historico de decisoes.
 
@@ -94,6 +124,7 @@ class PostCard:
     has_active_job: bool
     revision: RevisionView | None
     decisions: list[DecisionView]
+    image: PostImageView
 
     @property
     def is_generating(self) -> bool:
@@ -163,6 +194,7 @@ class WeekRows:
     decisions: dict[str, list[DecisionView]]
     active_post_ids: set[str]
     titles: dict[str, str]
+    asset_descriptions: dict[str, str]
 
 
 def post_week(session: Session, brand_id: str, post_id: str) -> str | None:
@@ -185,7 +217,7 @@ def load_week(session: Session, brand_id: str, week: str) -> WeekRows:
     )
     ids = [post.id for post in posts]
     if not ids:
-        return WeekRows([], {}, {}, set(), {})
+        return WeekRows([], {}, {}, set(), {}, {})
     revisions = _latest_revisions(session, brand_id, ids)
     claim_refs = {ref for rev in revisions.values() for ref in _claim_refs(rev)}
     return WeekRows(
@@ -194,6 +226,7 @@ def load_week(session: Session, brand_id: str, week: str) -> WeekRows:
         decisions=_decisions(session, brand_id, ids),
         active_post_ids=_posts_with_active_job(session, ids),
         titles=kb_titles(session, brand_id, claim_refs),
+        asset_descriptions=_asset_descriptions(session, brand_id, revisions.values()),
     )
 
 
@@ -266,6 +299,7 @@ def _card(brand_id: str, post: Post, rows: WeekRows, valid_refs: ValidRefs) -> P
         has_active_job=post.id in rows.active_post_ids,
         revision=revision,
         decisions=rows.decisions.get(post.id, []),
+        image=_image_view(stored, post.last_error, rows.asset_descriptions),
     )
 
 
@@ -305,4 +339,64 @@ def _claim_view(
         kb_title=None if ref is None else titles.get(ref),
         is_cited=ref is not None,
         is_supported=ref is not None and ref in supported,
+    )
+
+
+def _asset_descriptions(
+    session: Session, brand_id: str, revisions: Collection[PostRevision]
+) -> dict[str, str]:
+    # Uma consulta para o lote inteiro; inclui fotos desativadas que ainda integram revisoes.
+    ids = {
+        ref
+        for revision in revisions
+        for component in revision.components
+        if component.get("tipo") == "fotografia" and isinstance(ref := component.get("ref"), str)
+    }
+    if not ids:
+        return {}
+    statement = select(MediaAsset.id, MediaAsset.descricao, MediaAsset.origem).where(
+        MediaAsset.brand_id == brand_id, MediaAsset.id.in_(ids)
+    )
+    origins = {
+        "propria": "Própria",
+        "banco_licenciado": "Banco licenciado",
+        "cliente_autorizado": "Cliente autorizado",
+    }
+    return {
+        asset_id: f"{origins.get(origin, origin)}: {description or ''}"
+        for asset_id, description, origin in session.execute(statement)
+    }
+
+
+def _image_view(
+    revision: PostRevision | None, error: str | None, descriptions: Mapping[str, str]
+) -> PostImageView:
+    if revision is None:
+        return PostImageView(
+            None, None, [], False, False, Decimal(0), Decimal(0), error or "ainda por gerar"
+        )
+    labels = {
+        "fotografia": "Fotografia",
+        "gerada": "Fundo gerado por IA",
+        "logotipo": "Logótipo",
+        "texto": "Texto",
+        "upload": "Imagem carregada à mão",
+    }
+    components = []
+    for component in revision.components:
+        kind = str(component.get("tipo", ""))
+        ref = component.get("ref")
+        detail = descriptions.get(ref, "") if isinstance(ref, str) else ""
+        if kind == "gerada":
+            detail = str(component.get("modelo") or "modelo não registado")
+        components.append(ComponentView(labels.get(kind, kind), detail))
+    return PostImageView(
+        revision.final_asset_id,
+        revision.layout,
+        components,
+        revision.is_ai_generated,
+        revision.review_image_checked,
+        revision.image_cost_usd,
+        revision.package_cost_usd,
+        None if revision.final_asset_id else error or "imagem ainda não disponível",
     )

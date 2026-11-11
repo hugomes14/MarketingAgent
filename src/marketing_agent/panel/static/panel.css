@@ -163,3 +163,6 @@ fieldset.feedback label { display: block; font-weight: 400; margin-right: 0; }
 .previas-kit { display: grid; gap: 1rem; margin-top: 1rem; grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr)); }
 .previas-kit figure { margin: 0; }
 .previas-kit img { display: block; width: 100%; height: auto; background: var(--linha); }
+
+/* Imagem final 4:5, adaptada ao cartao sem deformar. */
+.imagem-publicacao { display: block; width: 100%; max-width: 27rem; height: auto; margin: 0.75rem 0; }
