@@ -28,8 +28,20 @@ from marketing_agent.budget.controller import (
 from marketing_agent.clock import Clock
 from marketing_agent.config import RoleRoute
 from marketing_agent.db.models import AgentRun, AgentStep, CostEntry
+from marketing_agent.harness.image_calls import (
+    GeneratedImage,
+    ImageAllowance,
+    ImageCaller,
+    ImageStepOps,
+)
+from marketing_agent.harness.run_errors import NeedsHuman as NeedsHuman
+from marketing_agent.harness.run_errors import RunLimitExceeded as RunLimitExceeded
+from marketing_agent.harness.run_errors import StepError
 from marketing_agent.harness.spec import AgentSpec, assert_can_write
 from marketing_agent.harness.validators import VALIDATORS
+from marketing_agent.images.factory import ImageBackend
+from marketing_agent.images.generation import ImageQuality, ImageSize
+from marketing_agent.images.prompts import PromptFixo
 from marketing_agent.llm.router import LlmRouter, MissingCapability, RouteNotConfigured
 from marketing_agent.llm.types import (
     LlmClient,
@@ -51,8 +63,6 @@ CHARS_PER_TOKEN = 3  # estimativa conservadora de tokens de entrada
 
 # Validador de contexto passado por quem chama: saida tipada -> violacoes (vazio = ok).
 type ExtraValidator[M: BaseModel] = Callable[[M], list[str]]
-
-StepError = Literal["invalid_output", "refusal", "truncated", "network", "limit", "unknown_outcome"]
 
 
 class RunStatus(StrEnum):
@@ -79,18 +89,6 @@ class RunResult:
     limit: type[Exception] | None = None
 
 
-class RunLimitExceeded(Exception):
-    """Um limite cumulativo da execucao (passos, tokens ou duracao) foi atingido."""
-
-
-class NeedsHuman(Exception):
-    """A execucao nao pode continuar sozinha e precisa de decisao humana."""
-
-    def __init__(self, reason: str) -> None:
-        super().__init__(reason)
-        self.reason = reason
-
-
 @dataclass(frozen=True)
 class _Services:
     """Colaboradores partilhados por uma execucao."""
@@ -102,6 +100,7 @@ class _Services:
     store: ArtifactStore
     clock: Clock
     sleep: Callable[[float], None]
+    images: ImageBackend | None = None
 
 
 @dataclass(frozen=True)
@@ -167,12 +166,14 @@ class RunContext:
         spec: AgentSpec,
         started_at: datetime,
         services: _Services,
+        image_allowance: ImageAllowance | None = None,
     ) -> None:
         self.run_id = run_id
         self.brand_id = brand_id
         self.spec = spec
         self._started_at = started_at
         self._s = services
+        self._image_allowance = image_allowance
         self._steps_done = 0
         self._tokens_used = 0
 
@@ -209,6 +210,37 @@ class RunContext:
         assert_can_write(self.spec, type)
         return self._s.store.create(
             self.brand_id, type, payload, parent_id=parent_id, produced_by_run_id=self.run_id
+        )
+
+    def generate_image(
+        self, prompt_fixo: PromptFixo, size: ImageSize, quality: ImageQuality
+    ) -> GeneratedImage:
+        """Gera uma imagem com reserva e acerto por imagem (ver `harness.image_calls`).
+
+        `ImageLimitExceeded` sem gerador, sem quota ou com a quota esgotada; `NeedsHuman` em
+        recusa, desfecho desconhecido, rede esgotada ou imagem invalida (o custo fica lancado).
+        """
+        return self._image_caller().generate(prompt_fixo, size, quality)
+
+    def _image_caller(self) -> ImageCaller:
+        steps = ImageStepOps(
+            check_limits=self._check_limits,
+            open_step=self._open_step,
+            close_step=self._close_step,
+            close_step_quietly=self._close_step_quietly,
+            unknown_if_unsettled=self._unknown_if_unsettled,
+        )
+        return ImageCaller(
+            run_id=self.run_id,
+            brand_id=self.brand_id,
+            role=self.spec.role,
+            max_cost_usd=self.spec.limits.max_cost_usd,
+            backend=self._s.images,
+            allowance=self._image_allowance,
+            budget=self._s.budget,
+            steps=steps,
+            sleep=self._s.sleep,
+            backoff_s=NETWORK_BACKOFF_S,
         )
 
     def _attempt[M: BaseModel](
@@ -302,10 +334,10 @@ class RunContext:
                 f"limite de {limits.max_duration_s} s de duracao excedido ({elapsed})"
             )
 
-    def _open_step(self, input_summary: str) -> str:
+    def _open_step(self, input_summary: str, kind: str = "llm", name: str = "call_llm") -> str:
         seq = self._steps_done + 1
         step = AgentStep(
-            run_id=self.run_id, seq=seq, kind="llm", name="call_llm", input_summary=input_summary
+            run_id=self.run_id, seq=seq, kind=kind, name=name, input_summary=input_summary
         )
         with self._s.session_factory.begin() as session:
             session.add(step)
@@ -314,9 +346,13 @@ class RunContext:
         self._steps_done = seq
         return step_id
 
-    def _close_step(self, step_id: str, error_class: StepError | None) -> None:
+    def _close_step(
+        self, step_id: str, error_class: StepError | None, output_ref: str | None = None
+    ) -> None:
         with self._s.session_factory.begin() as session:
-            session.get_one(AgentStep, step_id).error_class = error_class
+            step = session.get_one(AgentStep, step_id)
+            step.error_class = error_class
+            step.output_ref = output_ref
 
     def _reserve(self, step_id: str, input_tokens_estimate: int) -> str:
         request = ReservationRequest(
@@ -417,6 +453,7 @@ class AgentEngine:
         store: ArtifactStore,
         clock: Clock,
         sleep: Callable[[float], None] = time.sleep,
+        images: ImageBackend | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._router = router
@@ -424,28 +461,36 @@ class AgentEngine:
         self._store = store
         self._clock = clock
         self._sleep = sleep
+        self._images = images
 
     def run[TIn, TOut](
-        self, spec: AgentSpec, brand_id: str, trigger: str, loop: Loop[TIn, TOut], payload: TIn
+        self,
+        spec: AgentSpec,
+        brand_id: str,
+        trigger: str,
+        loop: Loop[TIn, TOut],
+        payload: TIn,
+        *,
+        image_allowance: ImageAllowance | None = None,
     ) -> RunResult:
-        """Corre o Loop e fecha sempre o `agent_run` com o estado final e o custo somado."""
+        """Corre o Loop e fecha sempre o `agent_run` com o estado final e o custo somado.
+
+        `image_allowance` e a quota de imagens do pedido, partilhada por quem corre varias
+        execucoes dele; sem ela (ou sem `images` no motor) `generate_image` recusa.
+        """
         try:
             client, route = self._router.resolve(spec)
         except (RouteNotConfigured, MissingCapability) as exc:
             return RunResult(RunStatus.FAILED, "", None, f"{type(exc).__name__}: {exc}")
         started_at = self._clock.now()
         run_id = self._open_run(spec, brand_id, trigger, started_at)
-        services = _Services(
-            client,
-            route,
-            self._session_factory,
-            self._budget,
-            self._store,
-            self._clock,
-            self._sleep,
-        )
         ctx = RunContext(
-            run_id=run_id, brand_id=brand_id, spec=spec, started_at=started_at, services=services
+            run_id=run_id,
+            brand_id=brand_id,
+            spec=spec,
+            started_at=started_at,
+            services=self._services(client, route),
+            image_allowance=image_allowance,
         )
         status = RunStatus.FAILED  # vale se uma BaseException interromper o Loop
         try:
@@ -454,6 +499,18 @@ class AgentEngine:
             return result
         finally:
             self._close_run(run_id, status)
+
+    def _services(self, client: LlmClient, route: RoleRoute) -> _Services:
+        return _Services(
+            client,
+            route,
+            self._session_factory,
+            self._budget,
+            self._store,
+            self._clock,
+            self._sleep,
+            self._images,
+        )
 
     @staticmethod
     def _execute[TIn, TOut](loop: Loop[TIn, TOut], ctx: RunContext, payload: TIn) -> RunResult:
