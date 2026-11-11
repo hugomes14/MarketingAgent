@@ -47,7 +47,7 @@ def truncate_error(message: str) -> str:
 def _active_generate_post(post_id: str) -> tuple[ColumnElement[bool], ...]:
     """Condicoes dos `generate_post` ativos de `post_id` (`post_id` segue como parametro)."""
     return (
-        Job.type == GENERATE_POST_JOB,
+        Job.type.in_((GENERATE_POST_JOB, "review_post")),
         Job.status.in_(ACTIVE_JOB_STATUSES),
         Job.payload["post_id"].astext == post_id,
     )

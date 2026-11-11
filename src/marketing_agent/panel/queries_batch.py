@@ -272,7 +272,7 @@ def _decisions(
 def _posts_with_active_job(session: Session, post_ids: Collection[str]) -> set[str]:
     post_id = Job.payload["post_id"].astext
     statement = select(post_id).where(
-        Job.type == GENERATE_POST_JOB,
+        Job.type.in_((GENERATE_POST_JOB, "review_post")),
         Job.status.in_(ACTIVE_JOB_STATUSES),
         post_id.in_(list(post_ids)),
     )
@@ -313,7 +313,7 @@ def _revision_view(
     # A mesma selecao da geracao e da edicao: so os itens do brief que valem na data da publicacao.
     cited = _claim_refs(revision)
     supported = valid_refs(brand_id, kb_ref_ids(post.brief), post.scheduled_date) if cited else {}
-    is_agent = revision.origin == AGENT_ORIGIN
+    is_agent = revision.origin in (AGENT_ORIGIN, "upload")
     return RevisionView(
         id=revision.id,
         rev_no=revision.rev_no,

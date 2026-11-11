@@ -11,10 +11,14 @@ e permitido; a pagina so esconde os botoes que ele recusaria.
 from datetime import timedelta
 from typing import get_args
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
+from pydantic import ValidationError
+from starlette.concurrency import run_in_threadpool
 
+from marketing_agent.content.manual_image import ManualImage
 from marketing_agent.feedback.service import FeedbackChoice
+from marketing_agent.media.library import MediaError
 from marketing_agent.panel.context import (
     MUTATION_GUARD,
     CurrentUser,
@@ -32,6 +36,7 @@ from marketing_agent.panel.inputs_review import (
     read_revision_id,
 )
 from marketing_agent.panel.rendering import Context
+from marketing_agent.panel.uploads import read_upload_form
 from marketing_agent.planning.validation import week_range
 
 router = APIRouter()
@@ -58,6 +63,9 @@ def _batch_context(panel: Panel, week: str) -> Context:
     return {
         "week": week,
         "view": view,
+        "photo_choices": panel.media.library.list_photos(panel.brand_id)
+        if any(card.image.final_asset_id for card in view.cards)
+        else [],
         "edit_choices": get_args(FeedbackChoice),
         # Rejeitar nao leva validade, por isso `temporario` (que a exige) so existe ao editar.
         "reject_choices": tuple(c for c in get_args(FeedbackChoice) if c != TEMPORARY),
@@ -166,5 +174,61 @@ def reject_post(
     feedback = read_feedback(fields)
     panel.content.review.reject(
         panel.brand_id, post_id, revision_id, feedback.choice, feedback.note, user.login
+    )
+    return see_other(url)
+
+
+@router.post("/post/{post_id}/trocar-foto", dependencies=[MUTATION_GUARD])
+def swap_post_photo(
+    post_id: RecordId, user: CurrentUser, panel: Panel, fields: Fields
+) -> RedirectResponse:
+    """Recompoe o pacote com uma fotografia ativa da marca, sem chamar modelos."""
+    url = _batch_redirect(panel, post_id)
+    panel.content.review.swap_photo(
+        panel.brand_id,
+        post_id,
+        read_revision_id(fields, "revisao_id"),
+        read_revision_id(fields, "foto_id"),
+        fields.get("alt_text", ""),
+        user.login,
+    )
+    return see_other(url)
+
+
+@router.post("/post/{post_id}/imagem", dependencies=[MUTATION_GUARD])
+async def upload_post_image(
+    post_id: RecordId, request: Request, user: CurrentUser, panel: Panel
+) -> RedirectResponse:
+    """Recebe uma imagem com declaracao de IA explicita e enfileira a revisao visual."""
+    url = _batch_redirect(panel, post_id)
+    form = await read_upload_form(request)
+    fields = form.fields
+    if (
+        form.file is None
+        or form.file.field_name != "ficheiro"
+        or fields.get("gerada_por_ia") not in ("sim", "nao")
+    ):
+        raise MediaError()
+    try:
+        meta = ManualImage.model_validate(
+            {
+                "alt_text": fields.get("alt_text"),
+                "gerada_por_ia": fields["gerada_por_ia"] == "sim",
+                "origem": fields.get("origem"),
+                "licenca_nota": fields.get("licenca_nota") or None,
+                "mostra": fields.get("mostra"),
+                "tem_autorizacao_pessoas": fields.get("tem_autorizacao_pessoas", "false"),
+            }
+        )
+    except ValidationError:
+        raise MediaError() from None
+    await run_in_threadpool(
+        panel.content.review.attach_manual_image,
+        panel.brand_id,
+        post_id,
+        read_revision_id(fields, "revisao_id"),
+        form.file.data,
+        meta,
+        user.login,
     )
     return see_other(url)

@@ -25,6 +25,10 @@ class JobHandler(Protocol):
         """Processa e fecha o job; erros inesperados sobem ao worker."""
         ...
 
+    def review_manual(self, job: ClaimedJob) -> GenerationOutcome:
+        """Reve um upload manual e fecha o job."""
+        ...
+
     def fail_job(self, job: ClaimedJob, message: str, retry: bool) -> JobFailure | None:
         """Falha o job (e, se ficou terminal, anota o motivo no que ele produzia)."""
         ...
@@ -58,7 +62,13 @@ class Worker:
         if job is None:
             return False
         try:
-            outcome = self._pipeline.generate(job)
+            if job.type == "generate_post":
+                outcome = self._pipeline.generate(job)
+            elif job.type == "review_post":
+                outcome = self._pipeline.review_manual(job)
+            else:
+                self._pipeline.fail_job(job, "UnknownJobType", retry=False)
+                return True
         except Exception as exc:
             logger.error("job %s falhou: %s", job.id, type(exc).__name__)
             # `None` = lease perdida: o job ja e de outro worker e nao se altera nada.

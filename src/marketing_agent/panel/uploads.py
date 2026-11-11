@@ -29,6 +29,7 @@ class UploadedFile:
     """Copia limitada de um ficheiro; filename e dado nao confiavel, nunca um caminho."""
 
     filename: str | None
+    field_name: str
     data: bytes
 
 
@@ -137,7 +138,7 @@ async def _copy_form(form: FormData) -> UploadForm:
             data = await value.read(MAX_UPLOAD_BYTES + 1)
             if len(data) > MAX_UPLOAD_BYTES:
                 raise _invalid(413)
-            uploaded = UploadedFile(value.filename, data)
+            uploaded = UploadedFile(value.filename, name, data)
         else:
             if "\x00" in value:
                 raise _invalid(400)

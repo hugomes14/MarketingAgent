@@ -523,7 +523,7 @@ def test_components_provenance_labels(
     ai, logo, text = result.components
     assert ai == Componente(tipo="gerada", ref=step, modelo="fake-image-1", asset_id=None)
     assert logo == Componente(tipo="logotipo", ref="ast-logo", asset_id="ast-logo")
-    assert text == Componente(tipo="texto", ref=None)
+    assert text == Componente(tipo="texto", ref=None, titulo="Pao quente")
     assert result.is_ai_generated is any(c.tipo == "gerada" for c in result.components)
     with pytest.raises(FrozenInstanceError):
         result.is_ai_generated = False  # type: ignore[misc]

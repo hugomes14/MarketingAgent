@@ -44,8 +44,16 @@ def build_content_services(
     queue = JobQueue(session_factory, clock, content_job_lease())
     limits = PlanLimits(settings.plan_max_posts_per_week, settings.plan_max_posts_per_day)
     planning = PlanningService(session_factory, engine, store, strategy, kb, queue, clock, limits)
+    media = build_media_services(settings, session_factory, clock)
     review = ReviewService(
-        session_factory, feedback, queue, kb, clock, max_comment_chars=settings.max_message_chars
+        session_factory,
+        feedback,
+        queue,
+        kb,
+        clock,
+        max_comment_chars=settings.max_message_chars,
+        library=media.library,
+        kits=media.kits,
     )
     return ContentServices(kb=kb, planning=planning, review=review, feedback=feedback, clock=clock)
 

@@ -104,7 +104,7 @@ def test_package_happy_path_with_photo_layout(make_rig: MakeRig) -> None:
         {"tipo": "fotografia", "ref": rig.photo_id, "modelo": None, "asset_id": rig.photo_id},
         {"tipo": "logotipo", "ref": rig.kits.active(rig.brand_id).logo_asset_id, "modelo": None,
          "asset_id": rig.kits.active(rig.brand_id).logo_asset_id},
-        {"tipo": "texto", "ref": None, "modelo": None, "asset_id": None},
+        {"tipo": "texto", "ref": None, "modelo": None, "asset_id": None, "titulo": "Pao quente"},
     ]  # fmt: skip
     # O alt_text da revisao e o do Designer, nao o do Copywriter.
     assert revision.alt_text == "Pao acabado de sair do forno sobre um fundo de aguarela."

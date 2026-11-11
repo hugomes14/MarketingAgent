@@ -12,4 +12,50 @@
   <p class="nota">Sem imagem: {{ image.missing_reason }}</p>
   {% endif %}
   {% if rev %}<p>Custo do pacote: {{ image.package_cost_usd|usd }} USD (imagem: {{ image.image_cost_usd|usd }} USD)</p>{% endif %}
+  {% if image.final_asset_id and card.lifecycle in ('in_review', 'approved') %}
+  <details>
+    <summary>Trocar foto</summary>
+    <form method="post" action="/post/{{ card.id }}/trocar-foto">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="revisao_id" value="{{ rev.id }}">
+      <fieldset><legend>Escolha uma fotografia</legend>
+      {% for photo in photo_choices|default([]) %}
+      <label><input type="radio" name="foto_id" value="{{ photo.id }}" required>
+        <img src="/media/{{ photo.id }}" alt="{{ photo.descricao }}" width="108" loading="lazy">{{ photo.descricao }}</label>
+      {% else %}<p>Carregue uma fotografia na <a href="/biblioteca">biblioteca</a>.</p>{% endfor %}
+      </fieldset>
+      <label for="foto-alt-{{ card.id }}">Novo texto alternativo</label>
+      <input type="text" id="foto-alt-{{ card.id }}" name="alt_text" maxlength="250" required>
+      <button type="submit">Trocar fotografia</button>
+    </form>
+  </details>
+  {% endif %}
+  {% if rev and (card.can_edit or card.lifecycle == 'approved') %}
+  <details>
+    <summary>Carregar imagem à mão</summary>
+    <form method="post" enctype="multipart/form-data" action="/post/{{ card.id }}/imagem">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="revisao_id" value="{{ rev.id }}">
+      <label>Imagem <input type="file" name="ficheiro" accept="image/jpeg,image/png,image/webp" required></label>
+      <label>Texto alternativo <input type="text" name="alt_text" maxlength="250" required></label>
+      <fieldset><legend>Foi gerada por IA?</legend>
+        <label><input type="radio" name="gerada_por_ia" value="sim" required>Sim</label>
+        <label><input type="radio" name="gerada_por_ia" value="nao" required>Não</label>
+      </fieldset>
+      <label>Origem <select name="origem" required>
+        <option value="">Escolha</option><option value="propria">Própria</option>
+        <option value="banco_licenciado">Banco licenciado</option>
+        <option value="cliente_autorizado">Cliente autorizado</option>
+      </select></label>
+      <label>Nota da licença <input type="text" name="licenca_nota" maxlength="300"></label>
+      <label>O que mostra? <select name="mostra" required>
+        <option value="">Escolha</option><option value="produto">Produto</option>
+        <option value="instalacao">Instalação</option><option value="pessoas">Pessoas</option>
+        <option value="ambiente">Ambiente</option><option value="outro">Outro</option>
+      </select></label>
+      <label><input type="checkbox" name="tem_autorizacao_pessoas" value="true">Tenho autorização das pessoas retratadas</label>
+      <button type="submit">Carregar e pedir revisão</button>
+    </form>
+  </details>
+  {% endif %}
 </section>

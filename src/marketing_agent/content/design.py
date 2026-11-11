@@ -16,7 +16,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Final, Literal, Self
 
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from marketing_agent.agents.designer import DESIGNER_DIR
 from marketing_agent.content.schemas import RascunhoTexto
@@ -74,9 +74,12 @@ class Componente(BaseModel):
     ref: str | None
     modelo: str | None = None
     asset_id: str | None = None
+    titulo: str | None = Field(default=None, max_length=40, exclude_if=lambda value: value is None)
 
     @model_validator(mode="after")
     def _check_ref(self) -> Self:
+        if self.titulo is not None and self.tipo != "texto":
+            raise ValueError("titulo so se usa em texto")
         if self.tipo == "texto":
             if self.ref is not None:
                 raise ValueError("o componente texto nao tem ref")
@@ -253,7 +256,7 @@ def _components(
         logo_id = payload.kit.logo_asset_id
         parts.append(Componente(tipo="logotipo", ref=logo_id, asset_id=logo_id))
     if draft.titulo is not None:
-        parts.append(Componente(tipo="texto", ref=None))
+        parts.append(Componente(tipo="texto", ref=None, titulo=draft.titulo))
     return tuple(parts)
 
 

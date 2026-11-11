@@ -36,7 +36,7 @@ def render(stored: PostRevision | None, error: str | None = None) -> str:
         build_environment()
         .get_template("_post_image.html")
         .render(
-            card=SimpleNamespace(image=image),
+            card=SimpleNamespace(image=image, lifecycle="cancelled", can_edit=False),
             rev=SimpleNamespace(alt_text='" onerror="alert(1)') if stored else None,
         )
     )
@@ -195,3 +195,24 @@ def test_photo_descriptions_are_brand_scoped_and_include_inactive_assets(
         descriptions = _asset_descriptions(session, brand_id, [stored])
         assert descriptions == {ids[0]: "Banco licenciado: Foto desativada"}
         assert "DESCRICAO-ALHEIA" not in str(_image_view(stored, None, descriptions))
+
+
+def test_image_actions_require_auth_csrf_and_explicit_ai(
+    make_panel: Callable[[Script], PanelRig],
+) -> None:
+    from test_batch_routes import seed_post
+
+    rig = make_panel([])
+    base = seed_post(rig)
+    for action in ("trocar-foto", "imagem"):
+        path = f"/post/{base.post_id}/{action}"
+        assert rig.client.post(path).status_code == 401
+        assert rig.client.post(path, headers=rig.headers()).status_code == 403
+    headers = rig.headers({"Origin": "http://testserver"})
+    response = rig.client.post(
+        f"/post/{base.post_id}/imagem",
+        headers=headers,
+        data={"csrf_token": rig.token(), "revisao_id": base.revision_id},
+        files={"ficheiro": ("foto.jpg", b"invalido", "image/jpeg")},
+    )
+    assert response.status_code == 422

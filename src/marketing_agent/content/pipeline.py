@@ -25,6 +25,7 @@ from marketing_agent.artifacts.store import ArtifactStore, ArtifactType
 from marketing_agent.clock import Clock
 from marketing_agent.content.image_failure import image_error
 from marketing_agent.content.loops import CopyPayload
+from marketing_agent.content.manual_review import ManualReviewer
 from marketing_agent.content.package_assets import store_package_image
 from marketing_agent.content.package_costs import job_costs_in, remaining_images
 from marketing_agent.content.package_media import DesignMedia
@@ -108,9 +109,14 @@ class ContentPipeline:
         self._store = store
         self._strategy = strategy
         self._library = library
+        self._manual = ManualReviewer(session_factory, engine, kb, library, store, queue, clock)
         self._rounds = PackageRounds(
             engine, load_content_specs(), DesignMedia(library, kits), image_quality
         )
+
+    def review_manual(self, job: ClaimedJob) -> GenerationOutcome:
+        """Reve uma imagem carregada a mao uma vez e entrega o pacote ao responsavel."""
+        return self._manual.run(job)
 
     def generate(self, job: ClaimedJob) -> GenerationOutcome:
         """Corre o job e fecha-o (conclui ou falha); erros inesperados sobem ao worker.

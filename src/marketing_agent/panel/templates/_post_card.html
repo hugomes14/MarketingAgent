@@ -39,7 +39,7 @@
   <p class="nota">Sem alegações.</p>
   {% endif %}
 
-  {% if rev.origin == "agente" %}
+  {% if rev.origin in ("agente", "upload") %}
   <h3>Parecer do revisor</h3>
   <p>
     {% if rev.verdict %}<span class="etiqueta">{{ rev.verdict|verdict_label }}</span>{% endif %}

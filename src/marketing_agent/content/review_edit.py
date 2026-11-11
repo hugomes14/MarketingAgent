@@ -71,6 +71,7 @@ def check_edit(
     changes: CaptionEdit,
     channels: Sequence[str],
     valid_kb: Mapping[str, KbEntry],
+    final_image_sha256: str | None = None,
 ) -> None:
     """Levanta `InvalidEdit` se o texto novo viola as regras ou nao altera nada.
 
@@ -91,11 +92,16 @@ def check_edit(
     if violations:
         summary = "edicao invalida: " + "; ".join(violations)
         raise InvalidEdit(summary[:MAX_SUMMARY_CHARS], tuple(violations))
-    if edit_hash(base, changes, channels) == base.revision_hash:
+    if edit_hash(base, changes, channels, final_image_sha256) == base.revision_hash:
         raise InvalidEdit("edicao sem alteracoes", ())
 
 
-def edit_hash(base: PostRevision, changes: CaptionEdit, channels: Sequence[str]) -> str:
+def edit_hash(
+    base: PostRevision,
+    changes: CaptionEdit,
+    channels: Sequence[str],
+    final_image_sha256: str | None = None,
+) -> str:
     """Hash canonico do texto editado (as alegacoes vem da revisao base)."""
     return canonical_revision_hash(
         caption=changes.legenda,
@@ -104,11 +110,16 @@ def edit_hash(base: PostRevision, changes: CaptionEdit, channels: Sequence[str])
         alt_text=changes.alt_text,
         claims=base.claims,
         channels=channels,
+        final_image_sha256=final_image_sha256,
     )
 
 
 def build_edit_revision(
-    post: Post, base: PostRevision, changes: CaptionEdit, now: datetime
+    post: Post,
+    base: PostRevision,
+    changes: CaptionEdit,
+    now: datetime,
+    final_image_sha256: str | None = None,
 ) -> PostRevision:
     """Revisao `edicao_responsavel` a seguir a `base` (o chamador tem o post bloqueado).
 
@@ -118,7 +129,7 @@ def build_edit_revision(
         brand_id=post.brand_id,
         post_id=post.id,
         rev_no=base.rev_no + 1,
-        revision_hash=edit_hash(base, changes, post.channels),
+        revision_hash=edit_hash(base, changes, post.channels, final_image_sha256),
         caption=changes.legenda,
         hashtags=list(changes.hashtags),
         call_to_action=changes.apelo_a_acao,
@@ -127,6 +138,14 @@ def build_edit_revision(
         review_verdict=None,
         review_violations=[],
         review_notes=None,
+        final_asset_id=base.final_asset_id,
+        layout=base.layout,
+        layout_version=base.layout_version,
+        components=[dict(component) for component in base.components],
+        is_ai_generated=base.is_ai_generated,
+        review_image_checked=False,
+        image_cost_usd=base.image_cost_usd,
+        package_cost_usd=base.package_cost_usd,
         origin=EDIT_ORIGIN,
         produced_by_run_id=None,
         created_at=now,

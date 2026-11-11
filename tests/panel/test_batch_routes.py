@@ -407,7 +407,11 @@ def test_decided_posts_are_read_only(make_panel: MakePanel, lifecycle: str) -> N
     assert CAPTION in html
     for action in ACTIONS:
         assert f"/post/{seeded.post_id}/{action}" not in html
-    assert "<form" not in html
+    if lifecycle == "approved":
+        assert f"/post/{seeded.post_id}/imagem" in html
+        assert html.count("<form") == 1
+    else:
+        assert "<form" not in html
 
 
 def test_post_without_revision_shows_no_actions(make_panel: MakePanel) -> None:
@@ -912,7 +916,7 @@ def test_pages_have_no_inline_script_forms_have_csrf(make_panel: MakePanel) -> N
         assert html.count("<script") == html.count('<script src="/static/')
         assert "<style" not in html and ' style="' not in html
     html = rig.get(lote()).text
-    assert html.count("<form") == html.count('name="csrf_token"') == 4
+    assert html.count("<form") == html.count('name="csrf_token"') == 5
     assert rig.token() in html
 
 
