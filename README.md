@@ -329,6 +329,30 @@ do pytest. Com `--database-url` só aceita uma base cujo **nome** comece por
 `marketing_agent_smoke_` (nunca a apaga e não assume que está vazia). Se o Ollama estiver em baixo ou faltar um modelo, termina com código 3 e uma mensagem
 fixa; nunca descarrega modelos. Pode levar bastante tempo com modelos locais.
 
+### Validação no Windows/WSL
+
+Quando o Ollama corre no Windows e o projeto no WSL, `127.0.0.1` pode apontar apenas para
+o Linux. Nesta instalação o anfitrião respondeu em `172.18.48.1:11434`. O endereço pode mudar;
+confirme-o antes de usar. Consulte a rota com `ip route show default` e verifique o serviço:
+
+```bash
+curl --noproxy '*' http://172.18.48.1:11434/api/version
+curl --noproxy '*' http://172.18.48.1:11434/api/tags
+```
+
+No `.env`, ajuste `OPENAI_BASE_URL=http://172.18.48.1:11434/v1`. O teste de fumo não lê o
+`.env`: passe o endereço sem `/v1` explicitamente. Para a base isolada desta instalação:
+
+```bash
+uv run python scripts/smoke_ollama.py --posts 3 \
+  --ollama-url http://172.18.48.1:11434 \
+  --server-url postgresql+psycopg://marketing_agent:marketing_agent@127.0.0.1:5543/postgres
+```
+
+Antes de executar, ambos os modelos devem constar de `/api/tags`; uma descarga parcial ainda
+não os torna disponíveis. A checklist de fecho está em
+[`AgentDATA/docs/2026-11-11_checklist_fecho_plano02b.md`](AgentDATA/docs/2026-11-11_checklist_fecho_plano02b.md).
+
 ## Segurança
 
 - O painel só deve ser servido **atrás de um proxy confiável**: em produção o `tailscale serve`,

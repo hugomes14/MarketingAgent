@@ -49,3 +49,13 @@ Confirmar um modelo nao obsoleto e a compatibilidade da faturacao/reserva/acerto
 adicionar o preco pago e o exemplo concreto de rota. Repetir o fumo quando o Ollama estiver
 acessivel e fazer a semana no browser com o responsavel (M3 a M7 conforme o plano). O Plano
 02B nao esta declarado fechado. O proximo trabalho e este fecho operacional, antes do 02C.
+
+## Atualizacao: preparar a tarefa 16 e validar depois
+
+Por instrucao posterior do responsavel, a validacao fica adiada. As descargas dos modelos
+foram autorizadas e estao em curso no Ollama do Windows. O servico respondeu em
+172.18.48.1:11434 (versao 0.40.16); localhost do WSL nao respondia. O README e o exemplo
+local agora explicam a diferenca entre OPENAI_BASE_URL (/v1) e --ollama-url (sem /v1).
+Checklist: AgentDATA/docs/2026-11-11_checklist_fecho_plano02b.md.
+Nao foram executados testes nem fumo nesta atualizacao. A geracao paga e os marcos manuais
+continuam explicitamente pendentes; preparar a validacao nao significa fechar o plano.
