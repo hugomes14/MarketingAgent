@@ -252,20 +252,36 @@ class ImageCaller:
         reservation_id: str,
         request: ImageRequest,
     ) -> ImageResult | None:
-        """Chama o fornecedor (sem transacao aberta) e aplica o mapeamento de falhas."""
+        """Chama o fornecedor (sem transacao aberta) e aplica o mapeamento de falhas.
+
+        Os `except` so registam O QUE falhou; reserva, passo e `NeedsHuman` tratam-se DEPOIS de
+        sair deles. Assim nenhuma excecao levantada a seguir (nem `NeedsHuman`, nem uma falha de
+        `release`/`close_step`) fica com a excecao do fornecedor em `__context__`: o texto
+        hostil nunca chega aos registos por uma cadeia de causas.
+        """
+        interrupt: BaseException | None = None
         try:
             return backend.generator.generate(request)
         except LlmNetworkError:
+            failure = "network"
+            description = ""
+        except ImageRefused:
+            failure = "refusal"
+            description = ""
+        except BaseException as exc:
+            failure = "unknown"
+            description = _describe(exc)
+            interrupt = None if isinstance(exc, Exception) else exc
+        if failure == "network":
             self._release(allowance, step_id, reservation_id, "network")
             return None
-        except ImageRefused:
+        if failure == "refusal":
             self._release(allowance, step_id, reservation_id, "refusal")
-            raise NeedsHuman(REFUSED_MESSAGE) from None
-        except BaseException as exc:
-            self._record_unknown(step_id, reservation_id, exc)
-            if isinstance(exc, Exception):
-                raise NeedsHuman(f"{UNKNOWN_MESSAGE} ({_describe(exc)})") from None
-            raise
+            raise NeedsHuman(REFUSED_MESSAGE)
+        self._record_unknown(step_id, reservation_id, description)
+        if interrupt is not None:
+            raise interrupt  # KeyboardInterrupt e afins: so depois de a reserva ficar marcada
+        raise NeedsHuman(f"{UNKNOWN_MESSAGE} ({description})")
 
     def _release(
         self, allowance: ImageAllowance, step_id: str, reservation_id: str, error: StepError
@@ -279,11 +295,9 @@ class ImageCaller:
         allowance.refund()
         self.steps.close_step(step_id, error, None)
 
-    def _record_unknown(self, step_id: str, reservation_id: str, exc: BaseException) -> None:
+    def _record_unknown(self, step_id: str, reservation_id: str, description: str) -> None:
         """Pode ter sido faturado: a reserva fica `unknown_outcome` e o lugar fica gasto."""
-        logger.warning(
-            "execucao %s: geracao de imagem sem desfecho (%s)", self.run_id, _describe(exc)
-        )
+        logger.warning("execucao %s: geracao de imagem sem desfecho (%s)", self.run_id, description)
         try:
             self.budget.mark_unknown(reservation_id)
         except Exception as mark_error:

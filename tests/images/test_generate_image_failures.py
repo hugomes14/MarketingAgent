@@ -1,6 +1,7 @@
 """`generate_image`: mapeamento de falhas seguro para dinheiro, sem fuga de texto do fornecedor."""
 
 import logging
+import traceback
 from dataclasses import replace
 from io import BytesIO
 
@@ -25,6 +26,7 @@ from marketing_agent.harness.image_calls import (
     ImageAllowance,
     ImageLimitExceeded,
 )
+from marketing_agent.harness.run_errors import NeedsHuman
 from marketing_agent.images.generation import (
     FakeImageGenerator,
     ImageProviderError,
@@ -32,7 +34,7 @@ from marketing_agent.images.generation import (
     ImageResponseInvalid,
     ImageResult,
 )
-from marketing_agent.llm.types import LlmUnknownOutcome
+from marketing_agent.llm.types import LlmNetworkError, LlmUnknownOutcome
 
 Factory = sessionmaker[Session]
 HOSTILE = "SEGREDO-HOSTIL sk-abc123 Bearer xyz"
@@ -140,10 +142,12 @@ def test_base_exception_from_generator_marks_unknown_and_propagates(
 ) -> None:
     generator = FakeImageGenerator([KeyboardInterrupt()])
     rig = make_image_rig(session_factory, clock, brand_id, generator, price="0.04")
+    allowance = ImageAllowance(2)
     with pytest.raises(KeyboardInterrupt):
-        rig.run(generate, ImageAllowance(2))
+        rig.run(generate, allowance)
     assert [r.status for r in rig.reservations()] == ["unknown_outcome"]
     assert [step.error_class for step in rig.steps()] == ["unknown_outcome"]
+    assert allowance.remaining == 1  # o fornecedor pode ter faturado: o lugar fica gasto
 
 
 def test_settle_failure_leaves_reservation_unknown(
@@ -319,3 +323,129 @@ def test_allowance_contract() -> None:
     with pytest.raises(ValueError):
         ImageAllowance(1).refund()
     assert str(ImageLimitExceeded()) != ""  # `describe_stop` constroi-a sem argumentos
+
+
+def png_bytes(width: int, height: int, image_format: str) -> bytes:
+    buffer = BytesIO()
+    Image.new("RGB", (width, height), (10, 20, 30)).save(buffer, image_format)
+    return buffer.getvalue()
+
+
+@pytest.mark.parametrize(
+    ("width", "height"), [(1023, 1536), (1536, 1023), (1023, 1023), (1000, 4000)]
+)
+def test_shorter_side_1023_is_rejected(
+    session_factory: Factory, clock: FixedClock, brand_id: str, width: int, height: int
+) -> None:
+    rig = make_image_rig(
+        session_factory,
+        clock,
+        brand_id,
+        ScriptedImageGenerator([png_result(width, height)]),
+        price="0.04",
+    )
+    result = rig.run(generate, ImageAllowance(2))
+    assert (result.status, result.message) == (RunStatus.NEEDS_HUMAN, INVALID_IMAGE_MESSAGE)
+    assert [step.error_class for step in rig.steps()] == ["invalid_output"]
+    assert len(rig.entries()) == 1  # o custo fica lancado
+
+
+@pytest.mark.parametrize(("width", "height"), [(1024, 1024), (1024, 1536), (1536, 1024)])
+def test_shorter_side_1024_is_accepted(
+    session_factory: Factory, clock: FixedClock, brand_id: str, width: int, height: int
+) -> None:
+    rig = make_image_rig(
+        session_factory,
+        clock,
+        brand_id,
+        ScriptedImageGenerator([png_result(width, height)]),
+        price="0.04",
+    )
+    assert rig.run(generate, ImageAllowance(2)).status is RunStatus.SUCCEEDED
+
+
+@pytest.mark.parametrize(
+    ("image_format", "media_type"),
+    [("PNG", "image/png"), ("JPEG", "image/jpeg"), ("WEBP", "image/webp")],
+)
+def test_media_type_follows_the_decoded_format(
+    session_factory: Factory, clock: FixedClock, brand_id: str, image_format: str, media_type: str
+) -> None:
+    data = ImageResult(png_bytes(1024, 1536, image_format), None, "m", SIZE, "medium")
+    rig = make_image_rig(
+        session_factory, clock, brand_id, ScriptedImageGenerator([data]), price="0.04"
+    )
+    result = rig.run(generate, ImageAllowance(2))
+    assert result.status is RunStatus.SUCCEEDED
+    assert result.output.media_type == media_type  # type: ignore[attr-defined]
+
+
+def chain_text(error: BaseException) -> str:
+    """str, repr e traceback completo de `error` e de toda a cadeia __cause__/__context__."""
+    parts: list[str] = []
+    seen: set[int] = set()
+    pending: list[BaseException | None] = [error]
+    while pending:
+        current = pending.pop()
+        if current is None or id(current) in seen:
+            continue
+        seen.add(id(current))
+        parts += [str(current), repr(current), "".join(traceback.format_exception(current))]
+        pending += [current.__cause__, current.__context__]
+    return " ".join(parts)
+
+
+def capture(errors: list[BaseException], ctx: RunContext) -> object:
+    """Corre a geracao e guarda a excecao tal como saiu, para inspecionar a cadeia."""
+    try:
+        return generate(ctx)
+    except BaseException as exc:
+        errors.append(exc)
+        raise
+
+
+@pytest.mark.parametrize("patched", ["release", "close_step"])
+@pytest.mark.parametrize("failure", [ImageRefused(HOSTILE), LlmNetworkError(HOSTILE)])
+def test_bookkeeping_failure_never_chains_the_provider_exception(
+    session_factory: Factory,
+    clock: FixedClock,
+    brand_id: str,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    patched: str,
+    failure: Exception,
+) -> None:
+    def broken(*args: object, **kwargs: object) -> None:
+        raise RuntimeError("falha de registo")
+
+    rig = make_image_rig(
+        session_factory, clock, brand_id, FakeImageGenerator([failure]), price="0.04"
+    )
+    target = BudgetController if patched == "release" else RunContext
+    monkeypatch.setattr(target, "release" if patched == "release" else "_close_step", broken)
+    errors: list[BaseException] = []
+    with caplog.at_level(logging.DEBUG):
+        result = rig.run(lambda ctx: capture(errors, ctx), ImageAllowance(2))
+    [error] = errors
+    assert isinstance(error, RuntimeError)
+    assert "SEGREDO" not in chain_text(error)
+    assert "SEGREDO" not in everything_stored(rig, result.run_id)
+    assert any(record.exc_info for record in caplog.records)  # o traceback esta no registo
+    assert "SEGREDO" not in caplog.text
+
+
+@pytest.mark.parametrize(
+    "failure", [ImageRefused(HOSTILE), RuntimeError(HOSTILE), LlmUnknownOutcome(HOSTILE)]
+)
+def test_needs_human_from_a_generator_failure_has_no_chain(
+    session_factory: Factory, clock: FixedClock, brand_id: str, failure: Exception
+) -> None:
+    rig = make_image_rig(
+        session_factory, clock, brand_id, FakeImageGenerator([failure]), price="0.04"
+    )
+    errors: list[BaseException] = []
+    rig.run(lambda ctx: capture(errors, ctx), ImageAllowance(2))
+    [error] = errors
+    assert isinstance(error, NeedsHuman)
+    assert error.__cause__ is None and error.__context__ is None
+    assert "SEGREDO" not in chain_text(error)
