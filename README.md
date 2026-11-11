@@ -113,7 +113,7 @@ Tudo corre em `127.0.0.1`. Execute a partir da raiz do repositório.
 
    Pára com Ctrl+C ou `SIGTERM` (o trabalho em curso termina primeiro; um segundo Ctrl+C
    interrompe-o). Um trabalho interrompido **não** volta à fila logo: recupera-se quando a sua
-   lease vence (1860 s, cerca de 31 min, depois de reclamado), no arranque seguinte do worker ou
+   lease vence (6360 s, 106 min, depois de reclamado), no arranque seguinte do worker ou
    numa iteração ociosa (`requeue_expired`). Corra **um** worker (um só processo) por base.
 
 8. **Proxy de desenvolvimento** (noutro terminal), que faz o papel do `tailscale serve`:
@@ -170,7 +170,8 @@ com 409 ("Recarregue a página"):
 - **Aprovar** (`POST /post/{id}/aprovar`): só vale para a revisão **mais recente**. Nada no
   sistema aprova uma publicação sem este pedido do responsável.
 - **Editar** (`POST /post/{id}/editar`): cria uma revisão nova do responsável (a aprovação da
-  anterior deixa de valer) e **exige o tipo de feedback**, sem valor por omissão.
+  anterior deixa de valer) e **exige o tipo de feedback**, sem valor por omissão. A imagem e
+  a proveniência mantêm-se; o parecer automático do pacote é limpo.
 - **Pedir alterações** (`POST /post/{id}/alteracoes`): o comentário vai para o Copywriter como
   dado (nunca como instrução) e o worker gera uma revisão nova; fica indisponível enquanto há
   uma geração em curso.
@@ -179,6 +180,25 @@ com 409 ("Recarregue a página"):
   gerar, ou em geração com motivo de falha) e não há trabalho ativo. Enfileira um trabalho novo
   (um pedido de alterações que falhou repete-se com o mesmo comentário) e limpa o motivo da
   falha; dois cliques seguidos geram um só trabalho.
+
+### Fotografias e imagens no lote
+
+Carregue fotografias JPEG, PNG ou WebP em `/biblioteca` (até 15 MB e pelo menos 1080 píxeis
+em cada lado), com origem e autorização das pessoas retratadas. Configure as cores e o
+logótipo PNG transparente em `/kit`. As cópias normalizadas removem EXIF/GPS e metadados.
+
+- **Trocar foto** recompõe a publicação com uma fotografia ativa, um texto alternativo novo e
+  o kit atual, sem LLM. O título mantém-se; um fundo de IA passa a fotografia com título.
+  A revisão nova fica sem parecer e exige nova aprovação. Pacotes antigos sem o título
+  guardado precisam de ser gerados novamente antes desta ação.
+- **Carregar imagem à mão** exige texto alternativo, origem e uma declaração explícita de IA.
+  Recorta em 4:5 e enfileira `review_post`; o worker faz uma passagem pelo Revisor, sem
+  Copywriter nem Designer. Mesmo que o parecer falhe, entrega a imagem ao responsável.
+  Uma base desatualizada é recusada com 409. Uma revisão de imagem de uma publicação aprovada
+  exige nova aprovação do pacote.
+
+Inclua `MEDIA_DIR` nas cópias de segurança juntamente com o Postgres: os bytes das imagens
+não estão na base. Preserve a correspondência entre a base e os ficheiros ao restaurar.
 
 ### Feedback
 
@@ -215,16 +235,11 @@ alterado.
 
 ### Fila, worker e leases
 
-O trabalho `generate_post` é reclamado com uma **lease de 1860 s (31 min)** =
-3 × (Copywriter 180 s + Revisor 180 s + 2 × 120 s de tempo máximo de uma chamada LLM) + 60 s:
-um trabalho faz até 3 passagens Copywriter+Revisor, e o motor só verifica a duração máxima
-**antes** de cada passo, por isso uma chamada que começa perto do limite ainda pode correr mais
-120 s. Com uma lease mais curta outro worker reclamaria um trabalho ainda vivo. Se o worker for
-morto a meio, o trabalho fica como estava até a lease vencer (31 min) e só então volta à fila,
-no arranque seguinte do worker ou numa iteração ociosa (`requeue_expired`); não há revisão
-duplicada. Use **um** worker (um só processo) por base. O worker e o painel marcam como
-`unknown_outcome`, ao arrancar, as reservas abertas há mais de 360 s (`worker_stale_after()`, o
-mesmo limiar nos dois processos).
+Os trabalhos `generate_post` e `review_post` usam uma **lease de 6360 s (106 min)**,
+calculada a partir dos specs e dos timeouts máximos de texto e imagem. Se o worker morrer,
+o trabalho só regressa à fila depois de vencer a lease. Use **um** worker por base.
+O painel e o worker marcam como `unknown_outcome` reservas abertas há mais de 480 s
+(`worker_stale_after()`), sem repetir chamadas cujo resultado é desconhecido.
 
 ## Comandos
 
@@ -340,10 +355,11 @@ conhecimento, contexto e registos ficam em [`AgentDATA/`](AgentDATA/). Detalhes 
 
 ## O que ainda não está feito
 
-- Ações de imagem no lote e fecho do Plano 02b (tarefas 15 e 16), comparação de variantes
+- Fecho operacional do Plano 02b (tarefa 16), comparação de variantes
   (02c), oficina 3D (02d/Plano 4), publicação (Plano 3), revisão mensal e triagem (Plano 5).
-  O lote já mostra a imagem; trocar foto, carregar uma imagem à mão e editar o texto
-  preservando a imagem ainda estão por implementar (2B, tarefa 15).
+  O lote já mostra a imagem, permite trocar a fotografia e carregar uma imagem à mão;
+  editar o texto preserva a imagem. Faltam as verificações manuais dos marcos e a
+  confirmação de um modelo pago compatível com o contrato de custos.
 - Verificação no browser: as páginas do painel só foram exercitadas por testes de HTTP.
 - Limitações conhecidas do plano semanal de texto:
   - se uma edição for recusada com 422 (por exemplo, hashtags a mais), o texto escrito perde-se
