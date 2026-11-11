@@ -40,7 +40,7 @@ uv run python scripts/smoke_ollama.py --posts 3
 | `--database-url URL` | Usar uma base existente (nunca apagada); recusa dev, pytest e hosts fora do loopback | `--database-url postgresql+psycopg://u:p@127.0.0.1:5433/x` |
 | `--server-url URL` | Servidor onde criar a base descartavel (por omissao o Postgres de teste, 5433) | |
 | `--ollama-url URL` | Endereco do Ollama (por omissao `http://127.0.0.1:11434`) | |
-| `--model`, `--reviewer-model` | Modelos do Diretor/Copywriter e do Revisor | `--model qwen2.5:14b --reviewer-model llama3.1:8b` |
+| `--model`, `--reviewer-model` | Modelos do Diretor/Copywriter e do Revisor | `--model qwen2.5:14b --reviewer-model qwen2.5vl:7b` |
 
 ## Entradas
 
@@ -61,7 +61,7 @@ ficheiro de chave descartavel num diretorio temporario; chama o Ollama (CPU/GPU 
 
 ## Dependencias
 
-Postgres de `compose.test.yaml` (5433), Ollama com `qwen2.5:14b` e `llama3.1:8b`.
+Postgres de `compose.test.yaml` (5433), Ollama com `qwen2.5:14b` e `qwen2.5vl:7b` (o Revisor exige um modelo com visão).
 
 ## Variaveis de ambiente
 

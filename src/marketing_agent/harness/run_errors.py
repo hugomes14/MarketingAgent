@@ -13,6 +13,14 @@ class RunLimitExceeded(Exception):
     """Um limite cumulativo da execucao (passos, tokens ou duracao) foi atingido."""
 
 
+class RunConfigurationFailed(Exception):
+    """A execucao nao arrancou (ou parou) por rota, capacidade ou preco em falta.
+
+    A mensagem e montada so com nomes de papel, fornecedor, modelo e capacidades do nosso
+    codigo e da configuracao, por isso pode chegar a `job.last_error` (ver `jobs.errors`).
+    """
+
+
 class NeedsHuman(Exception):
     """A execucao nao pode continuar sozinha e precisa de decisao humana."""
 

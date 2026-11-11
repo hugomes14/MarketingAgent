@@ -25,7 +25,12 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from marketing_agent.artifacts.store import ArtifactStore
 from marketing_agent.brands import ensure_brand
-from marketing_agent.budget.pricing import ModelPrice, load_model_prices, sync_model_prices
+from marketing_agent.budget.pricing import (
+    ModelPrice,
+    PriceBook,
+    load_model_prices,
+    sync_model_prices,
+)
 from marketing_agent.cli_parser import build_parser
 from marketing_agent.clock import SystemClock
 from marketing_agent.config import Settings
@@ -42,6 +47,7 @@ from marketing_agent.loopback import is_loopback_host, parse_loopback_endpoint
 from marketing_agent.startup import (
     StartupError,
     build_budget_controller,
+    check_content_routes,
     content_job_lease,
     database_error_message,
     load_settings,
@@ -186,7 +192,9 @@ def build_worker(settings: Settings, session_factory: sessionmaker[Session]) -> 
     clock = SystemClock()
     budget = build_budget_controller(settings, session_factory, clock)
     store = ArtifactStore(session_factory, clock)
-    engine = AgentEngine(session_factory, _build_worker_router(settings), budget, store, clock)
+    router = _build_worker_router(settings)
+    check_content_routes(settings, PriceBook(session_factory))
+    engine = AgentEngine(session_factory, router, budget, store, clock)
     queue = JobQueue(session_factory, clock, content_job_lease())
     pipeline = ContentPipeline(
         session_factory,

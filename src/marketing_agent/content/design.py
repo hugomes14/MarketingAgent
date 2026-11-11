@@ -82,6 +82,8 @@ class Componente(BaseModel):
                 raise ValueError("o componente texto nao tem ref")
         elif not self.ref:
             raise ValueError(f"o componente {self.tipo} exige ref")
+        if self.tipo == "texto" and self.asset_id is not None:
+            raise ValueError("o componente texto nao tem asset_id")
         if self.modelo is not None and self.tipo != "gerada":
             raise ValueError(f"o componente {self.tipo} nao tem modelo")
         # Ativos ja guardados: o ref e o proprio asset. Uma divergencia gravaria na revisao uma

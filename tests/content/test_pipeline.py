@@ -22,10 +22,12 @@ from sqlalchemy import select, text, update
 from marketing_agent.artifacts.store import ArtifactType
 from marketing_agent.budget.controller import RunCostLimitExceeded
 from marketing_agent.clock import FixedClock
+from marketing_agent.config import Capability
 from marketing_agent.content.revision_store import canonical_revision_hash
 from marketing_agent.content.rounds import AgentRunFailed, describe_stop
 from marketing_agent.db.models import AgentRun, Post
 from marketing_agent.harness.engine import RunLimitExceeded, RunResult, RunStatus
+from marketing_agent.harness.run_errors import RunConfigurationFailed
 from marketing_agent.jobs.errors import describe_error
 from marketing_agent.llm import fake_scenarios
 
@@ -249,6 +251,22 @@ def test_blocked_limit_fails_job_and_keeps_post_drafting(make_rig: MakeRig) -> N
     assert stored.status == "failed" and stored.last_error is not None
     assert stored.last_error.startswith("RunLimitExceeded")
     assert (post.lifecycle, post.last_error) == ("drafting", stored.last_error)
+
+
+def test_missing_capability_is_discoverable_in_the_job_error(
+    session_factory: Factory, clock: FixedClock, brand_id: str
+) -> None:
+    text_only: frozenset[Capability] = frozenset({"text", "json_schema"})
+    rig = build_rig(
+        session_factory, clock, brand_id, copy_and_review(), reviewer_capabilities=text_only
+    )
+    post_id = rig.seed_post()
+    with pytest.raises(RunConfigurationFailed) as caught:
+        rig.pipeline.generate(rig.claimed(post_id))
+    assert describe_error(caught.value) == (
+        "RunConfigurationFailed: revisor: MissingCapability: papel 'revisor' exige "
+        "capacidades em falta: ['image_input']"
+    )
 
 
 def test_unexpected_engine_failure_raises_a_fixed_message_error(make_rig: MakeRig) -> None:

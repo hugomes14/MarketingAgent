@@ -245,8 +245,10 @@ arranque falhar, sem repetir o valor. `DATABASE_URL` é obrigatório e não tem 
 Campos compostos (`ROLE_ROUTES`, `BUDGET_WARN_PERCENTS`, `PANEL_*`) são JSON. `ROLE_ROUTES`
 tem uma rota por papel: `diretor` (painel), e `copywriter` e `revisor` (worker). O Revisor deve
 usar um modelo diferente do Copywriter e a rota `revisor` tem de declarar `image_input` (o papel
-exige-o mesmo nas publicações só de texto; sem ele a execução falha com `MissingCapability`). `PLAN_MAX_POSTS_PER_WEEK` (5) e `PLAN_MAX_POSTS_PER_DAY`
-(1) limitam o plano do Diretor. As chaves de API e
+exige-o mesmo nas publicações só de texto). O arranque do `worker` recusa rotas sem as
+capacidades do spec ou sem preço (corra `marketing-agent sync-prices`; para o Ollama use
+`--file config/model_prices.local.yaml`). `PLAN_MAX_POSTS_PER_WEEK` (5) e
+`PLAN_MAX_POSTS_PER_DAY` (1) limitam o plano do Diretor. As chaves de API e
 o segredo CSRF vão em ficheiros apontados por `ANTHROPIC_API_KEY_FILE`, `OPENAI_API_KEY_FILE` e
 `PANEL_CSRF_SECRET_FILE` (o segredo CSRF exige pelo menos 32 caracteres). A rota `fake` só existe
 nos testes e o `serve` recusa-a.

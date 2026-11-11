@@ -10,7 +10,7 @@ import sys
 import threading
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 
@@ -22,7 +22,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from marketing_agent import cli
 from marketing_agent.brands import ensure_brand
 from marketing_agent.budget.controller import BudgetController
-from marketing_agent.budget.pricing import PriceBook
+from marketing_agent.budget.pricing import ModelPrice, PriceBook, PriceTier, sync_model_prices
 from marketing_agent.clock import Clock, SystemClock
 from marketing_agent.db.base import make_engine, make_session_factory
 from marketing_agent.db.models import AgentRun, Brand, CostReservation
@@ -149,8 +149,11 @@ def test_sync_prices_several_files(
         "--file",
         str(config / "model_prices.local.yaml"),
     )
-    assert code == 0 and out.strip() == "9 precos sincronizados"
+    assert code == 0 and out.strip() == "10 precos sincronizados"
     assert PriceBook(session_factory).get("openai", "qwen2.5:14b").tiers[0].input_per_million == 0
+    vision = PriceBook(session_factory).get("openai", "qwen2.5vl:7b")
+    assert vision.price_version == "local-2026-11-09"
+    assert (vision.tiers[0].input_per_million, vision.tiers[0].output_per_million) == (0, 0)
 
 
 def test_sync_prices_missing_file_is_a_config_error(
@@ -402,14 +405,25 @@ def test_dev_proxy_prints_banner_and_serves(
 # --- worker ----------------------------------------------------------------------------------
 
 WORKER_ROUTES = {
-    role: {"provider": "openai", "model_id": "modelo", "capabilities": ["text", "json_schema"]}
+    role: {
+        "provider": "openai",
+        "model_id": "modelo",
+        "capabilities": ["text", "json_schema", *(["image_input"] if role == "revisor" else [])],
+    }
     for role in ("diretor", "copywriter", "revisor")
 }
 
 
 @pytest.fixture
-def worker_environment(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> dict[str, str]:
-    """Rotas e chave de API de pacotilha: o worker constroi o cliente mas nunca chama a rede."""
+def worker_environment(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, session_factory: Factory
+) -> dict[str, str]:
+    """Rotas, preco e chave de pacotilha: o worker constroi o cliente mas nunca chama a rede."""
+    free = PriceTier(0, Decimal(0), Decimal(0))
+    price = ModelPrice(
+        "openai", "modelo", "v1", (free,), valid_from=datetime(2026, 11, 1, tzinfo=UTC)
+    )
+    sync_model_prices(session_factory, [price])
     key_file = tmp_path / "openai.key"
     key_file.write_text("chave-de-teste")
     values = {
@@ -484,6 +498,39 @@ def test_worker_requires_copywriter_and_reviewer_routes(
     monkeypatch.setenv("ROLE_ROUTES", "{}")
     code, _, err = run(capsys, "worker")
     assert code == 2 and "copywriter" in err and "revisor" in err and "Traceback" not in err
+
+
+def test_worker_refuses_a_text_only_reviewer_route(
+    worker_environment: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    routes = {
+        **WORKER_ROUTES,
+        "revisor": {**WORKER_ROUTES["revisor"], "capabilities": ["text", "json_schema"]},
+    }
+    monkeypatch.setenv("ROLE_ROUTES", json.dumps(routes))
+    code, out, err = run(capsys, "worker")
+    assert code == 2 and out == "" and "Traceback" not in err
+    assert err.strip() == (
+        "erro: ROLE_ROUTES: a rota 'revisor' precisa das capacidades ['image_input']; "
+        "ver .env.local.example"
+    )
+
+
+def test_worker_refuses_a_route_without_price(
+    worker_environment: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    routes = {**WORKER_ROUTES, "revisor": {**WORKER_ROUTES["revisor"], "model_id": "sem-preco"}}
+    monkeypatch.setenv("ROLE_ROUTES", json.dumps(routes))
+    code, _, err = run(capsys, "worker")
+    assert code == 2 and "Traceback" not in err
+    assert err.strip() == (
+        "erro: ROLE_ROUTES: a rota 'revisor' (openai/sem-preco) nao tem preco; "
+        "correr 'marketing-agent sync-prices'"
+    )
 
 
 def test_worker_refuses_fake_provider(

@@ -25,7 +25,7 @@ from marketing_agent.budget.pricing import (
     sync_model_prices,
 )
 from marketing_agent.clock import FixedClock
-from marketing_agent.config import RoleRoute
+from marketing_agent.config import Capability, RoleRoute
 from marketing_agent.content.pipeline import ContentPipeline
 from marketing_agent.db.base import new_id
 from marketing_agent.db.models import Job, Post, PostRevision
@@ -230,7 +230,12 @@ def copy_and_review(
 
 
 def build_rig(
-    session_factory: Factory, clock: FixedClock, brand_id: str, script: Script
+    session_factory: Factory,
+    clock: FixedClock,
+    brand_id: str,
+    script: Script,
+    *,
+    reviewer_capabilities: frozenset[Capability] = VISION_CAPABILITIES,
 ) -> ContentRig:
     free = PriceTier(0, Decimal(0), Decimal(0))
     sync_model_prices(
@@ -238,13 +243,14 @@ def build_rig(
     )
     llm = HookedLlm(unique(script))
     route = RoleRoute(provider="fake", model_id="fake-1", capabilities=VISION_CAPABILITIES)
+    reviewer_route = route.model_copy(update={"capabilities": reviewer_capabilities})
     budget = BudgetController(
         session_factory, PriceBook(session_factory), clock, Decimal(20), (50, 80, 100)
     )
     store = ArtifactStore(session_factory, clock)
     engine = AgentEngine(
         session_factory,
-        LlmRouter({"copywriter": route, "revisor": route}, {"fake": llm}),
+        LlmRouter({"copywriter": route, "revisor": reviewer_route}, {"fake": llm}),
         budget,
         store,
         clock,

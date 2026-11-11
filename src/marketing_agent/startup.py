@@ -24,12 +24,20 @@ from marketing_agent.agents.diretor.schemas import (
     PerfilMarca,
 )
 from marketing_agent.budget.controller import BudgetController
-from marketing_agent.budget.pricing import PriceBook
+from marketing_agent.budget.pricing import (
+    ImageUsage,
+    ModelPrice,
+    PriceBook,
+    UnknownPrice,
+    compute_image_cost_usd,
+)
 from marketing_agent.clock import Clock
-from marketing_agent.config import Settings
+from marketing_agent.config import IMAGE_ROUTE, RoleRoute, Settings
+from marketing_agent.content.design import GENERATED_SIZE
 from marketing_agent.content.specs import ContentSpecs, load_content_specs
 from marketing_agent.db.base import make_engine, make_session_factory
-from marketing_agent.harness.spec import SpecLoadError, load_agent_spec
+from marketing_agent.harness.spec import AgentSpec, SpecLoadError, load_agent_spec
+from marketing_agent.images.factory import build_image_backend
 from marketing_agent.llm.types import LLM_CALL_TIMEOUT_S
 from marketing_agent.planning.schemas import PlanoSemanal
 
@@ -117,6 +125,86 @@ def _content_specs() -> ContentSpecs:
         raise StartupError(
             f"spec do Copywriter, do Revisor ou do Designer invalido: {exc}"
         ) from exc
+
+
+_SYNC_PRICES = "correr 'marketing-agent sync-prices'"
+
+
+def check_content_routes(settings: Settings, prices: PriceBook) -> None:
+    """Recusa no arranque rotas que fariam o worker faturar e depois falhar.
+
+    Sem isto, uma rota do Revisor sem `image_input` (ou sem preco) so falha na execucao do
+    Revisor, DEPOIS de o Copywriter ter sido faturado, e o job repete-se (3 tentativas). Para
+    cada papel de conteudo COM rota, as capacidades do spec tem de estar na rota e o modelo
+    tem de ter preco; com rota `designer_imagem`, a chave tem de existir e ter preco por imagem
+    para a qualidade configurada e o tamanho gerado. As mensagens so levam nomes (papel,
+    fornecedor, modelo, capacidades, variavel), nunca valores de segredos.
+
+    Raises:
+        StartupError: na primeira rota que falha, com uma mensagem fixa.
+    """
+    specs = _content_specs()
+    routed = [
+        (spec, route)
+        for spec in (specs.copywriter, specs.reviewer, specs.designer)
+        if (route := settings.role_routes.get(spec.role)) is not None
+    ]
+    for spec, route in routed:
+        _check_capabilities(spec, route)
+    for spec, route in routed:
+        _check_text_price(spec.role, route, prices)
+    _check_image_route(settings, prices)
+
+
+def _check_capabilities(spec: AgentSpec, route: RoleRoute) -> None:
+    missing = sorted(spec.required_capabilities - route.capabilities)
+    if missing:
+        raise StartupError(
+            f"ROLE_ROUTES: a rota '{spec.role}' precisa das capacidades {missing}; "
+            "ver .env.local.example"
+        )
+
+
+def _price_or_none(prices: PriceBook, route: RoleRoute) -> ModelPrice | None:
+    try:
+        return prices.get(route.provider, route.model_id)
+    except UnknownPrice:
+        return None
+
+
+def _check_text_price(role: str, route: RoleRoute, prices: PriceBook) -> None:
+    if _price_or_none(prices, route) is None:
+        raise StartupError(
+            f"ROLE_ROUTES: a rota '{role}' ({route.provider}/{route.model_id}) nao tem preco; "
+            f"{_SYNC_PRICES}"
+        )
+
+
+def _check_image_route(settings: Settings, prices: PriceBook) -> None:
+    route = settings.role_routes.get(IMAGE_ROUTE)
+    if route is None:
+        return  # sem rota usa-se o gerador falso, de custo zero
+    try:
+        backend = build_image_backend(settings)
+    except ValueError as exc:  # a mensagem nomeia a variavel, nunca o conteudo da chave
+        raise StartupError(str(exc)) from exc
+    price = _price_or_none(prices, route)
+    where = f"a rota '{IMAGE_ROUTE}' ({route.provider}/{route.model_id})"
+    if price is None:
+        raise StartupError(f"ROLE_ROUTES: {where} nao tem preco; {_SYNC_PRICES}")
+    if not _has_image_price(price, GENERATED_SIZE, backend.quality):
+        raise StartupError(
+            f"ROLE_ROUTES: {where} nao tem preco por imagem para quality={backend.quality}, "
+            f"size={GENERATED_SIZE}; {_SYNC_PRICES}"
+        )
+
+
+def _has_image_price(price: ModelPrice, size: str, quality: str) -> bool:
+    try:
+        compute_image_cost_usd(price, ImageUsage(1, size, quality))
+    except UnknownPrice:
+        return False
+    return True
 
 
 def _call_timeout() -> timedelta:

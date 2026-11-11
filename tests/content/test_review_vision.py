@@ -29,7 +29,9 @@ from marketing_agent.clock import FixedClock
 from marketing_agent.config import Capability, RoleRoute
 from marketing_agent.content.design import Componente, DesignResult
 from marketing_agent.content.loops import (
+    REVIEW_AI_BACKGROUND_NOTE,
     REVIEW_IMAGE_RULES,
+    REVIEW_NO_GENERATED_NOTE,
     ReviewerLoop,
     ReviewImage,
     ReviewPayload,
@@ -287,6 +289,16 @@ def test_background_violations_are_emphasised_only_for_ai_generated_images() -> 
     marker = "fundo gerado por IA"
     assert marker in generated.split("<perfil_marca>")[0]
     assert marker not in photo
+
+
+def test_non_generated_image_states_that_generated_people_cannot_apply() -> None:
+    photo = run_stub(make_payload(make_image(is_ai_generated=False))).text()
+    generated = run_stub(make_payload(make_image(is_ai_generated=True))).text()
+    instruction = photo.split("<perfil_marca>")[0]
+    assert REVIEW_NO_GENERATED_NOTE in instruction
+    assert "`pessoa_ou_produto_gerado`" in REVIEW_NO_GENERATED_NOTE
+    assert REVIEW_NO_GENERATED_NOTE not in generated
+    assert REVIEW_AI_BACKGROUND_NOTE not in photo
 
 
 def test_provenance_block_neutralizes_closing_tags() -> None:

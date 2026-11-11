@@ -1,7 +1,7 @@
 """Tipos do contrato LLM: pedido, resposta, cliente e erros de transporte."""
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Literal, Protocol
 
@@ -26,7 +26,8 @@ class ImagePart:
     """Imagem de entrada, em bytes, com o tipo MIME (ex.: image/png)."""
 
     media_type: str
-    data: bytes
+    # Fora do `repr`: um pedido registado por engano nao deve despejar a imagem.
+    data: bytes = field(repr=False)
 
 
 ContentPart = TextPart | ImagePart

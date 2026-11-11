@@ -8,6 +8,7 @@ from pydantic import ValidationError
 
 from marketing_agent.budget.controller import RunCostLimitExceeded
 from marketing_agent.harness.engine import RunLimitExceeded
+from marketing_agent.harness.run_errors import RunConfigurationFailed
 from marketing_agent.jobs.queue import truncate_error
 from marketing_agent.strategy.service import (
     MissingPrerequisite,
@@ -16,8 +17,9 @@ from marketing_agent.strategy.service import (
 )
 
 # Lista fechada de excecoes cuja mensagem e montada so com numeros, valores de enumeracao, ids e
-# frases fixas do nosso codigo. `NeedsHuman` e `KbError` ficam de fora de proposito: carregam texto
-# escolhido pelo modelo ou pelo utilizador (o detalhe da execucao ja esta em agent_run/agent_step).
+# frases fixas do nosso codigo (`RunConfigurationFailed`: so nomes de papel, modelo e capacidades).
+# `NeedsHuman` e `KbError` ficam de fora de proposito: carregam texto escolhido pelo modelo ou
+# pelo utilizador (o detalhe da execucao ja esta em agent_run/agent_step).
 # Comparacao por tipo EXATO: uma subclasse futura nao herda o armazenamento da mensagem.
 SAFE_MESSAGE_ERRORS: tuple[type[Exception], ...] = (
     RunLimitExceeded,
@@ -25,6 +27,7 @@ SAFE_MESSAGE_ERRORS: tuple[type[Exception], ...] = (
     MissingPrerequisite,
     PendingProposal,
     ProposalInProgress,
+    RunConfigurationFailed,
 )
 
 

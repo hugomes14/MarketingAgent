@@ -5,7 +5,7 @@ O resultado e o rascunho final com o parecer efetivo, ou o `RunResult` que parou
 """
 
 from dataclasses import replace
-from typing import Literal
+from typing import Literal, NoReturn
 
 from marketing_agent.content.loops import CopyPayload, CopywriterLoop, ReviewerLoop, ReviewPayload
 from marketing_agent.content.revision_store import GeneratedText
@@ -18,6 +18,7 @@ from marketing_agent.harness.engine import (
     RunResult,
     RunStatus,
 )
+from marketing_agent.harness.run_errors import RunConfigurationFailed
 from marketing_agent.jobs.errors import describe_error
 
 MAX_REVIEW_ROUNDS = 2  # voltas ao Copywriter: no maximo 3 rascunhos por geracao
@@ -45,8 +46,21 @@ def _as_typed[T](result: RunResult, expected: type[T], role: str) -> T | RunResu
             raise TypeError(f"{role}: saida de tipo inesperado ({type(result.output).__name__})")
         return result.output
     if result.status is RunStatus.FAILED:
-        raise AgentRunFailed(f"a execucao do {role} falhou ({result.run_id or 'sem execucao'})")
+        _raise_failed(result, role)
     return result
+
+
+# Falhas de configuracao do motor cuja mensagem so tem nomes de papel, fornecedor, modelo e
+# capacidades (ver `llm.router` e `budget.pricing`): sao as unicas que `last_error` pode mostrar.
+_CONFIGURATION_FAILURES = ("MissingCapability", "RouteNotConfigured", "UnknownPrice")
+
+
+def _raise_failed(result: RunResult, role: str) -> NoReturn:
+    """Falha de configuracao (sem texto do modelo) ou erro inesperado de mensagem fixa."""
+    message = result.message or ""
+    if any(message.startswith(f"{name}: ") for name in _CONFIGURATION_FAILURES):
+        raise RunConfigurationFailed(f"{role}: {message}")
+    raise AgentRunFailed(f"a execucao do {role} falhou ({result.run_id or 'sem execucao'})")
 
 
 def _effective(review: Revisao) -> Literal["aprovar", "rever", "rejeitar"]:

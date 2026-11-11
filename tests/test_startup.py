@@ -1,13 +1,32 @@
 """Pecas de arranque partilhadas: duracoes dos specs e a lease dos trabalhos de conteudo."""
 
 import inspect
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
+from decimal import Decimal
+from pathlib import Path
 
+import pytest
+from sqlalchemy.orm import Session, sessionmaker
+
+from marketing_agent.budget.pricing import (
+    ImagePrice,
+    ModelPrice,
+    PriceBook,
+    PriceTier,
+    sync_model_prices,
+)
+from marketing_agent.config import RoleRoute, Settings
 from marketing_agent.content.specs import load_content_specs
 from marketing_agent.llm.anthropic_adapter import AnthropicClient
 from marketing_agent.llm.openai_adapter import OpenAiClient
 from marketing_agent.llm.types import LLM_CALL_TIMEOUT_S
-from marketing_agent.startup import content_job_lease, director_max_duration_s, worker_stale_after
+from marketing_agent.startup import (
+    StartupError,
+    check_content_routes,
+    content_job_lease,
+    director_max_duration_s,
+    worker_stale_after,
+)
 
 
 def test_adapters_use_the_shared_call_timeout() -> None:
@@ -41,3 +60,140 @@ def test_worker_stale_reservation_threshold_covers_the_longest_single_run() -> N
     assert worker_stale_after() == timedelta(seconds=longest + LLM_CALL_TIMEOUT_S)
     assert worker_stale_after() >= timedelta(seconds=LLM_CALL_TIMEOUT_S)
     assert worker_stale_after() < content_job_lease()  # uma execucao cabe numa lease
+
+
+# --- rotas do worker: capacidades e precos ----------------------------------------------------
+
+Factory = sessionmaker[Session]
+VALID_FROM = datetime(2026, 11, 1, tzinfo=UTC)
+FREE = (PriceTier(0, Decimal(0), Decimal(0)),)
+TEXT = ["text", "json_schema"]
+VISION = ["text", "json_schema", "image_input"]
+SIZE = "1024x1536"
+
+
+def route(model: str, capabilities: list[str], provider: str = "openai") -> RoleRoute:
+    return RoleRoute.model_validate(
+        {"provider": provider, "model_id": model, "capabilities": capabilities}
+    )
+
+
+def settings_with(routes: dict[str, RoleRoute], **extra: object) -> Settings:
+    return Settings(  # type: ignore[arg-type]
+        _env_file=None, database_url="postgresql+psycopg://u:p@127.0.0.1:5433/db",
+        role_routes=routes, **extra,
+    )  # fmt: skip
+
+
+def seed_text_prices(factory: Factory, *models: str) -> None:
+    sync_model_prices(
+        factory, [ModelPrice("openai", m, "v1", FREE, valid_from=VALID_FROM) for m in models]
+    )
+
+
+def good_routes() -> dict[str, RoleRoute]:
+    return {"copywriter": route("qwen2.5:14b", TEXT), "revisor": route("qwen2.5vl:7b", VISION)}
+
+
+def test_worker_routes_with_vision_revisor_and_prices_pass(session_factory: Factory) -> None:
+    seed_text_prices(session_factory, "qwen2.5:14b", "qwen2.5vl:7b")
+    check_content_routes(settings_with(good_routes()), PriceBook(session_factory))
+
+
+def test_text_only_revisor_route_is_refused_at_startup(session_factory: Factory) -> None:
+    seed_text_prices(session_factory, "qwen2.5:14b", "llama3.1:8b")
+    routes = {**good_routes(), "revisor": route("llama3.1:8b", TEXT)}
+    with pytest.raises(StartupError) as caught:
+        check_content_routes(settings_with(routes), PriceBook(session_factory))
+    assert str(caught.value) == (
+        "ROLE_ROUTES: a rota 'revisor' precisa das capacidades ['image_input']; "
+        "ver .env.local.example"
+    )
+
+
+def test_missing_capabilities_are_listed_sorted(session_factory: Factory) -> None:
+    routes = {"copywriter": route("m", ["text"]), "revisor": route("v", ["text"])}
+    with pytest.raises(StartupError) as caught:
+        check_content_routes(settings_with(routes), PriceBook(session_factory))
+    assert "'copywriter' precisa das capacidades ['json_schema']" in str(caught.value)
+    routes = {"copywriter": route("m", TEXT), "revisor": route("v", ["text"])}
+    with pytest.raises(StartupError) as caught:
+        check_content_routes(settings_with(routes), PriceBook(session_factory))
+    assert "'revisor' precisa das capacidades ['image_input', 'json_schema']" in str(caught.value)
+
+
+def test_route_without_price_points_to_sync_prices(session_factory: Factory) -> None:
+    seed_text_prices(session_factory, "qwen2.5:14b")  # falta o preco do modelo de visao
+    with pytest.raises(StartupError) as caught:
+        check_content_routes(settings_with(good_routes()), PriceBook(session_factory))
+    assert str(caught.value) == (
+        "ROLE_ROUTES: a rota 'revisor' (openai/qwen2.5vl:7b) nao tem preco; "
+        "correr 'marketing-agent sync-prices'"
+    )
+
+
+def test_designer_route_is_checked_when_present(session_factory: Factory) -> None:
+    seed_text_prices(session_factory, "qwen2.5:14b", "qwen2.5vl:7b")
+    routes = {**good_routes(), "designer": route("sem-preco", TEXT)}
+    with pytest.raises(StartupError, match="'designer' .*sem-preco.* nao tem preco"):
+        check_content_routes(settings_with(routes), PriceBook(session_factory))
+    routes = {**good_routes(), "designer": route("qwen2.5:14b", ["text"])}
+    with pytest.raises(StartupError, match="'designer' precisa das capacidades"):
+        check_content_routes(settings_with(routes), PriceBook(session_factory))
+
+
+def image_settings(tmp_path: Path, **extra: object) -> Settings:
+    key = tmp_path / "images.key"
+    key.write_text("chave-de-imagens")
+    image_route = route("gpt-image-1", ["image_output"])
+    return settings_with(
+        {**good_routes(), "designer_imagem": image_route},
+        openai_images_api_key_file=key, **extra,
+    )  # fmt: skip
+
+
+def seed_image_price(factory: Factory, *qualities: str) -> None:
+    per_image = tuple(ImagePrice(q, SIZE, Decimal("0.04")) for q in qualities)
+    sync_model_prices(
+        factory,
+        [
+            ModelPrice(
+                "openai", "gpt-image-1", "v1", FREE, valid_from=VALID_FROM, per_image=per_image
+            )
+        ],
+    )
+
+
+def test_image_route_with_key_and_per_image_price_passes(
+    session_factory: Factory, tmp_path: Path
+) -> None:
+    seed_text_prices(session_factory, "qwen2.5:14b", "qwen2.5vl:7b")
+    seed_image_price(session_factory, "medium")
+    check_content_routes(image_settings(tmp_path), PriceBook(session_factory))
+
+
+def test_image_route_without_key_file_is_refused(session_factory: Factory) -> None:
+    seed_text_prices(session_factory, "qwen2.5:14b", "qwen2.5vl:7b")
+    image_route = route("gpt-image-1", ["image_output"])
+    settings = settings_with({**good_routes(), "designer_imagem": image_route})
+    with pytest.raises(StartupError, match="OPENAI_IMAGES_API_KEY_FILE"):
+        check_content_routes(settings, PriceBook(session_factory))
+
+
+def test_image_route_without_price_for_the_configured_quality_is_refused(
+    session_factory: Factory, tmp_path: Path
+) -> None:
+    seed_text_prices(session_factory, "qwen2.5:14b", "qwen2.5vl:7b")
+    seed_image_price(session_factory, "low")  # a qualidade configurada e `medium`
+    with pytest.raises(StartupError) as caught:
+        check_content_routes(image_settings(tmp_path), PriceBook(session_factory))
+    assert str(caught.value) == (
+        "ROLE_ROUTES: a rota 'designer_imagem' (openai/gpt-image-1) nao tem preco por imagem "
+        "para quality=medium, size=1024x1536; correr 'marketing-agent sync-prices'"
+    )
+
+
+def test_image_route_without_any_price_is_refused(session_factory: Factory, tmp_path: Path) -> None:
+    seed_text_prices(session_factory, "qwen2.5:14b", "qwen2.5vl:7b")
+    with pytest.raises(StartupError, match="'designer_imagem' .* nao tem preco"):
+        check_content_routes(image_settings(tmp_path), PriceBook(session_factory))

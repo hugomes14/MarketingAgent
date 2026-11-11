@@ -235,6 +235,11 @@ def test_generated_component_may_have_a_distinct_asset_id() -> None:
     assert component.asset_id == "ast-new"
 
 
+def test_text_component_has_no_asset_id() -> None:
+    with pytest.raises(ValidationError):
+        Componente(tipo="texto", ref=None, asset_id="ast-1")
+
+
 @pytest.mark.parametrize("tipo", ["fotografia", "logotipo", "upload", "texto"])
 def test_component_model_is_only_for_generated(tipo: str) -> None:
     ref = None if tipo == "texto" else "ast-1"

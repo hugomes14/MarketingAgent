@@ -51,6 +51,11 @@ REVIEW_AI_BACKGROUND_NOTE: Final = (
     " A imagem tem um fundo gerado por IA: verifica com prioridade `pessoa_ou_produto_gerado` "
     "e `imagem_inadequada`."
 )
+# Acrescenta-se so quando NAO ha fundo gerado: sem componente `gerada`, `pessoa_ou_produto_gerado`
+# nao se aplica (pessoas e produtos de fotografias reais da marca sao legitimos).
+REVIEW_NO_GENERATED_NOTE: Final = (
+    " A imagem nao tem nenhum componente gerado por IA: `pessoa_ou_produto_gerado` nao se aplica."
+)
 JPEG_MAGIC: Final = b"\xff\xd8\xff"
 NOT_JPEG_MESSAGE: Final = "a imagem do revisor tem de ser JPEG (bytes nao reconhecidos)"
 
@@ -209,7 +214,8 @@ class CopywriterLoop:
 
 
 def _image_instruction(image: ReviewImage) -> str:
-    return REVIEW_IMAGE_RULES + (REVIEW_AI_BACKGROUND_NOTE if image.is_ai_generated else "")
+    note = REVIEW_AI_BACKGROUND_NOTE if image.is_ai_generated else REVIEW_NO_GENERATED_NOTE
+    return REVIEW_IMAGE_RULES + note
 
 
 def _provenance_block(image: ReviewImage) -> str:
