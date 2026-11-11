@@ -33,7 +33,7 @@ def test_defaults_use_the_test_server_and_local_models() -> None:
     args = smoke.parse_args([])
     assert args.database_url is None
     assert make_url(args.server_url).port == 5433
-    assert (args.model, args.reviewer_model, args.posts) == ("qwen2.5:14b", "llama3.1:8b", 3)
+    assert (args.model, args.reviewer_model, args.posts) == ("qwen2.5:14b", "qwen2.5vl:7b", 3)
     assert args.ollama_url == "http://127.0.0.1:11434"
 
 
@@ -142,7 +142,7 @@ def test_throwaway_database_is_created_and_dropped(pg_url: str) -> None:
 
 def test_missing_models_is_exact_and_sorted() -> None:
     available = {"qwen2.5:14b", "nomic-embed-text:latest"}
-    assert smoke.missing_models(available, {"qwen2.5:14b", "llama3.1:8b"}) == ["llama3.1:8b"]
+    assert smoke.missing_models(available, {"qwen2.5:14b", "qwen2.5vl:7b"}) == ["qwen2.5vl:7b"]
     assert smoke.missing_models(available, {"qwen2.5"}) == [
         "qwen2.5"
     ]  # sem correspondencia parcial
@@ -175,13 +175,13 @@ def test_main_exits_3_when_a_model_is_missing_and_never_pulls(
     monkeypatch.setattr(smoke, "run_smoke", lambda *a: pytest.fail("nao deve correr"))
     assert smoke.main([]) == smoke.EXIT_OLLAMA
     err = capsys.readouterr().err
-    assert "llama3.1:8b" in err and "nunca descarrega" in err and "qwen2.5:14b," not in err
+    assert "qwen2.5vl:7b" in err and "nunca descarrega" in err and "qwen2.5:14b," not in err
 
 
 def test_local_prices_cover_both_models_at_zero_and_add_unknown_ones() -> None:
-    prices = smoke.local_prices({"qwen2.5:14b", "llama3.1:8b", "modelo-novo:7b"})
+    prices = smoke.local_prices({"qwen2.5:14b", "qwen2.5vl:7b", "modelo-novo:7b"})
     by_model = {price.model_id: price for price in prices}
-    assert {"qwen2.5:14b", "llama3.1:8b", "modelo-novo:7b"} <= set(by_model)
+    assert {"qwen2.5:14b", "qwen2.5vl:7b", "modelo-novo:7b"} <= set(by_model)
     for price in by_model.values():
         assert all(
             tier.input_per_million == 0 and tier.output_per_million == 0 for tier in price.tiers

@@ -1,6 +1,7 @@
 """Testes do AgentEngine: reserva por chamada, limites, erros classificados e fecho da execucao."""
 
 import itertools
+import re
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -24,6 +25,7 @@ from marketing_agent.clock import FixedClock
 from marketing_agent.config import Capability, RoleRoute
 from marketing_agent.db.models import AgentRun, AgentStep, CostEntry, CostReservation
 from marketing_agent.harness.engine import (
+    IMAGE_INPUT_TOKENS_ESTIMATE,
     MAX_ERROR_SUMMARY_CHARS,
     AgentEngine,
     Loop,
@@ -37,6 +39,7 @@ from marketing_agent.harness.validators import VALIDATORS
 from marketing_agent.llm.fake import FakeLlmClient
 from marketing_agent.llm.router import LlmRouter
 from marketing_agent.llm.types import (
+    ImagePart,
     LlmNetworkError,
     LlmRequest,
     LlmResponse,
@@ -651,3 +654,41 @@ def test_secondary_failure_in_mark_unknown_keeps_original_error(
     result = rig.run(OneCallLoop())
     assert result.message == "RuntimeError: original"
     assert rig.step_errors() == ["unknown_outcome"]
+
+
+class ImageMessageLoop:
+    """Uma chamada cuja mensagem leva o texto e, opcionalmente, bytes de imagem."""
+
+    def __init__(self, images: list[bytes]) -> None:
+        self._images = images
+
+    def run(self, ctx: RunContext, payload: str) -> Out:
+        parts: list[TextPart | ImagePart] = [TextPart(payload)]
+        parts += [ImagePart("image/jpeg", data) for data in self._images]
+        return ctx.call_llm("sistema", [Message("user", list(parts))], Out)
+
+
+def estimated_tokens(rig: Rig, run_id: str) -> int:
+    [step] = [step for step in rig.steps() if step.run_id == run_id]
+    match = re.search(r"~(\d+) tokens", step.input_summary or "")
+    assert match is not None
+    return int(match.group(1))
+
+
+def test_image_counts_in_input_estimate(make_rig: RigFactory) -> None:
+    assert IMAGE_INPUT_TOKENS_ESTIMATE == 2000
+    rig = make_rig([response(), response(), response()])
+    text_only = rig.run(ImageMessageLoop([]))
+    # Bytes enormes nao entram na conta de caracteres: so o custo fixo por imagem.
+    one = rig.run(ImageMessageLoop([b"\xff\xd8\xff" + b"0" * 900_000]))
+    two = rig.run(ImageMessageLoop([b"\xff\xd8\xff", b"\xff\xd8\xff"]))
+    base = estimated_tokens(rig, text_only.run_id)
+    assert estimated_tokens(rig, one.run_id) == base + IMAGE_INPUT_TOKENS_ESTIMATE
+    assert estimated_tokens(rig, two.run_id) == base + 2 * IMAGE_INPUT_TOKENS_ESTIMATE
+
+
+def test_text_only_estimate_is_unchanged(make_rig: RigFactory) -> None:
+    rig = make_rig([response()])
+    result = rig.run(OneCallLoop())
+    chars = len("sistema") + len("pedido")
+    assert estimated_tokens(rig, result.run_id) == -(-chars // 3)

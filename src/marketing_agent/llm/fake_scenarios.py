@@ -254,12 +254,23 @@ def visual_draft(**campos: str | None) -> Script:
     return [_json_response({**_VISUAL_DEFAULTS, **campos})]
 
 
-def review(veredicto: str, violacoes: Sequence[str] = (), notas: str = "") -> Script:
-    """Parecer do Revisor com o veredicto e as violacoes dados (strings do enum `Violacao`)."""
+def review(
+    veredicto: str,
+    violacoes: Sequence[str] = (),
+    notas: str = "",
+    *,
+    imagem_verificada: bool = False,
+) -> Script:
+    """Parecer do Revisor com o veredicto e as violacoes dados (strings do enum `Violacao`).
+
+    `imagem_verificada` e falso por omissao (parecer de um pacote so de texto); os cenarios de
+    pacotes com imagem passam `imagem_verificada=True`.
+    """
     body: dict[str, object] = {
         "veredicto": veredicto,
         "violacoes": list(violacoes),
         "notas": notas or f"Parecer automatico: {veredicto}.",
+        "imagem_verificada": imagem_verificada,
     }
     return [_json_response(body)]
 

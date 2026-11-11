@@ -19,6 +19,7 @@ NEW_TAGS = (
     "texto_post",
     "kit_marca",
     "fotos_biblioteca",
+    "proveniencia_imagem",
 )
 
 

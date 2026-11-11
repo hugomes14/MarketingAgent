@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
+from llm_capabilities import VISION_CAPABILITIES
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -72,7 +73,7 @@ class HookedLlm(FakeLlmClient):
     """Cliente falso que executa um gancho antes de servir o pedido de numero N (1-based)."""
 
     def __init__(self, responses: Sequence[LlmResponse | Exception]) -> None:
-        super().__init__(responses)
+        super().__init__(responses, VISION_CAPABILITIES)
         self.hooks: dict[int, Callable[[], None]] = {}
 
     def complete(self, request: LlmRequest) -> LlmResponse:
@@ -236,9 +237,7 @@ def build_rig(
         session_factory, [ModelPrice("fake", "fake-1", "v1", (free,), valid_from=VALID_FROM)]
     )
     llm = HookedLlm(unique(script))
-    route = RoleRoute(
-        provider="fake", model_id="fake-1", capabilities=frozenset({"text", "json_schema"})
-    )
+    route = RoleRoute(provider="fake", model_id="fake-1", capabilities=VISION_CAPABILITIES)
     budget = BudgetController(
         session_factory, PriceBook(session_factory), clock, Decimal(20), (50, 80, 100)
     )

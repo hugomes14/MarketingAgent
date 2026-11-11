@@ -53,7 +53,7 @@ from marketing_agent.budget.pricing import ModelPrice, PriceTier, load_model_pri
 from marketing_agent.budget.pricing import sync_model_prices as store_model_prices
 from marketing_agent.cli import build_worker
 from marketing_agent.clock import SystemClock
-from marketing_agent.config import RoleRoute, Settings
+from marketing_agent.config import Capability, RoleRoute, Settings
 from marketing_agent.db.models import AgentRun, AgentStep, Brand, CostEntry, Post, PostRevision
 from marketing_agent.harness.engine import AgentEngine, RunResult, RunStatus
 from marketing_agent.interview.service import InterviewService
@@ -193,7 +193,9 @@ def parse_args(argv: Sequence[str] | None = None) -> SmokeArgs:
         help="modelo do Diretor e do Copywriter (por omissao a variavel MODEL ou qwen2.5:14b)",
     )
     parser.add_argument(
-        "--reviewer-model", default="llama3.1:8b", help="modelo do Revisor (distinto do Copywriter)"
+        "--reviewer-model",
+        default="qwen2.5vl:7b",
+        help="modelo do Revisor, com visao (distinto do Copywriter)",
     )
     parser.add_argument("--posts", type=int, default=3, help="publicacoes do plano (1 a 14)")
     parsed = parser.parse_args(argv)
@@ -365,10 +367,11 @@ def timed(report: SmokeReport, name: str) -> Iterator[Note]:
 def build_settings(args: SmokeArgs, database_url: str, key_file: Path) -> Settings:
     """Definicoes do teste: tres papeis no Ollama, sem ler o `.env` do desenvolvimento."""
 
-    def route(model: str) -> RoleRoute:
-        return RoleRoute(
-            provider="openai", model_id=model, capabilities=frozenset({"text", "json_schema"})
-        )
+    def route(model: str, *, has_vision: bool = False) -> RoleRoute:
+        capabilities: set[Capability] = {"text", "json_schema"}
+        if has_vision:
+            capabilities.add("image_input")  # o spec do Revisor exige-o, mesmo sem imagem
+        return RoleRoute(provider="openai", model_id=model, capabilities=frozenset(capabilities))
 
     return Settings(
         _env_file=None,
@@ -378,7 +381,7 @@ def build_settings(args: SmokeArgs, database_url: str, key_file: Path) -> Settin
         role_routes={
             "diretor": route(args.model),
             "copywriter": route(args.model),
-            "revisor": route(args.reviewer_model),
+            "revisor": route(args.reviewer_model, has_vision=True),
         },
         plan_max_posts_per_week=args.posts,
         plan_max_posts_per_day=1,

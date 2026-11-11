@@ -44,6 +44,7 @@ from marketing_agent.images.generation import ImageQuality, ImageSize
 from marketing_agent.images.prompts import PromptFixo
 from marketing_agent.llm.router import LlmRouter, MissingCapability, RouteNotConfigured
 from marketing_agent.llm.types import (
+    ImagePart,
     LlmClient,
     LlmNetworkError,
     LlmRequest,
@@ -60,6 +61,10 @@ MAX_INVALID_ATTEMPTS = 3  # 1 tentativa + 2 repeticoes
 NETWORK_BACKOFF_S = (1.0, 2.0)  # uma repeticao por espera
 MAX_ERROR_SUMMARY_CHARS = 500
 CHARS_PER_TOKEN = 3  # estimativa conservadora de tokens de entrada
+# Custo fixo por imagem na entrada: os bytes nao contam como caracteres (um JPEG de centenas de
+# KB daria centenas de milhares de tokens) e os modelos de visao cobram por mosaicos, nao por
+# bytes. Um 1080x1350 custa ~1000-1500 tokens; 2000 e um teto prudente para a reserva.
+IMAGE_INPUT_TOKENS_ESTIMATE = 2000
 
 # Validador de contexto passado por quem chama: saida tipada -> violacoes (vazio = ok).
 type ExtraValidator[M: BaseModel] = Callable[[M], list[str]]
@@ -130,11 +135,16 @@ class _Verdict[M: BaseModel]:
 
 
 def _estimate_input_tokens(system: str, messages: list[Message]) -> int:
-    """Teto grosseiro: caracteres de `system` e de todas as partes de texto, por 3 por token."""
+    """Teto grosseiro: caracteres do texto por 3 por token, mais um custo fixo por imagem."""
     chars = len(system)
+    images = 0
     for message in messages:
-        chars += sum(len(part.text) for part in message.content if isinstance(part, TextPart))
-    return -(-chars // CHARS_PER_TOKEN)  # divisao com arredondamento para cima
+        for part in message.content:
+            if isinstance(part, TextPart):
+                chars += len(part.text)
+            elif isinstance(part, ImagePart):
+                images += 1
+    return -(-chars // CHARS_PER_TOKEN) + images * IMAGE_INPUT_TOKENS_ESTIMATE
 
 
 def _summarize_validation(exc: ValidationError) -> str:

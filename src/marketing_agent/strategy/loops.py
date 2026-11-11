@@ -34,6 +34,7 @@ DATA_TAGS: Final = (
     "texto_post",
     "kit_marca",
     "fotos_biblioteca",
+    "proveniencia_imagem",
 )
 
 # Tolera espacos e as quebras de linha ja escapadas pelo JSON (`\n` literal). Depois do nome

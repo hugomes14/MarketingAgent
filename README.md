@@ -19,7 +19,7 @@ nunca em logs, mensagens de erro ou no `.env`.
 - Python 3.12 e [uv](https://docs.astral.sh/uv/).
 - Docker (ou um Postgres 17 próprio) para a base de dados.
 - Para correr com modelos locais: [Ollama](https://ollama.com) com `qwen2.5:14b` (Diretor e
-  Copywriter) e `llama3.1:8b` (Revisor, modelo distinto de propósito). Para usar modelos na
+  Copywriter) e `qwen2.5vl:7b` (Revisor com visão, modelo distinto de propósito). Para usar modelos na
   nuvem: ficheiros com chaves da Anthropic e/ou da OpenAI.
 
 ## Estrutura do repositório
@@ -72,7 +72,7 @@ Tudo corre em `127.0.0.1`. Execute a partir da raiz do repositório.
    ```
 
 4. **Ollama**: confirme que está a servir em `http://127.0.0.1:11434` e que os dois modelos
-   existem (`ollama pull qwen2.5:14b` e `ollama pull llama3.1:8b`). O `.env.local.example` liga
+   existem (`ollama pull qwen2.5:14b` e `ollama pull qwen2.5vl:7b`). O `.env.local.example` liga
    `diretor` e `copywriter` ao primeiro e `revisor` ao segundo.
 
    **Contexto do Ollama**: o contexto por omissão é de 4096 tokens e o Ollama **trunca em
@@ -244,7 +244,8 @@ Copie `.env.example` (ou `.env.local.example`) para `.env`. O `.env` contém ape
 arranque falhar, sem repetir o valor. `DATABASE_URL` é obrigatório e não tem valor por omissão.
 Campos compostos (`ROLE_ROUTES`, `BUDGET_WARN_PERCENTS`, `PANEL_*`) são JSON. `ROLE_ROUTES`
 tem uma rota por papel: `diretor` (painel), e `copywriter` e `revisor` (worker). O Revisor deve
-usar um modelo diferente do Copywriter. `PLAN_MAX_POSTS_PER_WEEK` (5) e `PLAN_MAX_POSTS_PER_DAY`
+usar um modelo diferente do Copywriter e a rota `revisor` tem de declarar `image_input` (o papel
+exige-o mesmo nas publicações só de texto; sem ele a execução falha com `MissingCapability`). `PLAN_MAX_POSTS_PER_WEEK` (5) e `PLAN_MAX_POSTS_PER_DAY`
 (1) limitam o plano do Diretor. As chaves de API e
 o segredo CSRF vão em ficheiros apontados por `ANTHROPIC_API_KEY_FILE`, `OPENAI_API_KEY_FILE` e
 `PANEL_CSRF_SECRET_FILE` (o segredo CSRF exige pelo menos 32 caracteres). A rota `fake` só existe

@@ -206,7 +206,8 @@ def test_role_specs_load_with_ruled_values(
     spec: AgentSpec = load_agent_spec(directory / "spec.yaml", {schema.__name__: schema})
     assert spec.loop_type is LoopType.STRUCTURED and spec.writes == []
     assert spec.reads == reads and spec.validators == []
-    assert spec.required_capabilities == frozenset({"text", "json_schema"})
+    expected = {"text", "json_schema"} | ({"image_input"} if directory == REVISOR_DIR else set())
+    assert spec.required_capabilities == frozenset(expected)
     assert (spec.limits.max_steps, spec.limits.max_tokens) == (4, 40000)
     assert spec.limits.max_cost_usd == Decimal("0.30") and spec.limits.max_duration_s == 180
     assert spec.max_output_tokens == 1500 and spec.budget_share_hint == Decimal("0.20")

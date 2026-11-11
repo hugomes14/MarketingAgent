@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from llm_capabilities import VISION_CAPABILITIES
 from panel_rig import (
     PEER,
     SECRET,
@@ -48,10 +49,8 @@ def make_panel(
     def make(script: Script, *, peer: str = PEER) -> PanelRig:
         settings = build_settings(media_dir=tmp_path / "media")
         media = build_media_services(settings, session_factory, clock)
-        llm = FakeLlmClient(scripted(script))
-        route = RoleRoute(
-            provider="fake", model_id="fake-1", capabilities=frozenset({"text", "json_schema"})
-        )
+        llm = FakeLlmClient(scripted(script), VISION_CAPABILITIES)
+        route = RoleRoute(provider="fake", model_id="fake-1", capabilities=VISION_CAPABILITIES)
         budget = BudgetController(
             session_factory, PriceBook(session_factory), clock, Decimal(20), (50, 80, 100)
         )
