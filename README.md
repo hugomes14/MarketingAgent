@@ -250,6 +250,15 @@ o segredo CSRF vão em ficheiros apontados por `ANTHROPIC_API_KEY_FILE`, `OPENAI
 `PANEL_CSRF_SECRET_FILE` (o segredo CSRF exige pelo menos 32 caracteres). A rota `fake` só existe
 nos testes e o `serve` recusa-a.
 
+**Imagens.** Sem rota `designer_imagem` em `ROLE_ROUTES` o motor usa o gerador falso (custo 0).
+Com a rota (só `openai`, capacidade `image_output`) a chave vem de `OPENAI_IMAGES_API_KEY_FILE`
+(nunca a do texto) e o cliente fala sempre com `https://api.openai.com/v1`, sem repetições
+automáticas. `base_url` e `api_key` são explícitos, mas o cliente continua a herdar do ambiente do
+operador `OPENAI_ORG_ID`, `OPENAI_PROJECT_ID`, `OPENAI_CUSTOM_HEADERS` e `HTTPS_PROXY`. Não há
+limite de tamanho da resposta para além do teto de 20 MB da imagem descodificada (o SDK lê o corpo
+inteiro) e os 180 s de timeout valem por fase (ligação, escrita, leitura), não pela chamada toda.
+`IMAGE_QUALITY` (`low`, `medium`, `high`) escolhe a qualidade pedida.
+
 ## Testes e validação
 
 Postgres de teste (porta 5433, base `marketing_agent_test`, dados efémeros):

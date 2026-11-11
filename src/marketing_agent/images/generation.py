@@ -51,6 +51,21 @@ class ImageResponseInvalid(Exception):
     """
 
 
+class ImageProviderError(Exception):
+    """O fornecedor rejeitou o pedido com um erro que nao e recusa nem falha de transporte.
+
+    Cobre os 4xx sem classificacao (400 que nao e moderacao, 401, 403, 404, 422...) e qualquer
+    outro erro da API. Leva SO `status_code` (None se nao houve resposta HTTP) e uma mensagem
+    fixa com o nome da classe do erro do SDK: o SDK guarda a chave no cabecalho do pedido e o
+    fornecedor repete-a por vezes na mensagem, por isso nada disso e retido. O chamador (Tarefa 10)
+    trata-a como resultado desconhecido (`mark_unknown`) e pede intervencao humana.
+    """
+
+    def __init__(self, message: str, status_code: int | None = None) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+
+
 class ImageGenerator(Protocol):
     """Gerador de imagens de um fornecedor."""
 
@@ -64,6 +79,7 @@ class ImageGenerator(Protocol):
             LlmUnknownOutcome: o pedido pode ter sido processado e faturado.
             ImageRefused: recusa de conteudo sem faturacao.
             ImageResponseInvalid: resposta sem PNG utilizavel (pode ter sido faturada).
+            ImageProviderError: outro erro da API (4xx nao classificado); tratar como desconhecido.
         """
         ...
 

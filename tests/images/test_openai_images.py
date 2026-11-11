@@ -14,6 +14,7 @@ import pytest
 
 from marketing_agent.images.generation import (
     MAX_IMAGE_BYTES,
+    ImageProviderError,
     ImageRefused,
     ImageRequest,
     ImageResponseInvalid,
@@ -210,14 +211,26 @@ def test_moderation_blocked_is_refused(tmp_path: Path) -> None:
         (openai.UnprocessableEntityError, 422, None),
     ],
 )
-def test_other_4xx_propagate_unchanged(
+def test_other_4xx_become_provider_error_without_sdk_text(
     tmp_path: Path, cls: type[openai.APIStatusError], status: int, body: object
 ) -> None:
-    error = _status_error(cls, status, body)
-    generator, _ = _generator(tmp_path, error)
-    with pytest.raises(cls) as info:
+    generator, _ = _generator(tmp_path, _status_error(cls, status, body))
+    with pytest.raises(ImageProviderError) as info:
         generator.generate(_request())
-    assert info.value is error
+    assert info.value.status_code == status
+    assert str(info.value).endswith(cls.__name__)
+    assert "texto-do-sdk" not in str(info.value)
+    assert (info.value.__cause__, info.value.__context__) == (None, None)
+    assert not isinstance(info.value, (LlmNetworkError, LlmUnknownOutcome, ImageRefused))
+
+
+def test_non_status_sdk_error_becomes_provider_error_without_status(tmp_path: Path) -> None:
+    error = openai.APIError("texto-do-sdk", _httpx_request(), body=None)
+    generator, _ = _generator(tmp_path, error)
+    with pytest.raises(ImageProviderError) as info:
+        generator.generate(_request())
+    assert info.value.status_code is None
+    assert (info.value.__cause__, info.value.__context__) == (None, None)
 
 
 def test_unrelated_exception_propagates_unchanged(tmp_path: Path) -> None:
@@ -291,27 +304,69 @@ def test_invalid_response_is_not_a_transport_error() -> None:
     assert not issubclass(ImageRefused, (LlmNetworkError, LlmUnknownOutcome))
 
 
-def _all_failures() -> list[object]:
+def _leaky_request() -> httpx2.Request:
+    # Como o SDK real: o pedido leva a chave em `Authorization`.
+    return httpx2.Request(
+        "POST",
+        "https://api.openai.com/v1/images/generations",
+        headers={"authorization": f"Bearer {_SEGREDO}"},
+    )
+
+
+def _leaky_status_error(
+    cls: type[openai.APIStatusError], status: int, body: object = None
+) -> openai.APIStatusError:
+    response = httpx2.Response(status, request=_leaky_request())
+    return cls(f"Incorrect API key provided: {_SEGREDO}", response=response, body=body)
+
+
+def _leaky_connection_error(cause: Exception) -> openai.APIConnectionError:
+    error = openai.APIConnectionError(message=f"falha com {_SEGREDO}", request=_leaky_request())
+    error.__cause__ = cause
+    return error
+
+
+def _leaky_timeout_error(cause: Exception) -> openai.APITimeoutError:
+    error = openai.APITimeoutError(request=_leaky_request())
+    error.__cause__ = cause
+    return error
+
+
+def _leaky_failures() -> list[Exception]:
     return [
-        _connection_error(httpx2.ConnectError("x")),
-        _timeout_error(httpx2.ReadTimeout("x")),
-        _status_error(openai.BadRequestError, 400, {"code": "moderation_blocked"}),
-        _FakeRaw(_body(None), {}),
-        _FakeRaw(_body("nao-e-base64!"), {}),
-        _ok(b"\xff\xd8not-a-png"),
+        _leaky_status_error(openai.AuthenticationError, 401),
+        _leaky_status_error(openai.BadRequestError, 400, {"code": "invalid_value"}),
+        _leaky_status_error(openai.BadRequestError, 400, {"code": "moderation_blocked"}),
+        _leaky_status_error(openai.RateLimitError, 429),
+        _leaky_status_error(openai.InternalServerError, 500),
+        _leaky_connection_error(httpx2.ConnectError(f"recusada {_SEGREDO}")),
+        _leaky_timeout_error(httpx2.ReadTimeout(f"sem resposta {_SEGREDO}")),
+        openai.APIError(f"erro {_SEGREDO}", _leaky_request(), body={"message": _SEGREDO}),
     ]
 
 
 def test_key_never_in_errors(tmp_path: Path) -> None:
-    for outcome in _all_failures():
-        generator, _ = _generator(tmp_path, outcome)  # type: ignore[arg-type]
+    for failure in _leaky_failures():
+        generator, _ = _generator(tmp_path, failure)
         with pytest.raises(Exception) as info:
             generator.generate(_request())
-        # Cadeia completa (causa incluida), repr da excecao e do gerador: a chave nunca aparece.
-        rendered = "".join(traceback.format_exception(info.value))
-        for text in (rendered, str(info.value), repr(info.value), repr(generator)):
-            assert _SEGREDO not in text
+        exc = info.value
+        # O SDK leva a chave (cabecalho do pedido, mensagem, corpo): nenhuma excecao nossa o
+        # retem, nem como causa nem como contexto.
+        assert (exc.__cause__, exc.__context__) == (None, None), type(failure).__name__
+        rendered = "".join(traceback.format_exception(exc))
+        for text in (str(exc), repr(exc), rendered):
+            assert _SEGREDO not in text, type(failure).__name__
+        assert _SEGREDO not in repr(generator)
         assert _SEGREDO not in repr(vars(generator))
+
+
+def test_invalid_response_errors_keep_no_sdk_exception(tmp_path: Path) -> None:
+    generator, _ = _generator(tmp_path, _FakeRaw(ValueError(f"json com {_SEGREDO}"), {}))
+    with pytest.raises(ImageResponseInvalid) as info:
+        generator.generate(_request())
+    assert (info.value.__cause__, info.value.__context__) == (None, None)
+    assert _SEGREDO not in "".join(traceback.format_exception(info.value))
 
 
 def test_our_error_messages_never_carry_sdk_text(tmp_path: Path) -> None:

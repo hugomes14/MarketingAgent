@@ -39,19 +39,29 @@ _FRAME: Final = (
 )
 
 # Caracteres removidos do tema: delimitadores do enquadramento (aspas retas e tipograficas,
-# imitaveis a olho), marcacao HTML/JSON/Markdown e o acento grave.
-_STRIPPED_CHARS: Final = frozenset('<>{}[]"`“”„‟‘’‚‛«»‹›＂')
+# imitaveis a olho), marcacao HTML/JSON/Markdown, o acento grave e a barra invertida (`azul\`
+# escaparia a aspa de fecho do enquadramento).
+_STRIPPED_CHARS: Final = frozenset('<>{}[]"`\\“”„‟‘’‚‛«»‹›＂')
 # Categorias Unicode removidas: controlo (Cc), formato (Cf: largura zero, bidi, etiquetas) e
 # substitutos soltos (Cs), que nem sequer se codificam em UTF-8.
 _DROPPED_CATEGORIES: Final = frozenset({"Cc", "Cf", "Cs"})
 
+# Lista fixa de TLDs (nao `\w+\.\w{2,}`, que recusaria "verao 2.0" ou "azul.Escuro"): os pedidos
+# comuns em Portugal e os encurtadores/dominios baratos mais usados em burlas e anuncios.
+_TLDS: Final = (
+    "com|pt|net|org|io|eu|co|ly|xyz|me|info|app|dev|ai|tv|to|cc|biz|us|uk|es|fr|de|br|link|site"
+    "|online|store|shop|top|live|cloud|page|ru|cn|in"
+)
 _LINK_PATTERNS: Final = (
     re.compile(r"https?://", re.IGNORECASE),
     re.compile(r"www\.", re.IGNORECASE),
-    re.compile(r"\w+\.(?:com|pt|net|org|io|eu)\b", re.IGNORECASE),
+    re.compile(rf"\w+\.(?:{_TLDS})\b", re.IGNORECASE),
     # Reforco alem do pedido: qualquer esquema (ftp://), URL relativa a protocolo (//host) e
     # e-mails (@) nao sao atmosfera nem cores, e nao ha TLD a listar.
     re.compile(r"://|//|@"),
+    # Encurtadores com TLD fora da lista (encurta.zz/abc) e enderecos IPv4.
+    re.compile(r"\w\.\w{2,}/"),
+    re.compile(r"\b\d{1,3}(?:\.\d{1,3}){3}\b"),
 )
 _WHITESPACE: Final = re.compile(r"\s+")
 
@@ -86,10 +96,16 @@ def neutralize_theme(text: str) -> str:
     if len(text) > _MAX_RAW_THEME_CHARS:
         raise InvalidTheme(_INVALID_THEME_MESSAGE + ": demasiado longo")
     spaced = "".join(" " if char.isspace() else char for char in unicodedata.normalize("NFC", text))
-    kept = "".join(
-        char
-        for char in spaced
-        if unicodedata.category(char) not in _DROPPED_CATEGORIES and char not in _STRIPPED_CHARS
+    # NFC outra vez: remover um caracter invisivel pode juntar uma letra ao acento seguinte.
+    # Assim o resultado e estavel (neutralizar de novo da o mesmo texto), o que `PromptFixo`
+    # exige para aceitar o tema.
+    kept = unicodedata.normalize(
+        "NFC",
+        "".join(
+            char
+            for char in spaced
+            if unicodedata.category(char) not in _DROPPED_CATEGORIES and char not in _STRIPPED_CHARS
+        ),
     )
     # Estas verificacoes correm sobre o texto final: remover caracteres so pode juntar pedacos
     # (pad<>aria.pt), nunca desfazer uma ligacao.
@@ -107,14 +123,37 @@ def neutralize_theme(text: str) -> str:
 # texto arbitrario por engano; nao e uma barreira contra codigo malicioso no mesmo processo.
 _ISSUER: Final = object()
 
+# Forma exata de um prompt valido: o enquadramento, uma das descricoes e um tema entre aspas sem
+# quebras de linha nem aspas. `dataclasses.replace` copia a credencial, por isso o texto e
+# verificado contra o enquadramento (e o tema contra `neutralize_theme`) em cada construcao.
+_PROMPT_SHAPE: Final = re.compile(
+    re.escape(_FRAME)
+    .replace(
+        re.escape("{estilo}"),
+        "(?:" + "|".join(re.escape(d) for d in STYLE_DESCRIPTIONS.values()) + ")",
+    )
+    .replace(re.escape("{tema}"), r"(?P<tema>[^\n\"]+)")
+)
+
+
+def _is_issued_text(text: str, digest: str) -> bool:
+    shape = _PROMPT_SHAPE.fullmatch(text)
+    if shape is None or digest != hashlib.sha256(text.encode("utf-8")).hexdigest():
+        return False
+    try:
+        return neutralize_theme(shape["tema"]) == shape["tema"]
+    except InvalidTheme:
+        return False
+
 
 @dataclass(frozen=True)
 class PromptFixo:
     """Prompt final de geracao; so `build_background_prompt` o constroi.
 
     `sha256` e o SHA-256 (hexadecimal) do `text` exato em UTF-8: identifica o fundo para
-    reutilizacao e para a proveniencia. O construtor recusa texto que nao venha de
-    `build_background_prompt`.
+    reutilizacao e para a proveniencia. O construtor recusa (`TypeError`) texto que nao venha de
+    `build_background_prompt`, tambem via `dataclasses.replace`: o texto tem de ter o
+    enquadramento fixo, um tema ja neutralizado e o `sha256` correto.
     """
 
     text: str
@@ -122,7 +161,7 @@ class PromptFixo:
     _issued_by: object = field(default=None, repr=False, compare=False, kw_only=True)
 
     def __post_init__(self) -> None:
-        if self._issued_by is not _ISSUER:
+        if self._issued_by is not _ISSUER or not _is_issued_text(self.text, self.sha256):
             raise TypeError("PromptFixo so pode ser construido por build_background_prompt")
 
 
