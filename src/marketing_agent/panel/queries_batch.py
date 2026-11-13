@@ -26,7 +26,7 @@ from marketing_agent.db.models import (
     Post,
     PostRevision,
 )
-from marketing_agent.jobs.queue import GENERATE_POST_JOB
+from marketing_agent.jobs.queue import POST_JOB_TYPES
 from marketing_agent.kb.service import KbEntry
 from marketing_agent.panel.queries_content import IN_REVIEW, kb_titles
 
@@ -272,7 +272,7 @@ def _decisions(
 def _posts_with_active_job(session: Session, post_ids: Collection[str]) -> set[str]:
     post_id = Job.payload["post_id"].astext
     statement = select(post_id).where(
-        Job.type.in_((GENERATE_POST_JOB, "review_post")),
+        Job.type.in_(POST_JOB_TYPES),
         Job.status.in_(ACTIVE_JOB_STATUSES),
         post_id.in_(list(post_ids)),
     )

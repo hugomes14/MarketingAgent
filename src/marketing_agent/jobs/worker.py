@@ -11,7 +11,13 @@ from typing import Protocol
 
 from marketing_agent.content.pipeline import GenerationOutcome
 from marketing_agent.jobs.errors import describe_error
-from marketing_agent.jobs.queue import ClaimedJob, JobFailure, JobQueue
+from marketing_agent.jobs.queue import (
+    GENERATE_POST_JOB,
+    REVIEW_POST_JOB,
+    ClaimedJob,
+    JobFailure,
+    JobQueue,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -62,9 +68,9 @@ class Worker:
         if job is None:
             return False
         try:
-            if job.type == "generate_post":
+            if job.type == GENERATE_POST_JOB:
                 outcome = self._pipeline.generate(job)
-            elif job.type == "review_post":
+            elif job.type == REVIEW_POST_JOB:
                 outcome = self._pipeline.review_manual(job)
             else:
                 self._pipeline.fail_job(job, "UnknownJobType", retry=False)

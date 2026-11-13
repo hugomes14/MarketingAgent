@@ -185,6 +185,8 @@ def test_real_app_exposes_no_hidden_route(make_panel: MakePanel) -> None:
         "/post/{post_id}/alteracoes",
         "/post/{post_id}/rejeitar",
         "/post/{post_id}/gerar",
+        "/post/{post_id}/trocar-foto",
+        "/post/{post_id}/imagem",
         "/feedback",
         "/feedback/{example_id}/desativar",
         "/biblioteca",

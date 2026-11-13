@@ -41,6 +41,7 @@ from marketing_agent.planning.validation import week_range
 
 router = APIRouter()
 BATCH_URL = "/lote"
+AI_DECLARATION_MESSAGE = "Indique se a imagem foi gerada por IA: sim ou não."
 
 
 def require_week(week: str) -> str:
@@ -203,12 +204,10 @@ async def upload_post_image(
     url = _batch_redirect(panel, post_id)
     form = await read_upload_form(request)
     fields = form.fields
-    if (
-        form.file is None
-        or form.file.field_name != "ficheiro"
-        or fields.get("gerada_por_ia") not in ("sim", "nao")
-    ):
+    if form.file is None or form.file.field_name != "ficheiro":
         raise MediaError()
+    if fields.get("gerada_por_ia") not in ("sim", "nao"):
+        raise InvalidForm(AI_DECLARATION_MESSAGE)
     try:
         meta = ManualImage.model_validate(
             {

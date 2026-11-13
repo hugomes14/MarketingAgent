@@ -25,7 +25,7 @@ from marketing_agent.artifacts.store import ArtifactStore, ArtifactType
 from marketing_agent.clock import Clock
 from marketing_agent.content.image_failure import image_error
 from marketing_agent.content.loops import CopyPayload
-from marketing_agent.content.manual_review import ManualReviewer
+from marketing_agent.content.manual_review import ForeignAssetError, ManualReviewer
 from marketing_agent.content.package_assets import store_package_image
 from marketing_agent.content.package_costs import job_costs_in, remaining_images
 from marketing_agent.content.package_media import DesignMedia
@@ -115,8 +115,14 @@ class ContentPipeline:
         )
 
     def review_manual(self, job: ClaimedJob) -> GenerationOutcome:
-        """Reve uma imagem carregada a mao uma vez e entrega o pacote ao responsavel."""
-        return self._manual.run(job)
+        """Reve uma imagem carregada a mao uma vez e entrega o pacote ao responsavel.
+
+        Um ativo de outra marca falha o job sem nova tentativa (`drafting_failed`).
+        """
+        try:
+            return self._manual.run(job)
+        except ForeignAssetError as error:
+            return self._fail(job, describe_error(error))  # sem repeticao: nao e transitorio
 
     def generate(self, job: ClaimedJob) -> GenerationOutcome:
         """Corre o job e fecha-o (conclui ou falha); erros inesperados sobem ao worker.

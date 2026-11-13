@@ -1,9 +1,9 @@
 """Fila de trabalhos em Postgres: reclamacao exclusiva, lease, tentativas e cancelamento.
 
-A fila nao conhece o conteudo dos payloads (exceto o `post_id` de `generate_post`, em
-`cancel_for_post_in`). Cada operacao e uma transacao curta; nenhum lock e mantido enquanto o
-worker trabalha. A posse de um job prova-se pelo `lease_token`: quem o perde (lease expirada,
-job cancelado) nao consegue concluir nem falhar o job.
+A fila nao conhece o conteudo dos payloads (exceto o `post_id` dos jobs de um post, em
+`has_active_for_post_in` e `cancel_for_post_in`). Cada operacao e uma transacao curta; nenhum
+lock e mantido enquanto o worker trabalha. A posse de um job prova-se pelo `lease_token`: quem
+o perde (lease expirada, job cancelado) nao consegue concluir nem falhar o job.
 """
 
 from collections.abc import Mapping
@@ -20,6 +20,9 @@ from marketing_agent.db.base import new_id
 from marketing_agent.db.models import ACTIVE_JOB_PREDICATE_SQL, ACTIVE_JOB_STATUSES, Job, Post
 
 GENERATE_POST_JOB = "generate_post"
+REVIEW_POST_JOB = "review_post"
+# Jobs que escrevem uma revisao de um post: ambos bloqueiam e sao cancelados pelas acoes do dono.
+POST_JOB_TYPES = (GENERATE_POST_JOB, REVIEW_POST_JOB)
 RETRY_BACKOFF = timedelta(seconds=30)  # espera = RETRY_BACKOFF x tentativas ja feitas
 MAX_ERROR_CHARS = 200
 _LEASE_EXPIRED_ERROR = "LeaseExpired: lease expirada sem conclusao"
@@ -44,10 +47,10 @@ def truncate_error(message: str) -> str:
     return " ".join(message.split())[:MAX_ERROR_CHARS]
 
 
-def _active_generate_post(post_id: str) -> tuple[ColumnElement[bool], ...]:
-    """Condicoes dos `generate_post` ativos de `post_id` (`post_id` segue como parametro)."""
+def _active_post_jobs(post_id: str) -> tuple[ColumnElement[bool], ...]:
+    """Condicoes dos jobs ativos de `post_id` (`POST_JOB_TYPES`: geracao e revisao visual)."""
     return (
-        Job.type.in_((GENERATE_POST_JOB, "review_post")),
+        Job.type.in_(POST_JOB_TYPES),
         Job.status.in_(ACTIVE_JOB_STATUSES),
         Job.payload["post_id"].astext == post_id,
     )
@@ -234,8 +237,8 @@ class JobQueue:
         session.execute(statement)
 
     def has_active_for_post_in(self, session: Session, post_id: str) -> bool:
-        """Ha um `generate_post` `queued` ou `running` do post? Leitura na transacao do chamador."""
-        statement = select(Job.id).where(*_active_generate_post(post_id)).limit(1)
+        """Ha um `generate_post` ou `review_post` ativo (`queued`/`running`) do post? Sem lock."""
+        statement = select(Job.id).where(*_active_post_jobs(post_id)).limit(1)
         return session.execute(statement).first() is not None
 
     def latest_generate_payload_in(self, session: Session, post_id: str) -> Mapping[str, object]:
@@ -252,13 +255,13 @@ class JobQueue:
         return session.execute(statement).scalar_one_or_none() or {}
 
     def cancel_for_post_in(self, session: Session, post_id: str) -> int:
-        """Cancela os `generate_post` ativos do post na transacao do chamador; devolve quantos.
+        """Cancela os `generate_post` e `review_post` ativos do post; devolve quantos.
 
         Limpar o `lease_token` impede que um worker a meio do job o conclua depois.
         """
         statement = (
             update(Job)
-            .where(*_active_generate_post(post_id))
+            .where(*_active_post_jobs(post_id))
             .values(status="cancelled", updated_at=self._clock.now(), **_RELEASED_LOCK)
             .returning(Job.id)
         )

@@ -407,11 +407,7 @@ def test_decided_posts_are_read_only(make_panel: MakePanel, lifecycle: str) -> N
     assert CAPTION in html
     for action in ACTIONS:
         assert f"/post/{seeded.post_id}/{action}" not in html
-    if lifecycle == "approved":
-        assert f"/post/{seeded.post_id}/imagem" in html
-        assert html.count("<form") == 1
-    else:
-        assert "<form" not in html
+    assert "<form" not in html
 
 
 def test_post_without_revision_shows_no_actions(make_panel: MakePanel) -> None:

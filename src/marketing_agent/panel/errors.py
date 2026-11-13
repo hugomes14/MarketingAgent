@@ -24,6 +24,7 @@ from marketing_agent.content.review_errors import (
 )
 from marketing_agent.feedback.service import FeedbackError
 from marketing_agent.images.codec import ImageRejected
+from marketing_agent.images.layouts import LayoutError
 from marketing_agent.interview.service import (
     InterviewStartFailed,
     InvalidAnswer,
@@ -104,6 +105,11 @@ _RESPONSES: Final[dict[type[Exception], tuple[int, str]]] = {
     ),
     InvalidPostState: (409, f"Esta publicação já não aceita esta ação. {RELOAD_HINT}"),
     InvalidComment: (422, "O comentário está vazio ou é demasiado longo."),
+    # Cobre tambem `InvalidLayoutInput`, `TitleTooLong` e `TitleDoesNotFit` (subclasses).
+    LayoutError: (
+        422,
+        "Não foi possível compor a imagem: o título não cabe no layout ou a imagem não é válida.",
+    ),
     FeedbackError: (
         422,
         "Não foi possível guardar o feedback: confira o tipo, a data de validade e a nota.",

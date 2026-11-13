@@ -11,8 +11,11 @@
   {% else %}
   <p class="nota">Sem imagem: {{ image.missing_reason }}</p>
   {% endif %}
-  {% if rev %}<p>Custo do pacote: {{ image.package_cost_usd|usd }} USD (imagem: {{ image.image_cost_usd|usd }} USD)</p>{% endif %}
-  {% if image.final_asset_id and card.lifecycle in ('in_review', 'approved') %}
+  {# Os custos pertencem a geração do agente; edições, trocas e uploads não os repetem. #}
+  {% if rev and rev.origin == 'agente' %}<p>Custo do pacote: {{ image.package_cost_usd|usd }} USD (imagem: {{ image.image_cost_usd|usd }} USD)</p>
+  {% elif rev %}<p>Custo: ver a geração original</p>{% endif %}
+  {# Como a edição de texto: só em revisão, ou numa geração falhada sem trabalho ativo. #}
+  {% if image.final_asset_id and card.can_edit %}
   <details>
     <summary>Trocar foto</summary>
     <form method="post" action="/post/{{ card.id }}/trocar-foto">
@@ -30,7 +33,7 @@
     </form>
   </details>
   {% endif %}
-  {% if rev and (card.can_edit or card.lifecycle == 'approved') %}
+  {% if rev and card.can_edit %}
   <details>
     <summary>Carregar imagem à mão</summary>
     <form method="post" enctype="multipart/form-data" action="/post/{{ card.id }}/imagem">

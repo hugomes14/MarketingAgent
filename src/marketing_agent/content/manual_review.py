@@ -1,6 +1,7 @@
 """Job de revisao visual manual: inferencia fora de locks, gravacao atomica e obsolescencia."""
 
-from typing import Literal
+from decimal import Decimal
+from typing import Final, Literal
 
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -27,6 +28,16 @@ from marketing_agent.jobs.queue import ClaimedJob, JobQueue
 from marketing_agent.kb.service import KbService
 from marketing_agent.media.library import MediaLibrary
 
+REVIEW_FAILED_NOTE: Final = "revisão automática falhou"
+
+
+class ForeignAssetError(Exception):
+    """O ativo do job pertence a outra marca; falha fixa, sem repeticao (nao e transitoria)."""
+
+    def __init__(self) -> None:
+        """Mensagem fixa: nunca leva ids de ativos nem de marcas."""
+        super().__init__("ativo de outra marca")
+
 
 class ManualReviewer:
     """Processa um upload sem Copywriter, Designer ou voltas de correcao."""
@@ -46,7 +57,11 @@ class ManualReviewer:
         self.library, self.store, self.queue, self.clock = library, store, queue, clock
 
     def run(self, job: ClaimedJob) -> Literal["in_review", "stale"]:
-        """Reve uma vez; um parecer falhado nao impede a decisao humana."""
+        """Reve uma vez; um parecer falhado nao impede a decisao humana.
+
+        Levanta `ForeignAssetError` se o ativo nao e da marca do post (o chamador falha o job
+        sem repeticao).
+        """
         post_id, base_id, asset_id = (
             str(job.payload[key]) for key in ("post_id", "base_revision_id", "asset_id")
         )
@@ -62,7 +77,7 @@ class ManualReviewer:
             snapshot = take_snapshot(session, post)
             asset = session.get_one(MediaAsset, asset_id)
             if asset.brand_id != post.brand_id:
-                raise ValueError("ativo de outra marca")
+                raise ForeignAssetError
             image_hash = asset.sha256
         review, note, run_id = self._evaluate(job, snapshot, base, asset_id, meta)
         return self._save(job, snapshot, base, asset_id, image_hash, meta, review, note, run_id)
@@ -75,40 +90,21 @@ class ManualReviewer:
         asset_id: str,
         meta: ManualImage,
     ) -> tuple[Revisao | None, str, str | None]:
+        """Corre o Revisor uma vez e devolve (parecer, nota de falha, id da execucao).
+
+        Nunca levanta: qualquer falha vira uma nota segura (so a classe do erro ou o estado da
+        execucao) e o responsavel decide sem parecer.
+        """
         review: Revisao | None = None
-        note = "revisão automática falhou"
+        note = REVIEW_FAILED_NOTE
         run_id: str | None = None
         try:
-            profile = self.store.active(snapshot.brand_id, ArtifactType.PERFIL_MARCA)
-            draft = RascunhoTexto(
-                legenda=base.caption,
-                hashtags=base.hashtags,
-                apelo_a_acao=base.call_to_action or "",
-                alt_text=meta.alt_text,
-                alegacoes=base.claims,
-            )
-            payload = ReviewPayload(
-                draft,
-                snapshot.brief,
-                snapshot.channels,
-                self.kb.valid_refs(
-                    snapshot.brand_id, kb_ref_ids(snapshot.brief), snapshot.scheduled_date
-                ),
-                profile.payload if profile else {},
-                ReviewImage(
-                    self.library.read_asset(snapshot.brand_id, asset_id).data,
-                    "manual",
-                    (f"upload:{asset_id}",),
-                    meta.alt_text,
-                    meta.gerada_por_ia,
-                ),
-            )
             result = self.engine.run(
                 load_content_specs().reviewer,
                 snapshot.brand_id,
                 run_trigger("review", job.id),
                 ReviewerLoop(),
-                payload,
+                self._review_payload(snapshot, base, asset_id, meta),
             )
             run_id = result.run_id or None
             if result.status is RunStatus.SUCCEEDED and isinstance(result.output, Revisao):
@@ -119,6 +115,37 @@ class ManualReviewer:
             # Mensagem segura, nunca o texto do fornecedor ou o corpo do pedido.
             note += f": {describe_error(error)}"
         return review, note, run_id
+
+    def _review_payload(
+        self, snapshot: PostSnapshot, base: PostRevision, asset_id: str, meta: ManualImage
+    ) -> ReviewPayload:
+        """Pedido do Revisor: o texto da revisao base com o alt_text e a imagem carregados."""
+        profile = self.store.active(snapshot.brand_id, ArtifactType.PERFIL_MARCA)
+        draft = RascunhoTexto(
+            legenda=base.caption,
+            hashtags=base.hashtags,
+            apelo_a_acao=base.call_to_action or "",
+            alt_text=meta.alt_text,
+            alegacoes=base.claims,
+        )
+        valid_kb = self.kb.valid_refs(
+            snapshot.brand_id, kb_ref_ids(snapshot.brief), snapshot.scheduled_date
+        )
+        image = ReviewImage(
+            self.library.read_asset(snapshot.brand_id, asset_id).data,
+            "manual",
+            (f"upload:{asset_id}",),
+            meta.alt_text,
+            meta.gerada_por_ia,
+        )
+        return ReviewPayload(
+            draft,
+            snapshot.brief,
+            snapshot.channels,
+            valid_kb,
+            profile.payload if profile else {},
+            image,
+        )
 
     def _save(
         self,
@@ -147,9 +174,11 @@ class ManualReviewer:
             )
             revision = build_edit_revision(post, base, changes, self.clock.now(), image_hash)
             self._set_image(revision, asset_id, meta, review, note, run_id)
+            # Os custos pertencem a geracao que os produziu: a imagem do responsavel nao gerou
+            # nada e o pacote desta revisao e so o da sua propria revisao visual.
             totals = job_costs_in(session, snapshot.brand_id, job.id)
-            revision.package_cost_usd += totals.package_usd
-            revision.image_cost_usd = base.image_cost_usd
+            revision.image_cost_usd = Decimal(0)
+            revision.package_cost_usd = totals.package_usd
             session.add(revision)
             post.lifecycle, post.last_error = "in_review", None
             post.review_rounds = 1

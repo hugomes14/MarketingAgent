@@ -6,6 +6,7 @@ efeitos na base, para a regra de validacao ser a mesma da geracao (`validate_dra
 
 from collections.abc import Mapping, Sequence
 from datetime import datetime
+from decimal import Decimal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -144,8 +145,10 @@ def build_edit_revision(
         components=[dict(component) for component in base.components],
         is_ai_generated=base.is_ai_generated,
         review_image_checked=False,
-        image_cost_usd=base.image_cost_usd,
-        package_cost_usd=base.package_cost_usd,
+        # Custos pertencem a geracao do agente que os produziu: uma revisao derivada (edicao,
+        # troca de foto) nao os copia, para nenhuma soma por revisao os contar duas vezes.
+        image_cost_usd=Decimal(0),
+        package_cost_usd=Decimal(0),
         origin=EDIT_ORIGIN,
         produced_by_run_id=None,
         created_at=now,

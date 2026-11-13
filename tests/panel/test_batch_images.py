@@ -30,14 +30,14 @@ def revision(**fields: object) -> PostRevision:
     return PostRevision(**values)
 
 
-def render(stored: PostRevision | None, error: str | None = None) -> str:
+def render(stored: PostRevision | None, error: str | None = None, origin: str = "agente") -> str:
     image = _image_view(stored, error, {"photo-1": '<script>alert("photo")</script>'})
     return (
         build_environment()
         .get_template("_post_image.html")
         .render(
             card=SimpleNamespace(image=image, lifecycle="cancelled", can_edit=False),
-            rev=SimpleNamespace(alt_text='" onerror="alert(1)') if stored else None,
+            rev=SimpleNamespace(alt_text='" onerror="alert(1)', origin=origin) if stored else None,
         )
     )
 
@@ -60,6 +60,13 @@ def test_ai_badge_always_visible_when_generated() -> None:
 
 def test_card_shows_image_cost_and_package_cost() -> None:
     assert "Custo do pacote: 0.1200 USD (imagem: 0.0400 USD)" in render(revision())
+
+
+@pytest.mark.parametrize("origin", ["edicao_responsavel", "upload"])
+def test_derived_revisions_show_no_cost_only_a_pointer_to_the_original(origin: str) -> None:
+    html = render(revision(image_cost_usd=Decimal(0), package_cost_usd=Decimal(0)), origin=origin)
+    assert "Custo do pacote" not in html and "USD" not in html
+    assert "Custo: ver a geração original" in html
 
 
 def test_missing_image_shows_reason() -> None:
