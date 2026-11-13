@@ -17,8 +17,9 @@ from content_rig import PROFILE_PAYLOAD, ContentRig, Factory, Script, build_rig,
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from marketing_agent.cli import _build_pipeline
 from marketing_agent.clock import FixedClock
-from marketing_agent.config import DEFAULT_PACKAGE_MAX_COST_USD
+from marketing_agent.config import DEFAULT_PACKAGE_MAX_COST_USD, Settings
 from marketing_agent.content.loops import CopyPayload
 from marketing_agent.content.package import (
     PackageContext,
@@ -613,18 +614,55 @@ def test_generate_post_ships_the_last_complete_package_when_the_ceiling_runs_out
     assert rig.job(job.id).status == "succeeded"
 
 
-def test_generate_post_uses_the_three_post_triggers_and_the_default_ceiling(
-    make_rig: MakeRig,
-) -> None:
+def test_generate_post_runs_under_the_three_post_triggers(make_rig: MakeRig) -> None:
     rig = make_rig(package_pass())
-    post_id = rig.seed_post()
-    job = rig.claimed(post_id)
+    job = rig.claimed(rig.seed_post())
     assert rig.pipeline.generate(job) == "in_review"
     with rig.factory() as session:
         found = set(session.scalars(select(AgentRun.trigger)).all())
     assert found == set(PackageTriggers.for_job(job.id).family)
+
+
+def test_generate_post_applies_the_default_ceiling_to_every_run(
+    make_rig: MakeRig, clock: FixedClock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    rig = make_rig(package_pass(), image_price="0.04")
+    job = rig.claimed(rig.seed_post())
+    # 1.30 ja gastos por uma tentativa anterior do job: com o teto por omissao (1.50) sobram 0.20.
+    trigger = PackageTriggers.for_job(job.id).design
+    seed_spend(rig.factory, rig.brand_id, trigger, spent="1.300000", now=clock.now())
+    spy = SpecSpy([])
+    spy.install(rig, monkeypatch)
+
+    assert rig.pipeline.generate(job) == "in_review"
+
+    assert [role for role, _ in spy.seen] == ["copywriter", "designer", "revisor"]
+    assert [limit for _, limit in spy.seen] == [Decimal(v) for v in ("0.20", "0.20", "0.16")]
     assert DEFAULT_PACKAGE_MAX_COST_USD == CEILING
-    assert post_id
+
+
+def test_the_worker_pipeline_is_built_with_the_configured_ceiling(
+    make_rig: MakeRig, clock: FixedClock, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    rig = make_rig(package_pass(), image_price="0.04")
+    settings = Settings(  # type: ignore[call-arg]
+        _env_file=None,
+        database_url="postgresql+psycopg://u:p@127.0.0.1:5433/db",
+        package_max_cost_usd=Decimal("1.40"),
+        media_dir=tmp_path / "media",
+    )
+    pipeline = _build_pipeline(settings, rig.factory, rig.engine, rig.store, rig.queue, rig.clock)
+    job = rig.claimed(rig.seed_post())
+    seed_spend(
+        rig.factory, rig.brand_id, PackageTriggers.for_job(job.id).design,
+        spent="1.300000", now=clock.now(),
+    )  # fmt: skip
+    spy = SpecSpy([])
+    spy.install(rig, monkeypatch)
+
+    assert pipeline.generate(job) == "in_review"
+
+    assert spy.seen[0] == ("copywriter", Decimal("0.10"))  # 1.40 do Settings, nao 1.50
 
 
 def test_a_new_job_for_the_same_post_starts_with_a_fresh_ceiling(
@@ -637,3 +675,12 @@ def test_a_new_job_for_the_same_post_starts_with_a_fresh_ceiling(
     assert rig.pipeline.generate(old) == "drafting_failed"  # teto do job antigo esgotado
     new = rig.claimed(post_id, "changes")
     assert rig.pipeline.generate(new) == "in_review"  # o pedido novo e outra familia
+
+
+@pytest.mark.parametrize(
+    "trigger", ["post.copy:J1", "generate_post:J1", "", "eval_item:", "eval_item", "EVAL_ITEM:1"]
+)
+def test_single_trigger_must_be_an_eval_item_trigger(trigger: str) -> None:
+    with pytest.raises(ValueError, match="eval_item") as caught:
+        PackageTriggers.single(trigger)
+    assert str(caught.value) == "o trigger unico deve ser 'eval_item:<id>'"  # mensagem fixa

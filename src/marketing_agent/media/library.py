@@ -1,5 +1,6 @@
 """Biblioteca de fotos e media imutavel, isolada por marca."""
 
+from collections.abc import Collection
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Annotated, Literal, Self, cast
@@ -186,6 +187,18 @@ class MediaLibrary:
         with self._sessions() as session:
             photos = session.scalars(_photo_query(brand_id, True).limit(min(limit, 50)))
             return {row.id: _photo_ref(row) for row in photos}
+
+    def photo_refs_by_ids(self, brand_id: str, asset_ids: Collection[str]) -> dict[str, PhotoRef]:
+        """As fotos da marca com estes ids, ATIVAS OU NAO (os ativos sao imutaveis).
+
+        Ids inexistentes, de outra marca ou de outro tipo (logotipo) ficam de fora: quem chama
+        compara o tamanho do resultado com o do pedido para os detetar.
+        """
+        if not asset_ids:
+            return {}
+        statement = _photo_query(brand_id, False).where(MediaAsset.id.in_(list(asset_ids)))
+        with self._sessions() as session:
+            return {row.id: _photo_ref(row) for row in session.scalars(statement)}
 
     def active_photo(self, brand_id: str, asset_id: str) -> PhotoRef | None:
         """A foto ativa da marca com este id, ou None.

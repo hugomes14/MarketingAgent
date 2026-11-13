@@ -28,7 +28,12 @@ from marketing_agent.content.package_costs import (
     PackageCostGuard,
     PackageTriggers,
 )
-from marketing_agent.content.package_media import DesignInputs, DesignMedia, ImageUnavailable
+from marketing_agent.content.package_media import (
+    DesignInputs,
+    DesignMedia,
+    DesignSnapshot,
+    ImageUnavailable,
+)
 from marketing_agent.content.revision_store import GeneratedText
 from marketing_agent.content.schemas import (
     BACKGROUND_VIOLATIONS,
@@ -211,6 +216,7 @@ class PackageRounds:
         owner_comment: str | None,
         allowance: ImageAllowance,
         guard: PackageCostGuard | None = None,
+        design_snapshot: DesignSnapshot | None = None,
     ) -> PackageOutcome:
         """Uma geracao completa do pacote; as execucoes ficam ligadas aos `triggers` do pedido.
 
@@ -230,8 +236,12 @@ class PackageRounds:
         Na 1.a passagem essas paragens e falhas mantem-se: `RunResult` ou `AgentRunFailed`.
         Com `guard`, o teto de custo do pacote vale para cada execucao: ao esgotar-se, segue a
         ultima passagem completa (nota `COST_CEILING_NOTE`) ou, sem ela, `CostCeilingReached`.
+        Com `design_snapshot` a media do Designer e a fixada (fotos e versao do kit); sem ele,
+        a ativa no momento.
         """
-        run = _PackageRun(self, triggers, brand_id, payload, owner_comment, allowance, guard)
+        run = _PackageRun(
+            self, triggers, brand_id, payload, owner_comment, allowance, guard, design_snapshot
+        )
         return run.execute()
 
 
@@ -247,10 +257,12 @@ class _PackageRun:
         owner_comment: str | None,
         allowance: ImageAllowance,
         guard: PackageCostGuard | None,
+        design_snapshot: DesignSnapshot | None,
     ) -> None:
         self._r = rounds
         self._triggers = triggers
         self._guard = guard
+        self._snapshot = design_snapshot
         self._brand_id = brand_id
         self._payload = payload
         self._owner_comment = owner_comment
@@ -264,8 +276,10 @@ class _PackageRun:
     def execute(self) -> PackageOutcome:
         """Corre as passagens e devolve o pacote final, a falha de imagem ou a paragem.
 
-        O teto de custo do pacote (`PackageCostExceeded`, antes de qualquer chamada) nunca
-        descarta um pacote ja revisto e faturado: segue o ultimo, com uma nota fixa.
+        O teto de custo do pacote (`PackageCostExceeded`: teto esgotado antes de uma execucao ou
+        execucao parada pelo limite de custo reduzido pelo teto) nunca descarta um pacote ja
+        revisto e faturado: segue o ultimo, com uma nota fixa. Sem passagem completa, devolve
+        `CostCeilingReached`.
         """
         try:
             return self._execute_rounds()
@@ -403,7 +417,7 @@ class _PackageRun:
 
     def _design_inputs(self) -> DesignInputs:
         if self._inputs is None:
-            self._inputs = self._r.media.load(self._brand_id)
+            self._inputs = self._r.media.load(self._brand_id, self._snapshot)
         return self._inputs
 
     def _designer_notes(self, notes: str | None) -> str | None:

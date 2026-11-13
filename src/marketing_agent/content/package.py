@@ -30,6 +30,7 @@ from marketing_agent.content.package_costs import (
     PackageTriggers,
     family_remaining_images,
 )
+from marketing_agent.content.package_media import DesignSnapshot
 from marketing_agent.content.revision_store import GeneratedText
 from marketing_agent.content.rounds import (
     CostCeilingReached,
@@ -68,11 +69,15 @@ class PackageContext:
     da base e exemplos de feedback) sem duplicar campos: o Copywriter e o Revisor leem-no tal
     qual e o Designer deriva dele o brief. `payload.reviewer_notes` e `payload.owner_comment`
     ficam a `None` (as notas nascem das voltas). Fotos, kit e logotipo nao viajam aqui: o
-    produtor le-os da media da marca (`DesignMedia`), por isso os dois percursos veem as mesmas.
+    produtor le-os da media da marca (`DesignMedia`). Sem `design_snapshot` le-os ao vivo
+    (percurso habitual); com ele (`capture_design_snapshot`, no inicio de uma corrida) so usa as
+    fotos fixadas e a versao fixada do kit, e os dois percursos devem ler a MESMA fonte:
+    `DesignMedia.load(brand_id, request.context.design_snapshot)`.
     """
 
     payload: CopyPayload
     owner_comment: str | None
+    design_snapshot: DesignSnapshot | None = None
 
 
 @dataclass(frozen=True)
@@ -187,6 +192,7 @@ class SpecializedPath:
             request.context.owner_comment,
             allowance,
             guard,
+            request.context.design_snapshot,
         )
         return _to_result(outcome)
 

@@ -157,6 +157,15 @@ class BrandKitService:
             row = session.scalar(_history_query(brand_id).limit(1))
             return _view(row) if row is not None else None
 
+    def get_version(self, brand_id: str, version: int) -> BrandKitView | None:
+        """Uma versao exata do kit da marca (as versoes sao imutaveis), ou None se nao existe."""
+        statement = select(BrandKit).where(
+            BrandKit.brand_id == brand_id, BrandKit.version == version
+        )
+        with self._sessions() as session:
+            row = session.scalar(statement)
+            return _view(row) if row is not None else None
+
     def history(self, brand_id: str, limit: int | None = None) -> list[BrandKitView]:
         """Lista apenas as versoes da marca, da mais recente para a mais antiga.
 

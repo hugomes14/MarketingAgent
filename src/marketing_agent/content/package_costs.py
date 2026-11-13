@@ -37,6 +37,7 @@ from marketing_agent.harness.spec import AgentSpec
 type RunStep = Literal["copy", "design", "review"]
 RUN_STEPS: Final[tuple[RunStep, ...]] = ("copy", "design", "review")
 IMAGE_STEP_NAME: Final = "generate_image"
+EVAL_ITEM_TRIGGER_PREFIX: Final = "eval_item:"
 # Frase fixa (nunca texto do modelo) de quando o teto de custo do pacote ja nao deixa chamar.
 COST_CEILING_REASON: Final = "pacote: teto de custo atingido"
 _UNSETTLED_IMAGE_STATUSES: Final = ("open", "unknown_outcome")
@@ -81,7 +82,13 @@ class PackageTriggers:
 
     @classmethod
     def single(cls, trigger: str) -> "PackageTriggers":
-        """O mesmo trigger nos tres passos (a familia tem um so elemento)."""
+        """O mesmo trigger nos tres passos (a familia tem um so elemento).
+
+        So aceita triggers de avaliacao (`eval_item:<id>`): assim um trigger de avaliacao nunca
+        coincide com a familia `post.*` de um job (`ValueError` de mensagem fixa).
+        """
+        if not trigger.startswith(EVAL_ITEM_TRIGGER_PREFIX) or trigger == EVAL_ITEM_TRIGGER_PREFIX:
+            raise ValueError(f"o trigger unico deve ser '{EVAL_ITEM_TRIGGER_PREFIX}<id>'")
         return cls(trigger, trigger, trigger)
 
     @property
@@ -183,9 +190,13 @@ class PackageCostGuard:
     (`open` e `unknown_outcome`, esta ultima conta como gasta: pode ter sido faturada). Uma
     reserva ou e pendente ou e um `cost_entry`, por isso nunca se conta duas vezes.
 
+    O teto nao e um maximo absoluto: o custo acertado de uma chamada de texto pode passar da sua
+    reserva (preco mais recente, entrada estimada), por isso o total da familia pode exceder o
+    teto em alguns centimos. E a mesma propriedade do limite por execucao do 2B.
+
     `cap` aplica-se a CADA `engine.run` do pacote: o limite de custo da execucao passa a ser o
-    que sobra do teto, e como o motor recusa reservas acima do limite da execucao, o total do
-    pacote nunca ultrapassa o teto (as execucoes de um pacote correm em sequencia).
+    que sobra do teto, e como o motor recusa reservas acima do limite da execucao, as reservas do
+    pacote nunca ultrapassam o teto (as execucoes de um pacote correm em sequencia).
     """
 
     def __init__(

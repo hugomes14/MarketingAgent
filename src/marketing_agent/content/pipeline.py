@@ -15,10 +15,13 @@ O pacote em si (voltas, quota, teto de custo) e produzido por `content.package.S
 sem escrever posts; aqui so ficam o ciclo de vida do post e a gravacao. Teto de custo do pacote
 (`package_max_cost_usd`, todas as tentativas do job): se acaba depois de um pacote completo,
 segue esse pacote com uma nota fixa; se acaba antes, o job falha sem nova tentativa com
-`last_error = "pacote: teto de custo atingido"`.
+`last_error = "pacote: teto de custo atingido"`. Isto inclui o Designer parado por custo na 1.a
+passagem com o limite reduzido pelo teto: o resultado e o teto do pacote, sem revisao so de
+texto (o gasto desse job falhado nunca aparece numa revisao).
 
-Mensagens de falha: so `describe_error` chega a `job.last_error` e `post.last_error`; o texto de
-`RunResult.message` (que pode citar o modelo) nunca e copiado.
+Mensagens de falha: so frases fixas do codigo chegam a `job.last_error` e `post.last_error`
+(`describe_error`, razoes fixas da imagem e a do teto do pacote); o texto de `RunResult.message`
+(que pode citar o modelo) nunca e copiado.
 """
 
 import logging
@@ -142,9 +145,10 @@ class ContentPipeline:
 
         `in_review`: revisao do pacote gravada. `stale`: nada foi gravado (post cancelado, ja
         decidido, alterado durante a geracao, ou lease perdida) e o job foi concluido sem escrever.
-        `drafting_failed`: `needs_human`, limite, pre-requisito em falta, payload invalido ou
-        falha da imagem; o job falhou sem nova tentativa e, se foi possivel, o post fica
-        `drafting` com o motivo (numa falha da imagem, com a revisao so de texto gravada).
+        `drafting_failed`: `needs_human`, limite, teto de custo do pacote sem pacote completo,
+        pre-requisito em falta, payload invalido ou falha da imagem; o job falhou sem nova
+        tentativa e, se foi possivel, o post fica `drafting` com o motivo (numa falha da imagem,
+        com a revisao so de texto gravada).
         """
         try:
             request = GenerationRequest.model_validate(job.payload)
@@ -296,7 +300,8 @@ class ContentPipeline:
 
         Uma so transacao, post primeiro e job depois (como a aprovacao do plano): nao ha estado
         em que o job falhou e o post continua mudo, e quem perdeu a lease (`None`) nao escreve
-        nada, nem no post de um job novo. `message` vem sempre de `describe_error`.
+        nada, nem no post de um job novo. `message` e sempre uma frase fixa do codigo
+        (`describe_error`, razao de imagem ou `COST_CEILING_REASON`), nunca texto do modelo.
         """
         post_id = job.payload.get("post_id")
         with self._session_factory.begin() as session:
