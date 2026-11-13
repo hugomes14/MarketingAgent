@@ -209,8 +209,8 @@ def _has_image_price(price: ModelPrice, size: str, quality: str) -> bool:
     return True
 
 
-def _call_timeout() -> timedelta:
-    return timedelta(seconds=LLM_CALL_TIMEOUT_S)
+def _call_timeout(time_multiplier: int = 1) -> timedelta:
+    return timedelta(seconds=LLM_CALL_TIMEOUT_S * time_multiplier)
 
 
 def _image_call_bound() -> timedelta:
@@ -223,9 +223,10 @@ def _image_call_bound() -> timedelta:
     return attempts * timedelta(seconds=IMAGE_CALL_TIMEOUT_S)
 
 
-def content_job_lease() -> timedelta:
+def content_job_lease(time_multiplier: int = 1) -> timedelta:
     """Lease de um job `generate_post`: 3 x (Copywriter + Designer + Revisor + chamadas) + 60 s.
 
+    `time_multiplier` escala os limites dos specs e chamadas de texto; imagem nao escala.
     Um job faz ate 3 passagens (1 + 2 voltas), cada uma com Copywriter, Designer e Revisor. O
     motor so verifica `max_duration_s` ANTES de cada passo: uma execucao que inicia a chamada
     perto do limite pode correr mais `LLM_CALL_TIMEOUT_S`, por isso cada um dos tres papeis soma
@@ -239,7 +240,11 @@ def content_job_lease() -> timedelta:
     run_limits = sum(
         spec.limits.max_duration_s for spec in (specs.copywriter, specs.designer, specs.reviewer)
     )
-    per_pass = timedelta(seconds=run_limits) + 3 * _call_timeout() + _image_call_bound()
+    per_pass = (
+        timedelta(seconds=run_limits * time_multiplier)
+        + 3 * _call_timeout(time_multiplier)
+        + _image_call_bound()
+    )
     return 3 * per_pass + timedelta(seconds=60)
 
 
@@ -254,16 +259,17 @@ def max_spec_duration_s() -> int:
     )
 
 
-def worker_stale_after() -> timedelta:
+def worker_stale_after(time_multiplier: int = 1) -> timedelta:
     """Idade a partir da qual uma reserva aberta e de um processo morto, vista pelo worker.
 
+    Os tempos de texto e dos specs usam o mesmo `time_multiplier` do motor e adaptadores.
     A execucao mais longa possivel de QUALQUER papel (o painel partilha a base com o worker):
     o maior `max_duration_s` mais uma chamada em excesso, a mais lenta de todas (a de imagem,
     `IMAGE_CALL_TIMEOUT_S`). Uma reserva mais nova que isto pode ser de uma execucao viva do
     outro processo; uma reserva de imagem em voo nunca e dada como orfa.
     """
-    longest_call = max(LLM_CALL_TIMEOUT_S, IMAGE_CALL_TIMEOUT_S)
-    return timedelta(seconds=max_spec_duration_s() + longest_call)
+    longest_call = max(LLM_CALL_TIMEOUT_S * time_multiplier, IMAGE_CALL_TIMEOUT_S)
+    return timedelta(seconds=max_spec_duration_s() * time_multiplier + longest_call)
 
 
 def database_error_message(exc: SQLAlchemyError) -> str:

@@ -316,6 +316,33 @@ referência mensal, a recuperação após uma morte do processo e o **fluxo sema
 (`test_weekly_text_flow.py`: plano, worker, lote, aprovar, editar com feedback e pedir alterações,
 com um LLM falso).
 
+### Modelos locais lentos
+
+`LLM_TIME_MULTIPLIER` (inteiro de 1 a 10, por omissão 1) amplia os tempos de chamada e de
+execução dos papéis. Tokens, custos, número de passos e timeout das imagens mantêm os seus
+limites. O painel e o worker têm de usar a mesma configuração: as leases, os marcadores de
+pedidos em curso e o limiar de reservas órfãs acompanham os tempos novos.
+
+Com valor 5, a chamada de texto passa de 120 para 600 segundos, a lease do pacote passa de
+106 para 310 minutos e as reservas só são recuperadas após 35 minutos. A recuperação após
+um processo morto demora mais. O perfil do `.env.local.example` usa 5; a configuração geral
+continua com 1. Reinicie painel e worker em conjunto depois de alterar este valor.
+
+O fumo não lê o `.env`; use `--time-multiplier 5` explicitamente. Na instalação investigada
+foram criadas variantes locais `marketing-qwen2.5-14b:8k` e `marketing-qwen2.5vl-7b:8k` com
+`num_ctx=8192`, reutilizando os modelos originais. Para repetir com essas variantes:
+
+```bash
+uv run python scripts/smoke_ollama.py --posts 3 --time-multiplier 5 \
+  --model marketing-qwen2.5-14b:8k --reviewer-model marketing-qwen2.5vl-7b:8k \
+  --ollama-url http://<IP-do-host-WSL>:11434 \
+  --server-url postgresql+psycopg://marketing_agent:marketing_agent@127.0.0.1:5543/postgres
+```
+
+Os nomes só existem onde as variantes foram criadas. Para as usar no painel/worker, altere
+as rotas e registe preços locais zero com os nomes correspondentes antes de arrancar; o fumo
+regista preços zero automaticamente para os modelos locais selecionados.
+
 ### Testes no Chromium
 
 Playwright está nas dependências de desenvolvimento. Instale o browser com

@@ -175,3 +175,15 @@ def test_llm_router_keeps_text_routes_next_to_image_route(tmp_path: Path) -> Non
     )
     client = _clients(build_llm_router(settings))["openai"]
     assert client.capabilities == frozenset({"text"})
+
+
+def test_time_multiplier_reaches_both_provider_clients(tmp_path: Path) -> None:
+    settings = _settings(
+        {"diretor": _route("openai"), "revisor": _route("anthropic")},
+        llm_time_multiplier=5,
+        openai_api_key_file=_key(tmp_path, "o.key"),
+        anthropic_api_key_file=_key(tmp_path, "a.key"),
+    )
+    clients = _clients(build_llm_router(settings))
+    assert clients["openai"]._sdk.timeout == 600
+    assert clients["anthropic"]._sdk.timeout == 600

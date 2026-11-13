@@ -250,3 +250,22 @@ def test_image_route_without_any_price_is_refused(session_factory: Factory, tmp_
     seed_text_prices(session_factory, "qwen2.5:14b", "qwen2.5vl:7b")
     with pytest.raises(StartupError, match="'designer_imagem' .* nao tem preco"):
         check_content_routes(image_settings(tmp_path), PriceBook(session_factory))
+
+
+def test_slow_local_times_extend_lease_and_reservation_recovery() -> None:
+    multiplier = 5
+    # Os limites de imagem nao mudam; os tres papeis e a sua chamada em excesso escalam.
+    specs = load_content_specs()
+    durations = sum(
+        s.limits.max_duration_s
+        for s in (
+            specs.copywriter,
+            specs.designer,
+            specs.reviewer,
+        )
+    )
+    increase = timedelta(seconds=3 * (multiplier - 1) * (durations + 3 * LLM_CALL_TIMEOUT_S))
+    assert content_job_lease(multiplier) == content_job_lease() + increase
+    assert worker_stale_after(multiplier) == timedelta(
+        seconds=max_spec_duration_s() * multiplier + LLM_CALL_TIMEOUT_S * multiplier
+    )

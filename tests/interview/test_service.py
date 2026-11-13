@@ -351,7 +351,7 @@ def test_stale_busy_reclaimed_after_max_duration(make_rig: RigFactory) -> None:
     session_id = rig.start()
     dead = rig.add_submission(session_id, "k1", "Vendemos pao.", "reserved")
     rig.set_busy(session_id, dead, rig.clock.now())
-    rig.clock.advance(timedelta(seconds=120))  # no limite exato ainda e ocupado
+    rig.clock.advance(timedelta(seconds=300))  # no limite exato ainda e ocupado
     with pytest.raises(SessionBusy):
         rig.service.submit_answer(session_id, "Outra resposta.", "k2")
     rig.clock.advance(timedelta(seconds=1))
@@ -540,7 +540,7 @@ def test_dead_holder_key_replays_interrupted_after_other_key_reclaims(make_rig: 
     session_id = rig.start()
     dead = rig.add_submission(session_id, "k1", "Vendemos pao.", "reserved")
     rig.set_busy(session_id, dead, rig.clock.now())
-    rig.clock.advance(timedelta(seconds=121))
+    rig.clock.advance(timedelta(seconds=301))
     assert rig.service.submit_answer(session_id, "Outra.", "k2").status is TurnStatus.COMPLETED
     stored = rig.submission("k1")
     assert stored.status == "failed" and stored.result is not None
@@ -603,7 +603,7 @@ def test_reserved_with_stale_own_claim_becomes_interrupted_and_releases(
     session_id = rig.start()
     owner = rig.add_submission(session_id, "k1", "Vendemos pao.", "reserved")
     rig.set_busy(session_id, owner, rig.clock.now())
-    rig.clock.advance(timedelta(seconds=121))
+    rig.clock.advance(timedelta(seconds=301))
     assert_interrupted(rig.service.submit_answer(session_id, "Vendemos pao.", "k1"))
     assert rig.session_row(session_id).busy_submission_id is None
     stored = rig.submission("k1")
@@ -654,7 +654,7 @@ def test_record_turns_refuses_submission_reclaimed_and_failed_by_other_key(
 
     def other_key_reclaims_stale_claim() -> None:
         rig.llm.hook = None
-        rig.clock.advance(timedelta(seconds=121))
+        rig.clock.advance(timedelta(seconds=301))
         other_llm = HookedLlmClient([turn_response("Q2")])
         other, _ = build_service(rig.factory, other_llm, rig.clock, rig.settings)
         assert other.submit_answer(session_id, "Outra.", "k2").status is TurnStatus.COMPLETED
@@ -703,7 +703,7 @@ def test_cleanup_failure_is_logged_and_does_not_mask_original(
     assert "ValueError" in caplog.text and "SEGREDO" not in caplog.text
     # Sem limpeza a submissao fica `reserved`, mas o proximo pedido da chave resolve-a.
     monkeypatch.undo()
-    rig.clock.advance(timedelta(seconds=121))
+    rig.clock.advance(timedelta(seconds=301))
     assert_interrupted(rig.service.submit_answer(session_id, "SEGREDO", "k1"))
 
 
@@ -748,7 +748,7 @@ def test_request_profile_reclaims_stale_claim(make_rig: RigFactory) -> None:
     rig = make_rig(profile_script())
     session_id = rig.start()
     rig.set_busy(session_id, "morto", rig.clock.now())
-    rig.clock.advance(timedelta(seconds=121))
+    rig.clock.advance(timedelta(seconds=301))
     assert rig.store.get(rig.service.request_profile(session_id)).state is ArtifactState.SUBMITTED
 
 

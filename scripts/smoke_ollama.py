@@ -145,6 +145,7 @@ class SmokeArgs:
     reviewer_model: str
     posts: int
     photo: Path | None = None
+    time_multiplier: int = 1
 
 
 @dataclass(frozen=True)
@@ -237,7 +238,15 @@ def parse_args(argv: Sequence[str] | None = None) -> SmokeArgs:
         help="foto a pôr na biblioteca (por omissao a variavel PHOTO ou uma foto sintetica)",
     )
     parser.add_argument("--posts", type=int, default=3, help="publicacoes do plano (1 a 14)")
+    parser.add_argument(
+        "--time-multiplier",
+        type=int,
+        default=1,
+        help="multiplicador de tempos para modelos locais lentos (1 a 10)",
+    )
     parsed = parser.parse_args(argv)
+    if not 1 <= parsed.time_multiplier <= 10:
+        parser.error("--time-multiplier tem de estar entre 1 e 10")
     if not 1 <= parsed.posts <= 14:
         parser.error("--posts tem de estar entre 1 e 14")
     if parsed.photo is not None and not parsed.photo.is_file():
@@ -256,6 +265,7 @@ def parse_args(argv: Sequence[str] | None = None) -> SmokeArgs:
         parsed.reviewer_model,
         parsed.posts,
         parsed.photo,
+        parsed.time_multiplier,
     )
 
 
@@ -442,6 +452,7 @@ def build_settings(args: SmokeArgs, database_url: str, key_file: Path, media_dir
         database_url=database_url,
         openai_api_key_file=key_file,
         openai_base_url=f"{args.ollama_url}/v1",
+        llm_time_multiplier=args.time_multiplier,
         role_routes={
             "diretor": route(args.model),
             "copywriter": route(args.model),
@@ -498,7 +509,14 @@ def build_services(settings: Settings, session_factory: sessionmaker[Session]) -
     clock = SystemClock()
     budget = build_budget_controller(settings, session_factory, clock)
     store = ArtifactStore(session_factory, clock)
-    engine = AgentEngine(session_factory, build_llm_router(settings), budget, store, clock)
+    engine = AgentEngine(
+        session_factory,
+        build_llm_router(settings),
+        budget,
+        store,
+        clock,
+        time_multiplier=settings.llm_time_multiplier,
+    )
     interview = InterviewService(session_factory, engine, store, settings, clock)
     strategy = StrategyService(session_factory, engine, store, clock)
     return Services(settings, session_factory, store, interview, strategy, engine, clock)

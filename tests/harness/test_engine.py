@@ -205,12 +205,14 @@ class Rig:
 
 
 class RigFactory(Protocol):
-    def __call__(self, script: Script, output_per_million: str = "0") -> Rig: ...
+    def __call__(
+        self, script: Script, output_per_million: str = "0", *, time_multiplier: int = 1
+    ) -> Rig: ...
 
 
 @pytest.fixture
 def make_rig(session_factory: Factory, clock: FixedClock, brand_id: str) -> RigFactory:
-    def make(script: Script, output_per_million: str = "0") -> Rig:
+    def make(script: Script, output_per_million: str = "0", *, time_multiplier: int = 1) -> Rig:
         # Entrada custa um decimo da saida; "0" torna todas as chamadas gratuitas.
         out_price = Decimal(output_per_million)
         tier = PriceTier(0, out_price / 10, out_price)
@@ -232,6 +234,7 @@ def make_rig(session_factory: Factory, clock: FixedClock, brand_id: str) -> RigF
             store,
             clock,
             sleep=sleeps.append,
+            time_multiplier=time_multiplier,
         )
         return Rig(engine, llm, clock, sleeps, session_factory, brand_id, store)
 
@@ -692,3 +695,19 @@ def test_text_only_estimate_is_unchanged(make_rig: RigFactory) -> None:
     result = rig.run(OneCallLoop())
     chars = len("sistema") + len("pedido")
     assert estimated_tokens(rig, result.run_id) == -(-chars // 3)
+
+
+def test_local_time_multiplier_extends_time_without_mutating_spec(make_rig: RigFactory) -> None:
+    rig = make_rig([response()], time_multiplier=5)
+    spec = make_spec(max_duration_s=60)
+    result = rig.run(SlowLoop(rig.clock, 121), spec)
+    assert result.status is RunStatus.SUCCEEDED
+    assert spec.limits.max_duration_s == 60
+    assert rig.engine.claim_duration_s(spec) == 900
+
+
+def test_local_time_multiplier_still_blocks_after_scaled_limit(make_rig: RigFactory) -> None:
+    rig = make_rig([], time_multiplier=5)
+    result = rig.run(SlowLoop(rig.clock, 301), make_spec(max_duration_s=60))
+    assert result.status is RunStatus.BLOCKED_LIMIT
+    assert rig.llm.requests == []

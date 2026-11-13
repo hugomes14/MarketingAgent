@@ -42,6 +42,10 @@ uv run python scripts/smoke_ollama.py --posts 3
 | `--ollama-url URL` | Endereco do Ollama (por omissao `http://127.0.0.1:11434`) | |
 | `--model`, `--reviewer-model` | Modelos do Diretor/Copywriter e do Revisor | `--model qwen2.5:14b --reviewer-model qwen2.5vl:7b` |
 
+`--time-multiplier N` (1 a 10, omissão 1) amplia os tempos de chamada, execução e guardas
+no mesmo perfil da aplicação. Não aumenta tokens nem custos e não lê o .env. Exemplo:
+`uv run python scripts/smoke_ollama.py --time-multiplier 5 --posts 3`.
+
 ## Entradas
 
 Argumentos acima e a variavel `MODEL` (modelo por omissao do Diretor e do Copywriter). Nao le o

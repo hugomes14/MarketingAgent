@@ -354,3 +354,11 @@ def test_post_outcomes_reports_image_fields_and_run_timings(
     assert outcome.image_checked is True
     assert [c.split(":")[0] for c in outcome.components] == ["gerada", "logotipo", "texto"]
     assert sorted(role for role, _ in outcome.timings) == ["copywriter", "designer", "revisor"]
+
+
+def test_slow_time_multiplier_is_explicit_and_bounded() -> None:
+    assert smoke.parse_args([]).time_multiplier == 1
+    assert smoke.parse_args(["--time-multiplier", "5"]).time_multiplier == 5
+    for invalid in ("0", "11", "1.5"):
+        with pytest.raises(SystemExit):
+            smoke.parse_args(["--time-multiplier", invalid])

@@ -464,7 +464,9 @@ class AgentEngine:
         clock: Clock,
         sleep: Callable[[float], None] = time.sleep,
         images: ImageBackend | None = None,
+        time_multiplier: int = 1,
     ) -> None:
+        """Monta o motor; time_multiplier amplia apenas duracoes, de 1 a 10 vezes."""
         self._session_factory = session_factory
         self._router = router
         self._budget = budget
@@ -472,6 +474,21 @@ class AgentEngine:
         self._clock = clock
         self._sleep = sleep
         self._images = images
+        if (
+            not isinstance(time_multiplier, int)
+            or isinstance(time_multiplier, bool)
+            or not 1 <= time_multiplier <= 10
+        ):
+            raise ValueError("time_multiplier deve estar entre 1 e 10")
+        self._time_multiplier = time_multiplier
+
+    def claim_duration_s(self, spec: AgentSpec) -> float:
+        """Duracao maxima da execucao com a ultima chamada em excesso, para marcadores."""
+        from marketing_agent.llm.types import IMAGE_CALL_TIMEOUT_S, LLM_CALL_TIMEOUT_S
+
+        return spec.limits.max_duration_s * self._time_multiplier + max(
+            LLM_CALL_TIMEOUT_S * self._time_multiplier, IMAGE_CALL_TIMEOUT_S
+        )
 
     def run[TIn, TOut](
         self,
@@ -485,9 +502,18 @@ class AgentEngine:
     ) -> RunResult:
         """Corre o Loop e fecha sempre o `agent_run` com o estado final e o custo somado.
 
+        A duracao efetiva escala com `time_multiplier`, sem alterar o spec original nem os
+        limites de passos, tokens ou custo.
         `image_allowance` e a quota de imagens do pedido, partilhada por quem corre varias
         execucoes dele; sem ela (ou sem `images` no motor) `generate_image` recusa.
         """
+        spec = spec.model_copy(
+            update={
+                "limits": spec.limits.model_copy(
+                    update={"max_duration_s": spec.limits.max_duration_s * self._time_multiplier}
+                )
+            }
+        )
         try:
             client, route = self._router.resolve(spec)
         except (RouteNotConfigured, MissingCapability) as exc:

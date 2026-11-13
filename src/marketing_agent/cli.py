@@ -214,9 +214,15 @@ def build_worker(settings: Settings, session_factory: sessionmaker[Session]) -> 
     router = _build_worker_router(settings)
     check_content_routes(settings, PriceBook(session_factory))
     engine = AgentEngine(
-        session_factory, router, budget, store, clock, images=_build_image_backend(settings)
+        session_factory,
+        router,
+        budget,
+        store,
+        clock,
+        images=_build_image_backend(settings),
+        time_multiplier=settings.llm_time_multiplier,
     )
-    queue = JobQueue(session_factory, clock, content_job_lease())
+    queue = JobQueue(session_factory, clock, content_job_lease(settings.llm_time_multiplier))
     library = _build_media_library(settings, session_factory, clock)
     pipeline = ContentPipeline(
         session_factory,
@@ -231,7 +237,7 @@ def build_worker(settings: Settings, session_factory: sessionmaker[Session]) -> 
         BrandKitService(session_factory, library, clock),
         settings.image_quality,
     )
-    older_than = worker_stale_after()
+    older_than = worker_stale_after(settings.llm_time_multiplier)
     return Worker(
         queue,
         pipeline,

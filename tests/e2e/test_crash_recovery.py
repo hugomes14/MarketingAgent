@@ -20,7 +20,7 @@ from marketing_agent.db.models import (
 from marketing_agent.interview.service import INTERRUPTED_MESSAGE, TurnStatus
 from marketing_agent.llm import fake_scenarios
 from marketing_agent.llm.types import LlmRequest, LlmResponse
-from marketing_agent.startup import director_max_duration_s
+from marketing_agent.startup import worker_stale_after
 
 MakePanel = Callable[..., PanelRig]
 ANSWER = "Resposta que ficou a meio."
@@ -81,12 +81,12 @@ def test_kill_after_llm_call_before_commit(make_panel: MakePanel) -> None:
     rig = make_panel(fake_scenarios.interview_full(3))
     session_id = rig.start_session()
     requests_before = len(rig.llm.requests)
-    age = timedelta(seconds=director_max_duration_s() + 60)
+    age = worker_stale_after() + timedelta(seconds=60)
     reservation_id = seed_killed_turn(rig, session_id, age)
     assert reservation_status(rig, reservation_id) == "open"
     assert rig.budget.status(rig.brand_id).reserved_usd == RESERVED
 
-    recovered = rig.budget.recover_stale(timedelta(seconds=director_max_duration_s()))
+    recovered = rig.budget.recover_stale(worker_stale_after())
 
     assert recovered == 1
     assert reservation_status(rig, reservation_id) == "unknown_outcome"

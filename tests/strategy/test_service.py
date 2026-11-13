@@ -417,7 +417,7 @@ def test_fresh_marker_blocks_and_stale_marker_is_taken_over(
     assert rig.llm.requests == []
     [held] = rig.markers()
     assert held.value == "outro"
-    rig.clock.advance(timedelta(seconds=241))
+    rig.clock.advance(timedelta(seconds=421))
     assert rig.service.propose_diagnosis(rig.brand_id).status is RunStatus.SUCCEEDED
     assert rig.markers() == []
 

@@ -9,7 +9,7 @@ from marketing_agent.llm.anthropic_adapter import AnthropicClient
 from marketing_agent.llm.fake import FakeLlmClient
 from marketing_agent.llm.openai_adapter import OpenAiClient
 from marketing_agent.llm.router import LlmRouter
-from marketing_agent.llm.types import LlmClient
+from marketing_agent.llm.types import LLM_CALL_TIMEOUT_S, LlmClient
 from marketing_agent.secrets import SecretFileError
 
 
@@ -33,7 +33,9 @@ def _build_anthropic(settings: Settings, capabilities: frozenset[Capability]) ->
     variable = "ANTHROPIC_API_KEY_FILE"
     key_file = _require_key_file(settings.anthropic_api_key_file, variable)
     try:
-        return AnthropicClient(key_file, capabilities)
+        return AnthropicClient(
+            key_file, capabilities, timeout_s=LLM_CALL_TIMEOUT_S * settings.llm_time_multiplier
+        )
     except SecretFileError as exc:
         raise ValueError(f"{variable} invalido: {exc}") from exc
 
@@ -48,7 +50,11 @@ def _build_openai(settings: Settings, capabilities: frozenset[Capability]) -> Ll
     )
     try:
         return OpenAiClient(
-            key_file, capabilities, base_url=settings.openai_base_url, system_role=system_role
+            key_file,
+            capabilities,
+            base_url=settings.openai_base_url,
+            system_role=system_role,
+            timeout_s=LLM_CALL_TIMEOUT_S * settings.llm_time_multiplier,
         )
     except SecretFileError as exc:
         raise ValueError(f"{variable} invalido: {exc}") from exc

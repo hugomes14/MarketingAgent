@@ -48,6 +48,8 @@ class Settings(BaseSettings):
     anthropic_api_key_file: Path | None = None
     openai_api_key_file: Path | None = None
     openai_base_url: str | None = None
+    # Amplia so os tempos (chamada e execucao), nunca tokens/custos/passos.
+    llm_time_multiplier: int = Field(default=1, ge=1, le=10)
     # Chave propria das imagens (fatura a parte); nunca reutiliza a do texto nem `openai_base_url`.
     openai_images_api_key_file: Path | None = None
     image_quality: Literal["low", "medium", "high"] = "medium"
