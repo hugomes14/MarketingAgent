@@ -117,9 +117,22 @@ Tudo corre em `127.0.0.1`. Execute a partir da raiz do repositório.
    dados`, saída 2) se outro processo já o tem. Com o lock tomado, um trabalho que ficou
    `running` de um worker morto (Ctrl+C duplo, `kill -9`, falha de energia) é **recolocado na
    fila logo no arranque seguinte**, sem esperar pela lease (6360 s, 106 min com
-   `LLM_TIME_MULTIPLIER=1`); a tentativa gasta mantém-se e, esgotadas as três, o trabalho
-   passa a `dead` e o post mostra o motivo. Se a ligação que guarda o lock se perder, o
-   worker pára com saída 2 em vez de continuar sem exclusividade.
+   `LLM_TIME_MULTIPLIER=1`), mas só pode ser reclamado após um período de graça (243 s com
+   multiplicador 1, 663 s com 5: uma chamada paga em voo mais a margem fixa), para o caso de o
+   worker anterior ainda estar vivo; a tentativa gasta mantém-se e, esgotadas as três, o
+   trabalho passa a `dead` e o post mostra o motivo.
+
+   Se a ligação que guarda o lock se perder com o worker vivo (reinício do Postgres, sessão
+   terminada, rede), o worker **não faz nenhuma chamada paga nova**: o motor verifica o lock
+   antes de cada chamada de texto ou de imagem e aborta a execução. A chamada que já estava em
+   voo termina e é acertada; as escritas do job são rejeitadas se outro worker já lhe tomou a
+   lease. Depois disso o worker sai com código 2 e a mensagem fixa «a ligacao que guarda o lock
+   do worker perdeu-se...».
+
+   Duas restrições de implantação: (1) **pare qualquer worker antigo** (anterior a esta
+   versão, que não toma o lock) antes de arrancar o novo; (2) o `DATABASE_URL` do worker tem de
+   ser uma ligação **direta ou em modo de sessão** — não use o modo de transação do pgbouncer
+   (nem equivalente), porque o lock é de sessão e seria libertado ou partilhado entre clientes.
 
 8. **Proxy de desenvolvimento** (noutro terminal), que faz o papel do `tailscale serve`:
 

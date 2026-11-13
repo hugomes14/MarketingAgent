@@ -69,7 +69,7 @@ depois recupera as leases vencidas dos outros tipos e marca como `unknown_outcom
 abertas ha mais do que `worker_stale_after()` (480 s com `LLM_TIME_MULTIPLIER=1`, 2100 s com 5).
 As reservas do worker morto NAO sao libertadas no arranque: continuam a contar (a quota de
 imagens deriva da base) ate ao limiar. O worker verifica a ligacao do lock (`SELECT 1`) antes de
-cada reclamacao e em cada iteracao ociosa; se se perder, para com saida 2. Um job em curso
+cada reclamacao, em cada iteracao ociosa e (via `abort_check` do motor) antes de cada chamada de texto ou de imagem; se se perder, nenhuma chamada paga nova sai (a que esta em voo acaba, as escritas sao rejeitadas pela lease) e o worker sai com 2. Os jobs orfaos recolocados no arranque so sao reclamaveis apos a graca (243 s com m=1, 663 s com m=5). Um job em curso
 termina antes de o worker sair (lease do job: 6360 s com multiplicador 1, 18600 s com 5; o motor
 so verifica a duracao antes de cada passo, por isso uma chamada pode exceder o `max_duration_s`).
 O arranque do painel e do worker regista (INFO) `LLM_TIME_MULTIPLIER`, a lease e o limiar das
@@ -102,6 +102,10 @@ uv run pytest tests/test_cli.py tests/test_dev_proxy.py tests/jobs/test_worker.p
 ```
 
 ## Riscos e limites
+
+Antes de arrancar o `worker` desta versao, parar qualquer worker antigo (sem lock). O `DATABASE_URL` do
+worker tem de ser ligacao direta ou em modo de sessao (nao pgbouncer em modo de transacao): o lock e
+de sessao.
 
 `serve` recusa `FORWARDED_ALLOW_IPS` e hosts fora do loopback; `dev-proxy` so escuta em loopback e
 nao e um mecanismo de autenticacao. O `worker` gasta orcamento (chamadas ao LLM) e corre um so job
