@@ -10,13 +10,16 @@ from pydantic import ValidationError
 from marketing_agent.agents.simples import SIMPLES_DIR
 from marketing_agent.cli import WORKER_ROLES, _build_worker_router
 from marketing_agent.config import Settings
+from marketing_agent.content.design import DesignResult
 from marketing_agent.content.specs import load_content_specs
 from marketing_agent.content.validation import validate_draft
 from marketing_agent.content.visual import validate_visual
 from marketing_agent.evals.simple_path import (
+    SIMPLE_RESULT_INVARIANT,
     DesignInputs,
     PacoteSimples,
     SimplePayload,
+    SimpleResult,
     validate_simple,
 )
 from marketing_agent.llm import fake_scenarios
@@ -158,3 +161,20 @@ def test_simple_package_scenario_overrides_and_rejects_unknown_fields() -> None:
     assert parsed.texto.legenda == "Legenda." and parsed.visual.layout == "foto_inteira"
     with pytest.raises(ValueError, match="campo desconhecido"):
         fake_scenarios.simple_package(visual={"inventado": "x"})
+
+
+def test_simple_result_carries_exactly_one_of_design_and_image_failure() -> None:
+    pacote = package()
+    design = DesignResult(
+        draft=pacote.visual,
+        final=None,
+        components=(),
+        is_ai_generated=False,
+        generated=None,  # type: ignore[arg-type]
+    )
+    assert SimpleResult(pacote, design, None).image_failure is None
+    assert SimpleResult(pacote, None, "razao fixa").design is None
+    for design_arg, failure_arg in ((design, "razao"), (None, None)):
+        with pytest.raises(ValueError) as caught:
+            SimpleResult(pacote, design_arg, failure_arg)
+        assert str(caught.value) == SIMPLE_RESULT_INVARIANT

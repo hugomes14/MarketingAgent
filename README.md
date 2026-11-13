@@ -294,7 +294,7 @@ corre sempre o Designer, por isso a rota `designer`, com `text` e `json_schema`,
 usar um modelo diferente do Copywriter e a rota `revisor` tem de declarar `image_input` (o papel
 exige-o mesmo nas publicações só de texto). O arranque do `worker` recusa rotas sem as
 capacidades do spec ou sem preço (corra `marketing-agent sync-prices`; para o Ollama use
-`--file config/model_prices.local.yaml`). A comparação cega (Plano 2C) usa um quinto papel, `simples` (percurso de uma só chamada): não é
+`--file config/model_prices.local.yaml`). A comparação cega (Plano 2C) usa um papel adicional (`simples`) (percurso de uma só chamada): não é
 exigido no arranque do `worker` e, sem rota própria em `ROLE_ROUTES`, usa a rota do `copywriter`
 (que tem de ter `text` e `json_schema`); uma rota `simples` explícita tem prioridade.
 `PLAN_MAX_POSTS_PER_WEEK` (5) e

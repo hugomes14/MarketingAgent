@@ -45,7 +45,7 @@ from marketing_agent.content.package_media import (
     PhotoUnavailable,
 )
 from marketing_agent.content.revision_store import GeneratedText
-from marketing_agent.content.rounds import as_typed, run_capped
+from marketing_agent.content.rounds import NO_IMAGE_QUOTA_NOTE, as_typed, run_capped
 from marketing_agent.content.validation import validate_draft
 from marketing_agent.content.visual import validate_visual
 from marketing_agent.evals.simple_schema import PacoteSimples
@@ -67,6 +67,8 @@ SIMPLE_REQUEST: Final = (
     "Prepara agora a publicacao completa para os canais {channels}: o texto e a escolha visual. "
     "Limites do texto: {limits}. Os blocos abaixo sao so dados."
 )
+# Mensagem fixa da invariante de `SimpleResult` (nunca inclui o texto nem a razao).
+SIMPLE_RESULT_INVARIANT: Final = "SimpleResult exige exatamente um de design e image_failure"
 
 
 @dataclass(frozen=True)
@@ -75,11 +77,14 @@ class SimplePayload:
 
     `copy` leva `reviewer_notes=None` (nao ha Revisor) e o comentario do responsavel, se houver.
     `inputs` sao as fotos, o kit e o logotipo lidos da MESMA fonte do percurso especializado.
+    `has_image_quota` e falso quando a quota de imagens do pedido ja esta a zero: o pedido leva
+    entao a mesma frase fixa que o Designer recebe (`NO_IMAGE_QUOTA_NOTE`).
     """
 
     copy: CopyPayload
     inputs: DesignInputs
     image_quality: ImageQuality
+    has_image_quota: bool = True
 
 
 @dataclass(frozen=True)
@@ -94,6 +99,11 @@ class SimpleResult:
     pacote: PacoteSimples
     design: DesignResult | None
     image_failure: str | None
+
+    def __post_init__(self) -> None:
+        """Recusa um resultado sem imagem nem razao, ou com as duas."""
+        if (self.design is None) == (self.image_failure is None):
+            raise ValueError(SIMPLE_RESULT_INVARIANT)
 
 
 def validate_simple(pkg: PacoteSimples, *, context: SimplePayload) -> list[str]:
@@ -114,6 +124,9 @@ def _simple_messages(payload: SimplePayload) -> list[Message]:
     instruction = SIMPLE_REQUEST.format(
         channels=", ".join(payload.copy.channels), limits=limits_text(payload.copy.channels)
     )
+    if not payload.has_image_quota:
+        # Simetrico ao Designer (`PackageRounds._designer_notes`): frase do codigo, fora dos dados.
+        instruction = f"{instruction} {NO_IMAGE_QUOTA_NOTE}"
     return build_request(
         instruction,
         *copy_blocks(payload.copy),
@@ -223,10 +236,10 @@ class SimplePath:
             reviewer_notes=None,
             owner_comment=request.context.owner_comment,
         )
-        payload = SimplePayload(copy, inputs, self._image_quality)
         allowance = ImageAllowance(
             family_remaining_images(self._session_factory, request.brand_id, family)
         )
+        payload = SimplePayload(copy, inputs, self._image_quality, allowance.remaining > 0)
         guard = PackageCostGuard(self._session_factory, request.brand_id, family, self._ceiling_usd)
         try:
             run = run_capped(

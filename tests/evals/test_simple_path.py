@@ -29,7 +29,11 @@ from marketing_agent.content.package_media import (
     DesignMedia,
     capture_design_snapshot,
 )
-from marketing_agent.content.rounds import AgentRunFailed, PackageRounds
+from marketing_agent.content.rounds import (
+    NO_IMAGE_QUOTA_NOTE,
+    AgentRunFailed,
+    PackageRounds,
+)
 from marketing_agent.content.specs import load_content_specs
 from marketing_agent.db.models import (
     AgentRun,
@@ -285,6 +289,27 @@ def test_image_quota_comes_from_the_family_triggers(make_rig, clock) -> None:  #
     assert result.outcome == "failed" and result.reason == "limite de imagens geradas atingido"
     assert result.text is not None and result.design is None
     assert rig.generated_requests() == 0
+
+
+def test_no_image_quota_note_is_sent_only_when_the_quota_is_zero(make_rig, clock) -> None:  # type: ignore[no-untyped-def]
+    rig = make_rig(fake_scenarios.simple_package(), image_price="0.04")
+    seed_family_spend(rig.factory, rig.brand_id, EVAL_TRIGGER, now=clock.now(), images=2)
+
+    simple_path(rig).produce(request_for(rig))
+
+    text = rig.llm.request_text(1)
+    assert text.count(NO_IMAGE_QUOTA_NOTE) == 1  # acrescentada pelo codigo, uma so vez
+    for block in re.finditer(r"<(\w+)>\n.*?\n</\1>", text, re.DOTALL):
+        assert NO_IMAGE_QUOTA_NOTE not in block.group(0)  # nunca dentro de um bloco de dados
+
+
+def test_no_image_quota_note_is_absent_while_a_place_is_left(make_rig, clock) -> None:  # type: ignore[no-untyped-def]
+    rig = make_rig(fake_scenarios.simple_package(), image_price="0.04")
+    seed_family_spend(rig.factory, rig.brand_id, EVAL_TRIGGER, now=clock.now(), images=1)
+
+    simple_path(rig).produce(request_for(rig))
+
+    assert NO_IMAGE_QUOTA_NOTE not in rig.llm.request_text(1)
 
 
 def test_one_image_left_still_generates(make_rig, clock) -> None:  # type: ignore[no-untyped-def]
