@@ -46,8 +46,11 @@ def _measurement_lines(report: EvalReport) -> list[str]:
         "| Imagem média / máxima | Latência média / máxima ms | Saídas inválidas | Voltas |",
         "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
-    for path in report.paths:
-        lines.extend(_path_lines(path))
+    paths = [_path_lines(path) for path in report.paths]
+    lines.extend(path[0] for path in paths)
+    lines.append("")
+    for path in paths:
+        lines.extend(path[1:])
     agreement = report.reviewer_agreement
     lines.extend(
         [

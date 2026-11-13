@@ -83,6 +83,9 @@ def test_report_errors_minutes_cost_latency_by_path(make_eval_rig):
     assert (simple.latency_mean_ms, specialized.latency_max_ms) == (1000, 3000)
     assert specialized.review_rounds == 2 and simple.review_rounds == 0
     assert report.actual_usd == Decimal("0.16") and report.estimate_usd == Decimal("6")
+    lines = render_markdown(report).splitlines()
+    table_rows = [index for index, line in enumerate(lines) if line.startswith("|")]
+    assert table_rows == list(range(table_rows[0], table_rows[0] + 4))
 
 
 def test_reviewer_agreement_uses_all_rounds(make_eval_rig):
