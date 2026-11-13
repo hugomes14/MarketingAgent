@@ -26,6 +26,7 @@ POST_JOB_TYPES = (GENERATE_POST_JOB, REVIEW_POST_JOB)
 RETRY_BACKOFF = timedelta(seconds=30)  # espera = RETRY_BACKOFF x tentativas ja feitas
 MAX_ERROR_CHARS = 200
 _LEASE_EXPIRED_ERROR = "LeaseExpired: lease expirada sem conclusao"
+_ORPHANED_ERROR = "WorkerLost: o worker anterior terminou sem concluir o job"
 _ACTIVE_FILTER = text(ACTIVE_JOB_PREDICATE_SQL)
 # Campos limpos sempre que o job deixa de estar em posse de um worker.
 _RELEASED_LOCK = {"locked_by": None, "locked_until": None, "lease_token": None}
@@ -181,27 +182,52 @@ class JobQueue:
         Os posts dos que ficam `dead` e ainda estao `drafting` recebem `last_error` fixo (senao
         ficavam em geracao para sempre). Ordem dos locks: posts primeiro, depois os jobs.
         """
+        return self._requeue_running(expired_only=True, error=_LEASE_EXPIRED_ERROR)
+
+    def requeue_orphans(self) -> int:
+        """Devolve a `queued` (ou `dead`) TODOS os jobs de post `running`, mesmo com lease viva.
+
+        So e correto com o lock do worker unico tomado (`jobs.singleton`): o painel nunca
+        reclama jobs, por isso um `running` e de um worker que morreu. Mantem `attempts` (a
+        tentativa foi gasta na reclamacao) e trata posts e locks como `requeue_expired`. NAO toca
+        nas reservas de custo: as do worker morto continuam a contar (a quota de imagens deriva
+        da base) ate ao limiar de recuperacao, para nunca libertar dinheiro de uma chamada que
+        pode ter sido faturada.
+        """
+        return self._requeue_running(expired_only=False, error=_ORPHANED_ERROR)
+
+    def _requeue_running(self, *, expired_only: bool, error: str) -> int:
+        """Recoloca os `running` candidatos; devolve quantos mudaram de estado."""
         now = self._clock.now()
         with self._session_factory.begin() as session:
-            expired = self._expired_running(session, now)
-            if not expired:
+            candidates = self._running_candidates(session, now, expired_only)
+            if not candidates:
                 return 0
-            self._lock_posts(session, {post_id for _, post_id in expired if post_id})
-            updated = self._requeue(session, [job_id for job_id, _ in expired], now)
+            self._lock_posts(session, {post_id for _, post_id in candidates if post_id})
+            updated = self._requeue(
+                session, [job_id for job_id, _ in candidates], now, error, expired_only
+            )
             self._mark_posts_failed(
                 session,
                 {
                     post_id
-                    for job_id, post_id in expired
+                    for job_id, post_id in candidates
                     if post_id and updated.get(job_id) == "dead"
                 },
+                error,
             )
             return len(updated)
 
-    def _expired_running(self, session: Session, now: datetime) -> list[tuple[str, str | None]]:
-        statement = select(Job.id, Job.payload["post_id"].astext).where(
-            Job.status == "running", Job.locked_until < now
-        )
+    @staticmethod
+    def _running_candidates(
+        session: Session, now: datetime, expired_only: bool
+    ) -> list[tuple[str, str | None]]:
+        """`running` com lease vencida (qualquer tipo) ou, sem `expired_only`, de tipo de post."""
+        statement = select(Job.id, Job.payload["post_id"].astext).where(Job.status == "running")
+        if expired_only:
+            statement = statement.where(Job.locked_until < now)
+        else:
+            statement = statement.where(Job.type.in_(POST_JOB_TYPES))
         return [(job_id, post_id) for job_id, post_id in session.execute(statement)]
 
     @staticmethod
@@ -210,15 +236,28 @@ class JobQueue:
         statement = select(Post.id).where(Post.id.in_(sorted(post_ids))).order_by(Post.id)
         session.execute(statement.with_for_update()).all()
 
-    def _requeue(self, session: Session, job_ids: list[str], now: datetime) -> dict[str, str]:
-        """Aplica a recolocacao aos candidatos (que continuem vencidos); devolve id -> estado."""
+    @staticmethod
+    def _requeue(
+        session: Session, job_ids: list[str], now: datetime, error: str, expired_only: bool
+    ) -> dict[str, str]:
+        """Aplica a recolocacao aos candidatos (ainda `running` e, se pedido, vencidos).
+
+        Primeiro bloqueia as linhas dos jobs por ordem de id (depois dos posts), para duas
+        transacoes iguais nunca se esperarem em ciclo; so depois atualiza.
+        """
+        conditions = [Job.id.in_(job_ids), Job.status == "running"]
+        if expired_only:
+            conditions.append(Job.locked_until < now)
+        locked = session.execute(
+            select(Job.id).where(*conditions).order_by(Job.id).with_for_update()
+        ).scalars()
         exhausted = Job.attempts >= Job.max_attempts
         statement = (
             update(Job)
-            .where(Job.id.in_(job_ids), Job.status == "running", Job.locked_until < now)
+            .where(Job.id.in_(list(locked)))
             .values(
                 status=case((exhausted, "dead"), else_="queued"),
-                last_error=_LEASE_EXPIRED_ERROR,
+                last_error=error,
                 updated_at=now,
                 **_RELEASED_LOCK,
             )
@@ -227,12 +266,12 @@ class JobQueue:
         return {job_id: status for job_id, status in session.execute(statement)}
 
     @staticmethod
-    def _mark_posts_failed(session: Session, post_ids: set[str]) -> None:
+    def _mark_posts_failed(session: Session, post_ids: set[str], error: str) -> None:
         """`last_error` fixo nos posts ainda `drafting` (os outros ja seguiram a sua vida)."""
         statement = (
             update(Post)
             .where(Post.id.in_(post_ids), Post.lifecycle == "drafting")
-            .values(last_error=_LEASE_EXPIRED_ERROR)
+            .values(last_error=error)
         )
         session.execute(statement)
 

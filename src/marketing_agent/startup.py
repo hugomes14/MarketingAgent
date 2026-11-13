@@ -271,6 +271,23 @@ def worker_stale_after(time_multiplier: int = 1) -> timedelta:
     return timedelta(seconds=run_overrun_bound_s(max_spec_duration_s(), time_multiplier))
 
 
+def log_time_settings(settings: Settings, process: str) -> None:
+    """Regista (so nomes e numeros) o multiplicador e os tempos que dele derivam.
+
+    O painel e o worker tem de usar o mesmo `LLM_TIME_MULTIPLIER`: comparar estas linhas do
+    arranque de cada processo mostra uma deriva (o de multiplicador menor daria como orfa a
+    reserva viva do outro).
+    """
+    multiplier = settings.llm_time_multiplier
+    logger.info(
+        "%s: LLM_TIME_MULTIPLIER=%d, lease do job=%d s, limiar das reservas=%d s",
+        process,
+        multiplier,
+        content_job_lease(multiplier).total_seconds(),
+        worker_stale_after(multiplier).total_seconds(),
+    )
+
+
 def database_error_message(exc: SQLAlchemyError) -> str:
     """Mensagem curta sobre a base, sem a URL: o driver nao repete a palavra-passe.
 

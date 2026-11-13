@@ -226,6 +226,48 @@ def test_requeue_expired_exhausted_attempts_goes_dead(
     assert load(session_factory, claimed.id).status == "dead"
 
 
+def test_requeue_orphans_requeues_running_jobs_with_a_live_lease(
+    queue: JobQueue, session_factory: Factory
+) -> None:
+    claimed = claim_one(queue, session_factory)  # a lease ainda nao venceu
+    assert queue.requeue_expired() == 0
+    assert queue.requeue_orphans() == 1
+    row = load(session_factory, claimed.id)
+    # A tentativa foi gasta na reclamacao e continua gasta.
+    assert (row.status, row.attempts) == ("queued", 1)
+    assert (row.lease_token, row.locked_by, row.locked_until) == (None, None, None)
+    assert row.last_error == "WorkerLost: o worker anterior terminou sem concluir o job"
+    again = queue.claim("w2")
+    assert again is not None and again.attempts == 2
+    assert queue.requeue_orphans() == 1  # e de novo: o lock do worker garante que e orfao
+
+
+def test_requeue_orphans_exhausted_attempts_goes_dead(
+    queue: JobQueue, session_factory: Factory
+) -> None:
+    claimed = claim_one(queue, session_factory)
+    with session_factory.begin() as session:
+        session.get_one(Job, claimed.id).attempts = 3
+    assert queue.requeue_orphans() == 1
+    assert load(session_factory, claimed.id).status == "dead"
+
+
+def test_requeue_orphans_only_touches_running_post_jobs(
+    queue: JobQueue, session_factory: Factory
+) -> None:
+    waiting = enqueue(queue, session_factory, "a", post_id="post-2")
+    other_type = enqueue(queue, session_factory, "b", job_type="outro", post_id="post-3")
+    assert waiting is not None and other_type is not None
+    running = claim_one(queue, session_factory, "c")  # reclama o mais antigo, `waiting`
+    assert running.id == waiting
+    other_claim = queue.claim("w1")
+    assert other_claim is not None and other_claim.id == other_type
+    assert queue.requeue_orphans() == 1  # so o do tipo de post
+    assert load(session_factory, other_type).status == "running"
+    assert load(session_factory, waiting).status == "queued"
+    assert queue.requeue_orphans() == 0
+
+
 def test_cancel_for_post(queue: JobQueue, session_factory: Factory) -> None:
     running = claim_one(queue, session_factory, "r")  # post-1, a correr
     queued = enqueue(queue, session_factory, "a", post_id="post-1")

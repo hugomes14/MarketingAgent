@@ -28,6 +28,8 @@ from marketing_agent.clock import Clock, SystemClock
 from marketing_agent.db.base import make_engine, make_session_factory
 from marketing_agent.db.models import AgentRun, Brand, CostReservation
 from marketing_agent.dev_proxy import DevProxyServer
+from marketing_agent.harness.engine import AgentEngine
+from marketing_agent.jobs.singleton import WorkerLock, WorkerLockLost, hold_worker_lock
 from marketing_agent.jobs.worker import Worker
 from marketing_agent.startup import load_settings
 
@@ -487,6 +489,15 @@ def read_line_with_timeout(stream: object, timeout_s: float) -> str:
     return stream.readline()  # type: ignore[attr-defined]
 
 
+def read_until(stream: object, prefix_or_text: str, timeout_s: float) -> str:
+    """Le linhas ate uma conter o texto (o arranque tambem regista os tempos em INFO)."""
+    for _ in range(10):
+        line = read_line_with_timeout(stream, timeout_s)
+        if prefix_or_text in line:
+            return line
+    raise AssertionError(f"linha {prefix_or_text!r} nao apareceu")
+
+
 @pytest.mark.parametrize("sent", [signal.SIGINT, signal.SIGTERM])
 def test_worker_cli_stops_cleanly(
     sent: signal.Signals, session_factory: Factory, worker_environment: dict[str, str]
@@ -501,10 +512,8 @@ def test_worker_cli_stops_cleanly(
     )
     try:
         # O aviso dos fundos simulados e visivel no arranque (sem rota `designer_imagem`).
-        assert "fundos simulados: sem rota designer_imagem" in read_line_with_timeout(
-            process.stderr, 30
-        )
-        assert read_line_with_timeout(process.stderr, 30).startswith("worker a escutar")
+        read_until(process.stderr, "fundos simulados: sem rota designer_imagem", 30)
+        assert read_until(process.stderr, "worker a escutar", 30).startswith("worker a escutar")
         process.send_signal(sent)
         process.wait(timeout=15)
         stderr = process.stderr.read() if process.stderr else ""
@@ -619,3 +628,117 @@ def test_worker_second_sigint_interrupts_with_exit_130(
     monkeypatch.setattr(Worker, "run_forever", interrupted)
     code, _, err = run(capsys, "worker")
     assert code == 130 and "Traceback" not in err
+
+
+# --- worker unico por base de dados ----------------------------------------------------------
+
+ALREADY_RUNNING = "erro: ja existe um worker a correr nesta base de dados"
+
+
+def test_worker_refuses_to_start_while_another_holds_the_database_lock(
+    pg_url: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Locks consultivos sao por base de dados: o desta base de teste nao colide com o worker de
+    # um fumo (que corre noutra base descartavel do mesmo servidor).
+    with hold_worker_lock(pg_url):
+        code, out, err = run(capsys, "worker")
+    assert code == 2 and out == "" and "Traceback" not in err
+    assert err.strip() == ALREADY_RUNNING
+
+
+def test_worker_holds_the_lock_while_running_and_releases_it_on_exit(
+    pg_url: str,
+    session_factory: Factory,
+    worker_environment: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    during: list[bool] = []
+
+    def probe(self: Worker, stop: threading.Event) -> None:
+        other = WorkerLock(pg_url)
+        try:
+            during.append(other.acquire())
+        finally:
+            other.release()
+
+    monkeypatch.setattr(Worker, "run_forever", probe)
+    code, _, _ = run(capsys, "worker")
+    assert code == 0 and during == [False]
+    after = WorkerLock(pg_url)
+    try:
+        assert after.acquire() is True  # libertado ao sair
+    finally:
+        after.release()
+
+
+def test_worker_exits_nonzero_with_a_fixed_message_when_the_lock_is_lost(
+    session_factory: Factory,
+    worker_environment: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def lost(self: Worker, stop: threading.Event) -> None:
+        raise WorkerLockLost
+
+    monkeypatch.setattr(Worker, "run_forever", lost)
+    code, out, err = run(capsys, "worker")
+    assert code == 2 and out == "" and "Traceback" not in err
+    assert err.strip().splitlines()[-1] == (
+        "erro: a ligacao que guarda o lock do worker perdeu-se: "
+        "outro worker pode arrancar; a terminar"
+    )
+
+
+def test_build_worker_hands_the_lock_to_the_worker(
+    session_factory: Factory, worker_environment: dict[str, str]
+) -> None:
+    lock = WorkerLock("postgresql+psycopg://nunca-liga/x")
+    worker = cli.build_worker(load_settings(), session_factory, lock)
+    assert worker._lock is lock  # noqa: SLF001
+
+
+# --- multiplicador de tempos no worker -------------------------------------------------------
+
+
+def test_build_worker_passes_the_multiplier_to_engine_lease_and_reservation_recovery(
+    session_factory: Factory,
+    worker_environment: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LLM_TIME_MULTIPLIER", "5")
+    seen: dict[str, object] = {}
+    real_engine = cli.AgentEngine
+
+    def spy_engine(*args: object, **kwargs: object) -> AgentEngine:
+        seen["engine"] = kwargs.get("time_multiplier")
+        return real_engine(*args, **kwargs)  # type: ignore[arg-type]
+
+    def spy_recover(self: BudgetController, older_than: timedelta) -> int:
+        seen["stale_after"] = older_than
+        return 0
+
+    monkeypatch.setattr(cli, "AgentEngine", spy_engine)
+    monkeypatch.setattr(BudgetController, "recover_stale", spy_recover)
+    worker = cli.build_worker(load_settings(), session_factory)
+    worker.recover()
+    assert seen == {"engine": 5, "stale_after": timedelta(seconds=2100)}
+    assert worker._queue._lease == timedelta(seconds=18600)  # noqa: SLF001
+
+
+def test_worker_logs_the_multiplier_lease_and_reservation_threshold_at_startup(
+    session_factory: Factory,
+    worker_environment: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("LLM_TIME_MULTIPLIER", "5")
+    monkeypatch.setattr(Worker, "run_forever", lambda self, stop: None)
+    caplog.set_level(logging.INFO)
+    code, _, _ = run(capsys, "worker")
+    assert code == 0
+    assert (
+        "worker: LLM_TIME_MULTIPLIER=5, lease do job=18600 s, limiar das reservas=2100 s"
+        in caplog.text
+    )

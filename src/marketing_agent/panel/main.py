@@ -33,6 +33,7 @@ from marketing_agent.startup import (
     build_budget_controller,
     database_error_message,
     load_settings,
+    log_time_settings,
     worker_stale_after,
 )
 from marketing_agent.strategy.service import StrategyService
@@ -51,6 +52,7 @@ def create_app_from_env() -> FastAPI:
             inacessivel ou sem migracoes, ou nao haver exatamente uma marca.
     """
     settings = load_settings()
+    log_time_settings(settings, "painel")
     csrf_secret = _read_csrf_secret(settings)
     router = _build_router(settings)
     session_factory = _open_session_factory(settings)

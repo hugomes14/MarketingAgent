@@ -112,9 +112,14 @@ Tudo corre em `127.0.0.1`. Execute a partir da raiz do repositório.
    ```
 
    Pára com Ctrl+C ou `SIGTERM` (o trabalho em curso termina primeiro; um segundo Ctrl+C
-   interrompe-o). Um trabalho interrompido **não** volta à fila logo: recupera-se quando a sua
-   lease vence (6360 s, 106 min, depois de reclamado), no arranque seguinte do worker ou
-   numa iteração ociosa (`requeue_expired`). Corra **um** worker (um só processo) por base.
+   interrompe-o). Só pode correr **um** worker por base de dados: o arranque toma um lock de
+   sessão do Postgres e recusa arrancar (`erro: ja existe um worker a correr nesta base de
+   dados`, saída 2) se outro processo já o tem. Com o lock tomado, um trabalho que ficou
+   `running` de um worker morto (Ctrl+C duplo, `kill -9`, falha de energia) é **recolocado na
+   fila logo no arranque seguinte**, sem esperar pela lease (6360 s, 106 min com
+   `LLM_TIME_MULTIPLIER=1`); a tentativa gasta mantém-se e, esgotadas as três, o trabalho
+   passa a `dead` e o post mostra o motivo. Se a ligação que guarda o lock se perder, o
+   worker pára com saída 2 em vez de continuar sem exclusividade.
 
 8. **Proxy de desenvolvimento** (noutro terminal), que faz o papel do `tailscale serve`:
 
@@ -242,7 +247,9 @@ alterado.
 
 Os trabalhos `generate_post` e `review_post` usam uma **lease de 6360 s (106 min)**,
 calculada a partir dos specs e dos timeouts máximos de texto e imagem. Se o worker morrer,
-o trabalho só regressa à fila depois de vencer a lease. Use **um** worker por base.
+o trabalho regressa à fila no arranque seguinte do worker (que é o único: lock de sessão
+do Postgres por base de dados) ou, no pior caso de um segundo worker sem lock, só depois de
+vencer a lease. O painel nunca reclama trabalhos nem toma o lock.
 O painel e o worker marcam como `unknown_outcome` reservas abertas há mais de 480 s
 (`worker_stale_after()`), sem repetir chamadas cujo resultado é desconhecido.
 
@@ -321,11 +328,19 @@ com um LLM falso).
 `LLM_TIME_MULTIPLIER` (inteiro de 1 a 10, por omissão 1) amplia os tempos de chamada e de
 execução dos papéis. Tokens, custos, número de passos e timeout das imagens mantêm os seus
 limites. O painel e o worker têm de usar a mesma configuração: as leases, os marcadores de
-pedidos em curso e o limiar de reservas órfãs acompanham os tempos novos.
+pedidos em curso e o limiar de reservas órfãs acompanham os tempos novos. Não há verificação
+entre processos: cada um regista no arranque (INFO) `LLM_TIME_MULTIPLIER`, a lease do job e o
+limiar das reservas (`painel: ...` e `worker: ...`); compare as duas linhas. Um multiplicador
+menor num dos processos fá-lo dar como órfã uma chamada ainda viva do outro. O `dev-proxy`
+lê o mesmo `.env` para ajustar o tempo de espera pelo painel (1ª chamada síncrona do Diretor:
+483 s com 1, 1863 s com 5).
 
 Com valor 5, a chamada de texto passa de 120 para 600 segundos, a lease do pacote passa de
-106 para 310 minutos e as reservas só são recuperadas após 35 minutos. A recuperação após
-um processo morto demora mais. O perfil do `.env.local.example` usa 5; a configuração geral
+106 para 310 minutos e as reservas só são recuperadas após 35 minutos. Os marcadores de
+pedidos em curso (entrevista e propostas) caducam após 363 s / 483 s com 1 e 1263 s / 1863 s com
+5. Um trabalho de um worker morto volta à fila logo no arranque seguinte (lock de worker
+único); só as reservas abertas desse worker esperam pelo limiar (dinheiro nunca é libertado
+cedo). O perfil do `.env.local.example` usa 5; a configuração geral
 continua com 1. Reinicie painel e worker em conjunto depois de alterar este valor.
 
 O fumo não lê o `.env`; use `--time-multiplier 5` explicitamente. Na instalação investigada
@@ -442,8 +457,8 @@ conhecimento, contexto e registos ficam em [`AgentDATA/`](AgentDATA/). Detalhes 
     posicionais, por isso a publicação rejeitada fica como está (o plano novo pode mostrar outro
     tema nesse lugar; a previsão assinala-o). O Diretor também ainda não vê as publicações já
     decididas da semana ao propor um plano novo (seguimento);
-  - um só worker (um só processo) por base; o painel e o worker são processos separados que
-    partilham a base;
+  - um só worker (um só processo) por base, agora imposto por um lock de sessão do Postgres; o
+    painel e o worker são processos separados que partilham a base;
   - a página do lote não mostra se o worker está a correr: sem ele as publicações ficam "por
     gerar" indefinidamente;
   - a base de conhecimento não tem ação de editar: desativar e voltar a acrescentar o mesmo item

@@ -40,7 +40,13 @@ from marketing_agent.feedback.service import FeedbackService
 from marketing_agent.harness.engine import AgentEngine
 from marketing_agent.images.factory import ImageBackend, build_image_backend
 from marketing_agent.jobs.queue import JobQueue
-from marketing_agent.jobs.worker import Worker
+from marketing_agent.jobs.singleton import (
+    WorkerAlreadyRunning,
+    WorkerLock,
+    WorkerLockLost,
+    hold_worker_lock,
+)
+from marketing_agent.jobs.worker import LockGuard, Worker
 from marketing_agent.kb.service import KbService
 from marketing_agent.llm.factory import build_llm_router
 from marketing_agent.llm.router import LlmRouter
@@ -55,6 +61,7 @@ from marketing_agent.startup import (
     content_job_lease,
     database_error_message,
     load_settings,
+    log_time_settings,
     open_database,
     worker_stale_after,
 )
@@ -206,8 +213,13 @@ def _build_image_backend(settings: Settings) -> ImageBackend:
     return backend
 
 
-def build_worker(settings: Settings, session_factory: sessionmaker[Session]) -> Worker:
-    """Liga motor, servicos, fila (com a lease dos specs) e pipeline num `Worker`."""
+def build_worker(
+    settings: Settings, session_factory: sessionmaker[Session], lock: LockGuard | None = None
+) -> Worker:
+    """Liga motor, servicos, fila (com a lease dos specs) e pipeline num `Worker`.
+
+    `lock` e o lock de worker unico ja tomado (ver `cmd_worker`).
+    """
     clock = SystemClock()
     budget = build_budget_controller(settings, session_factory, clock)
     store = ArtifactStore(session_factory, clock)
@@ -243,6 +255,7 @@ def build_worker(settings: Settings, session_factory: sessionmaker[Session]) -> 
         pipeline,
         f"worker-{os.getpid()}",
         recover_reservations=lambda: budget.recover_stale(older_than),
+        lock=lock,
     )
 
 
@@ -278,12 +291,26 @@ def stop_on_signals(stop: threading.Event) -> Iterator[None]:
 
 
 def cmd_worker(args: argparse.Namespace) -> int:
-    """Processa a fila de geracao de texto ate `SIGINT`/`SIGTERM` (o job em curso termina)."""
+    """Processa a fila de geracao de texto ate `SIGINT`/`SIGTERM` (o job em curso termina).
+
+    Um so worker por base de dados: o lock de sessao e tomado antes de tudo e, com ele, os
+    jobs `running` que ficaram de um worker morto sao recolocados logo no arranque.
+    """
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     settings = load_settings()
+    log_time_settings(settings, "worker")
+    try:
+        with hold_worker_lock(settings.database_url) as lock:
+            return _run_worker(settings, lock)
+    except (WorkerAlreadyRunning, WorkerLockLost) as exc:  # mensagens fixas, sem detalhes da base
+        raise StartupError(str(exc)) from None
+
+
+def _run_worker(settings: Settings, lock: WorkerLock) -> int:
+    """Corre o worker com o lock ja tomado; devolve o codigo de saida."""
     stop = threading.Event()
     with open_database(settings) as session_factory:
-        worker = build_worker(settings, session_factory)
+        worker = build_worker(settings, session_factory, lock)
         with stop_on_signals(stop):
             print(
                 "worker a escutar a fila (Ctrl+C ou SIGTERM para parar)",
