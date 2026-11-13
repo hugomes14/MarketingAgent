@@ -313,11 +313,17 @@ def serve_forever(server: DevProxyServer) -> None:
 
 
 def cmd_dev_proxy(args: argparse.Namespace) -> int:
-    """Proxy de desenvolvimento que injeta o login (so em loopback)."""
+    """Proxy de desenvolvimento que injeta o login (so em loopback).
+
+    Le o `LLM_TIME_MULTIPLIER` das definicoes: o limite de espera pelo painel acompanha-o.
+    """
+    multiplier = load_settings().llm_time_multiplier
     try:
         listen = parse_loopback_endpoint(args.listen, "--listen")
         upstream = parse_loopback_endpoint(args.upstream, "--upstream")
-        server = build_dev_proxy(listen, upstream, args.login, args.name)
+        server = build_dev_proxy(
+            listen, upstream, args.login, args.name, time_multiplier=multiplier
+        )
     except ValueError as exc:
         raise StartupError(str(exc)) from exc
     except OSError as exc:

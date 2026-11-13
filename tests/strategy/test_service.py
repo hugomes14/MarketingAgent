@@ -53,6 +53,10 @@ from marketing_agent.strategy.service import (
 Factory = sessionmaker[Session]
 Script = list[LlmResponse | Exception]
 VALID_FROM = datetime(2026, 11, 1, tzinfo=UTC)
+# Marcador da proposta = max_duration (240) x m + max(120 x m, 180) + 60 + (1 + 2) de margem:
+# 483 s com m=1 e 1863 s com m=5. Um segundo alem do limite o marcador e retomado.
+MARKER_LIMIT_S = 483
+MARKER_LIMIT_M5_S = 1863
 _request_ids = itertools.count(1)  # o ledger exige provider_request_id unico
 PROFILE_PAYLOAD = {
     "topicos": {"o_que_vende": {"texto": "Pao artesanal.", "origem": "dito_pelo_responsavel"}},
@@ -161,13 +165,13 @@ def marker_key(brand_id: str, type: ArtifactType) -> str:
 
 
 @pytest.fixture
-def make_rig(session_factory: Factory, clock: FixedClock, brand_id: str) -> Callable[[Script], Rig]:
+def make_rig(session_factory: Factory, clock: FixedClock, brand_id: str) -> Callable[..., Rig]:
     free = PriceTier(0, Decimal(0), Decimal(0))
     sync_model_prices(
         session_factory, [ModelPrice("fake", "fake-1", "v1", (free,), valid_from=VALID_FROM)]
     )
 
-    def make(script: Script) -> Rig:
+    def make(script: Script, *, time_multiplier: int = 1) -> Rig:
         llm = HookedLlmClient(scripted(script))
         route = RoleRoute(
             provider="fake", model_id="fake-1", capabilities=frozenset({"text", "json_schema"})
@@ -183,6 +187,7 @@ def make_rig(session_factory: Factory, clock: FixedClock, brand_id: str) -> Call
             store,
             clock,
             sleep=lambda seconds: None,
+            time_multiplier=time_multiplier,
         )
         service = StrategyService(session_factory, engine, store, clock)
         return Rig(service, engine, store, llm, clock, session_factory, brand_id)
@@ -417,9 +422,28 @@ def test_fresh_marker_blocks_and_stale_marker_is_taken_over(
     assert rig.llm.requests == []
     [held] = rig.markers()
     assert held.value == "outro"
-    rig.clock.advance(timedelta(seconds=421))
+    rig.clock.advance(timedelta(seconds=MARKER_LIMIT_S + 1))
     assert rig.service.propose_diagnosis(rig.brand_id).status is RunStatus.SUCCEEDED
     assert rig.markers() == []
+
+
+def test_marker_boundary_scales_with_the_time_multiplier(
+    make_rig: Callable[..., Rig],
+) -> None:
+    rig = make_rig(full_script(), time_multiplier=5)
+    rig.activate_profile()
+    key = marker_key(rig.brand_id, ArtifactType.DIAGNOSTICO)
+    with rig.factory.begin() as session:
+        session.add(SystemFlag(key=key, value="outro", set_by="diretor", set_at=rig.clock.now()))
+    rig.clock.advance(timedelta(seconds=MARKER_LIMIT_S + 1))  # ja caducou com m=1, com m=5 nao
+    with pytest.raises(ProposalInProgress):
+        rig.service.propose_diagnosis(rig.brand_id)
+    rig.clock.advance(timedelta(seconds=MARKER_LIMIT_M5_S - MARKER_LIMIT_S - 1))  # limite exato
+    with pytest.raises(ProposalInProgress):
+        rig.service.propose_diagnosis(rig.brand_id)
+    assert rig.llm.requests == []
+    rig.clock.advance(timedelta(seconds=1))
+    assert rig.service.propose_diagnosis(rig.brand_id).status is RunStatus.SUCCEEDED
 
 
 def test_marker_released_after_engine_failure(

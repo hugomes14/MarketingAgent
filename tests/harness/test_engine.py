@@ -705,7 +705,7 @@ def test_local_time_multiplier_extends_time_without_mutating_spec(make_rig: RigF
     result = rig.run(SlowLoop(rig.clock, 121), spec)
     assert result.status is RunStatus.SUCCEEDED
     assert spec.limits.max_duration_s == 60
-    assert rig.engine.claim_duration_s(spec) == 900
+    assert rig.engine.claim_duration_s(spec) == 963  # 60 x 5 + 600 + 60 + (1 + 2)
 
 
 def test_local_time_multiplier_still_blocks_after_scaled_limit(make_rig: RigFactory) -> None:
@@ -713,6 +713,26 @@ def test_local_time_multiplier_still_blocks_after_scaled_limit(make_rig: RigFact
     result = rig.run(SlowLoop(rig.clock, 301), make_spec(max_duration_s=60))
     assert result.status is RunStatus.BLOCKED_LIMIT
     assert rig.llm.requests == []
+
+
+@pytest.mark.parametrize(
+    ("elapsed_s", "status"), [(60, RunStatus.SUCCEEDED), (61, RunStatus.BLOCKED_LIMIT)]
+)
+def test_duration_limit_is_inclusive_at_the_exact_boundary(
+    make_rig: RigFactory, elapsed_s: int, status: RunStatus
+) -> None:
+    rig = make_rig([response()])
+    result = rig.run(SlowLoop(rig.clock, elapsed_s), make_spec(max_duration_s=60))
+    assert result.status is status
+
+
+@pytest.mark.parametrize(("multiplier", "expected_s"), [(1, 303.0), (5, 963.0)])
+def test_claim_duration_adds_one_call_overrun_and_a_fixed_margin(
+    make_rig: RigFactory, multiplier: int, expected_s: float
+) -> None:
+    # 60 x m + max(120 x m, 180) + 60 + (1 + 2): m=1 -> 60 + 180 + 63; m=5 -> 300 + 600 + 63.
+    rig = make_rig([], time_multiplier=multiplier)
+    assert rig.engine.claim_duration_s(make_spec(max_duration_s=60)) == expected_s
 
 
 def test_repeated_compatible_provider_ids_settle_two_distinct_calls(

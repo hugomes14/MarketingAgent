@@ -269,3 +269,6 @@ def test_slow_local_times_extend_lease_and_reservation_recovery() -> None:
     assert worker_stale_after(multiplier) == timedelta(
         seconds=max_spec_duration_s() * multiplier + LLM_CALL_TIMEOUT_S * multiplier
     )
+    # Valores documentados: reservas 300 x 5 + 600 = 2100 s (35 min); lease 18600 s (310 min).
+    assert worker_stale_after(multiplier) == timedelta(seconds=2100)
+    assert content_job_lease(multiplier) == timedelta(seconds=18600)

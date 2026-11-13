@@ -27,6 +27,7 @@ from marketing_agent.budget.pricing import ModelPrice, PriceBook, PriceTier, syn
 from marketing_agent.clock import Clock, SystemClock
 from marketing_agent.db.base import make_engine, make_session_factory
 from marketing_agent.db.models import AgentRun, Brand, CostReservation
+from marketing_agent.dev_proxy import DevProxyServer
 from marketing_agent.jobs.worker import Worker
 from marketing_agent.startup import load_settings
 
@@ -402,6 +403,23 @@ def test_dev_proxy_prints_banner_and_serves(
     )
     assert code == 0 and served == [("127.0.0.1", port)]
     assert "dono@local" in out + err and "DESENVOLVIMENTO" in (out + err)
+
+
+def test_dev_proxy_upstream_timeout_follows_the_settings_multiplier(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    timeouts: list[float] = []
+
+    def fake_serve(server: DevProxyServer) -> None:
+        timeouts.append(server.upstream_timeout)
+        server.server_close()
+
+    monkeypatch.setattr(cli, "serve_forever", fake_serve)
+    monkeypatch.setenv("LLM_TIME_MULTIPLIER", "5")
+    code, _, _ = run(
+        capsys, "dev-proxy", "--login", "dono@local", "--listen", f"127.0.0.1:{free_port()}"
+    )
+    assert code == 0 and timeouts == [1863.0]  # 240 x 5 + 600 + 63
 
 
 # --- worker ----------------------------------------------------------------------------------

@@ -36,7 +36,7 @@ from marketing_agent.config import IMAGE_ROUTE, RoleRoute, Settings
 from marketing_agent.content.design import GENERATED_SIZE
 from marketing_agent.content.specs import ContentSpecs, load_content_specs
 from marketing_agent.db.base import make_engine, make_session_factory
-from marketing_agent.harness.engine import NETWORK_BACKOFF_S
+from marketing_agent.harness.engine import NETWORK_BACKOFF_S, run_overrun_bound_s
 from marketing_agent.harness.image_calls import MAX_IMAGES_PER_REQUEST
 from marketing_agent.harness.spec import AgentSpec, SpecLoadError, load_agent_spec
 from marketing_agent.images.factory import build_image_backend
@@ -268,8 +268,7 @@ def worker_stale_after(time_multiplier: int = 1) -> timedelta:
     `IMAGE_CALL_TIMEOUT_S`). Uma reserva mais nova que isto pode ser de uma execucao viva do
     outro processo; uma reserva de imagem em voo nunca e dada como orfa.
     """
-    longest_call = max(LLM_CALL_TIMEOUT_S * time_multiplier, IMAGE_CALL_TIMEOUT_S)
-    return timedelta(seconds=max_spec_duration_s() * time_multiplier + longest_call)
+    return timedelta(seconds=run_overrun_bound_s(max_spec_duration_s(), time_multiplier))
 
 
 def database_error_message(exc: SQLAlchemyError) -> str:
