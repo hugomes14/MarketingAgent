@@ -54,6 +54,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     _add_dev_proxy(sub)
+    evaluation = sub.add_parser("eval", help="Comparacao cega dos percursos de geracao.")
+    commands = evaluation.add_subparsers(dest="eval_command", required=True)
+    run = commands.add_parser("run", help="Estima e enfileira uma corrida de avaliacao.")
+    run.add_argument("--set", dest="set_name", required=True, help="Nome do conjunto de briefs.")
+    run.add_argument("--yes", action="store_true", help="Confirma a estimativa sem TTY.")
     return parser
 
 

@@ -34,11 +34,14 @@ from marketing_agent.budget.pricing import (
     load_model_prices,
     sync_model_prices,
 )
+from marketing_agent.cli_eval import cmd_eval
 from marketing_agent.cli_parser import build_parser
 from marketing_agent.clock import Clock, SystemClock
 from marketing_agent.config import IMAGE_ROUTE, Settings
 from marketing_agent.content.pipeline import ContentPipeline
 from marketing_agent.dev_proxy import DevProxyServer, build_dev_proxy
+from marketing_agent.evals.assembly import build_eval_context
+from marketing_agent.evals.handler import EvalPackageHandler, build_package_paths
 from marketing_agent.feedback.service import FeedbackService
 from marketing_agent.harness.engine import AgentEngine
 from marketing_agent.images.factory import ImageBackend, build_image_backend
@@ -302,6 +305,19 @@ def build_worker(
     engine = _build_worker_engine(settings, session_factory, budget, store, clock, lock)
     queue = JobQueue(session_factory, clock, content_job_lease(time_multiplier=multiplier))
     pipeline = _build_pipeline(settings, session_factory, engine, store, queue, clock)
+    library = _build_media_library(settings, session_factory, clock)
+    context = build_eval_context(
+        session_factory, store, StrategyService(session_factory, engine, store, clock), clock
+    )
+    paths = build_package_paths(
+        session_factory,
+        engine,
+        library,
+        BrandKitService(session_factory, library, clock),
+        settings.image_quality,
+        settings.package_max_cost_usd,
+    )
+    eval_handler = EvalPackageHandler(session_factory, queue, clock, context, library, paths)
     older_than = worker_stale_after(time_multiplier=multiplier)
     grace = orphan_grace(time_multiplier=multiplier)
     return Worker(
@@ -311,6 +327,7 @@ def build_worker(
         recover_reservations=lambda: budget.recover_stale(older_than),
         lock=lock,
         recover_orphans=None if lock is None else lambda: queue.requeue_orphans(grace=grace),
+        eval_handler=eval_handler,
     )
 
 
@@ -428,6 +445,7 @@ COMMANDS: dict[str, Command] = {
     "serve": cmd_serve,
     "worker": cmd_worker,
     "dev-proxy": cmd_dev_proxy,
+    "eval": cmd_eval,
 }
 
 

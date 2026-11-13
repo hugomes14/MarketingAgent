@@ -7,20 +7,22 @@ partilhado pelos dois percursos, por ordem de execucao: use `simple_package`/`pa
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 
 import yaml
-from content_rig import ContentRig, Factory
+from content_rig import ContentRig, Factory, Script
 from sqlalchemy import func, select
 
 from marketing_agent.budget.controller import BudgetController
 from marketing_agent.budget.pricing import PriceBook
+from marketing_agent.db.base import new_id
 from marketing_agent.db.models import EvalItem, EvalRun, Job
 from marketing_agent.evals.context import EvalContext
+from marketing_agent.evals.handler import EvalPackageHandler, build_package_paths
 from marketing_agent.evals.runs import EvalRunService
-from marketing_agent.jobs.queue import JobQueue
+from marketing_agent.jobs.queue import ClaimedJob, JobQueue
 from marketing_agent.kb.service import NewKbEntry
 
 MakeEvalRig = Callable[..., "EvalRig"]  # tipo da fixture `make_eval_rig` (tests/evals/conftest.py)
@@ -60,6 +62,7 @@ class EvalRig:
     service: EvalRunService
     budget: BudgetController
     evals_dir: Path
+    handler: EvalPackageHandler
 
     @property
     def factory(self) -> Factory:
@@ -73,6 +76,21 @@ class EvalRig:
         """Estima e inicia uma corrida com o limite superior de agora."""
         estimate = self.service.estimate(self.brand_id, set_name)
         return self.service.start_run(self.brand_id, set_name, estimate.upper_bound_usd, actor)
+
+    def claim(self, item: EvalItem) -> ClaimedJob:
+        """Reclama o job deste item (e nao outro): a fila desempata por ordem arbitraria."""
+        with self.factory.begin() as session:
+            job = session.get_one(Job, item.job_id)
+            assert job.status == "queued"
+            job.status, job.locked_by, job.lease_token = "running", "w1", new_id()
+            job.locked_until = self.content.clock.now() + timedelta(minutes=20)
+            job.attempts += 1
+            return ClaimedJob(job.id, job.type, job.payload, job.attempts, job.lease_token)
+
+    def process(self, item: EvalItem, script: Script) -> None:
+        """Carrega o guiao do cliente falso, reclama o job do item e trata-o."""
+        self.content.llm.load(script)
+        self.handler.handle(self.claim(item))
 
     def items(self, run_id: str) -> list[EvalItem]:
         with self.factory() as session:
@@ -92,13 +110,18 @@ class EvalRig:
         with self.factory() as session:
             return session.get_one(Job, item.job_id)
 
-    def add_price_item(self, key: str = "novo", valid_until: date | None = None) -> str:
-        """Um item de preco criado agora (depois do inicio da corrida, nos testes)."""
+    def add_price_item(
+        self,
+        key: str = "novo",
+        valid_until: date | None = None,
+        body: str = "Bolo novo por 99 EUR.",
+    ) -> str:
+        """Um item de preco da base."""
         entry = NewKbEntry(
             kind="preco",
             key=key,
             title="Preco novo",
-            body="Bolo novo por 99 EUR.",
+            body=body,
             price_amount=Decimal("99.00"),
             price_currency="EUR",
             valid_from=date(2026, 11, 1),
@@ -107,7 +130,7 @@ class EvalRig:
         )
         return self.content.kb.add(self.brand_id, entry, "ana").id
 
-    def add_style_example(self) -> str:
+    def add_style_example(self, after_text: str = "Depois do responsavel.") -> str:
         """Um exemplo de feedback `estilo` ligado a uma revisao semeada fora do pipeline."""
         post_id = self.content.seed_post(f"2026-W46-{datetime.now(UTC).timestamp()}")
         revision_id = self.content.add_owner_revision(post_id)
@@ -119,7 +142,7 @@ class EvalRig:
                 revision_id=revision_id,
                 choice="estilo",
                 before_text="Antes do responsavel.",
-                after_text="Depois do responsavel.",
+                after_text=after_text,
                 note=None,
                 expires_at=None,
                 actor="ana",
@@ -158,7 +181,13 @@ def build_eval_rig(
         check_routes or (lambda: None),
         **extra,
     )
-    return EvalRig(content, context, service, budget, evals_dir)
+    paths = build_package_paths(
+        content.factory, content.engine, content.library, content.kits, "medium", ceiling
+    )
+    handler = EvalPackageHandler(
+        content.factory, content.queue, content.clock, context, content.library, paths
+    )
+    return EvalRig(content, context, service, budget, evals_dir, handler)
 
 
 def count(factory: Factory, *models: type) -> list[int]:
