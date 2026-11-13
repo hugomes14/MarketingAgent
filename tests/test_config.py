@@ -77,6 +77,29 @@ def test_plan_limits_default_to_five_per_week_and_one_per_day(
     assert (settings.plan_max_posts_per_week, settings.plan_max_posts_per_day) == (5, 1)
 
 
+def test_package_max_cost_defaults_to_one_and_a_half_dollars(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("PACKAGE_MAX_COST_USD", raising=False)
+    assert Settings(_env_file=None).package_max_cost_usd == Decimal("1.50")  # type: ignore[call-arg]
+
+
+def test_package_max_cost_is_read_from_the_environment_as_decimal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("PACKAGE_MAX_COST_USD", "0.35")
+    settings = Settings(_env_file=None)  # type: ignore[call-arg]
+    assert settings.package_max_cost_usd == Decimal("0.35")
+
+
+@pytest.mark.parametrize("value", ["0", "-1", "abc"])
+def test_package_max_cost_must_be_a_positive_number(
+    monkeypatch: pytest.MonkeyPatch, value: str
+) -> None:
+    loc = _first_error_loc(monkeypatch, "PACKAGE_MAX_COST_USD", value)
+    assert loc == ("package_max_cost_usd",)
+
+
 @pytest.mark.parametrize("name", ["PLAN_MAX_POSTS_PER_WEEK", "PLAN_MAX_POSTS_PER_DAY"])
 def test_plan_limits_must_be_positive(monkeypatch: pytest.MonkeyPatch, name: str) -> None:
     assert _first_error_loc(monkeypatch, name, "0") == (name.lower(),)
@@ -191,6 +214,7 @@ def test_example_env_files_are_valid_settings(name: str, monkeypatch: pytest.Mon
     assert settings.panel_csrf_secret_file == Path("AgentDATA/secrets/panel_csrf_secret")
     assert "diretor" in settings.role_routes
     assert (settings.plan_max_posts_per_week, settings.plan_max_posts_per_day) == (5, 1)
+    assert settings.package_max_cost_usd == Decimal("1.50")
 
 
 def test_local_example_uses_ollama_route_and_local_prices(

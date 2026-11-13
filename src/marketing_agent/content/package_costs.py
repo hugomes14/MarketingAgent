@@ -14,21 +14,31 @@ Uma reserva `released` (nada faturado) nao conta; uma `settled` ja esta no `cost
 reserva e uma coisa ou outra, por isso nunca se conta duas vezes). Sem isto, um worker que
 morre depois de faturar e um job reclamado teriam uma `ImageAllowance` nova e poderiam faturar
 mais de 2 imagens por pedido.
+
+Familia de triggers (`PackageTriggers`): a quota e o teto de custo por pacote (`PackageCostGuard`)
+somam as execucoes cujo trigger esta na familia do pedido. O job `generate_post` usa os tres
+`post.*`; um item de avaliacao usa um so (`eval_item:<id>`). Familias diferentes da mesma marca
+nao se influenciam.
 """
 
+from collections.abc import Sequence
 from dataclasses import dataclass
-from decimal import Decimal
+from decimal import ROUND_FLOOR, Decimal
 from typing import Final, Literal
 
 from sqlalchemy import Select, func, select
 from sqlalchemy.orm import Session, sessionmaker
 
+from marketing_agent.budget.controller import CENT_MILLI, PENDING_STATUSES
 from marketing_agent.db.models import AgentRun, AgentStep, CostEntry, CostReservation
 from marketing_agent.harness.image_calls import MAX_IMAGES_PER_REQUEST
+from marketing_agent.harness.spec import AgentSpec
 
 type RunStep = Literal["copy", "design", "review"]
 RUN_STEPS: Final[tuple[RunStep, ...]] = ("copy", "design", "review")
 IMAGE_STEP_NAME: Final = "generate_image"
+# Frase fixa (nunca texto do modelo) de quando o teto de custo do pacote ja nao deixa chamar.
+COST_CEILING_REASON: Final = "pacote: teto de custo atingido"
 _UNSETTLED_IMAGE_STATUSES: Final = ("open", "unknown_outcome")
 
 
@@ -45,9 +55,51 @@ def run_trigger(step: RunStep, job_id: str) -> str:
     return f"post.{step}:{job_id}"
 
 
-def _job_run_ids(brand_id: str, job_id: str) -> Select[str]:
-    triggers = [run_trigger(step, job_id) for step in RUN_STEPS]
+@dataclass(frozen=True)
+class PackageTriggers:
+    """`agent_run.trigger` de cada passo do pacote: a FAMILIA de triggers de um pedido.
+
+    O pedido e dono das execucoes cujo trigger pertence a `family`; e por essa familia que se
+    somam custos e se conta a quota de imagens (nunca por marca ou por post):
+    - `for_job`: pedido de geracao de um post, um trigger por passo (`post.<passo>:<job>`);
+    - `single`: um so trigger para os tres passos (item de avaliacao: `eval_item:<id>`).
+    Duas familias da mesma marca nao se influenciam: tetos e quotas sao independentes.
+    """
+
+    copy: str
+    design: str
+    review: str
+
+    @classmethod
+    def for_job(cls, job_id: str) -> "PackageTriggers":
+        """Os tres triggers `post.*` do job `generate_post`."""
+        return cls(
+            run_trigger("copy", job_id),
+            run_trigger("design", job_id),
+            run_trigger("review", job_id),
+        )
+
+    @classmethod
+    def single(cls, trigger: str) -> "PackageTriggers":
+        """O mesmo trigger nos tres passos (a familia tem um so elemento)."""
+        return cls(trigger, trigger, trigger)
+
+    @property
+    def family(self) -> tuple[str, ...]:
+        """Os triggers distintos do pedido, pela ordem copy, design, review."""
+        return tuple(dict.fromkeys((self.copy, self.design, self.review)))
+
+    def of_step(self, step: RunStep) -> str:
+        """Trigger da execucao do passo `step`."""
+        return {"copy": self.copy, "design": self.design, "review": self.review}[step]
+
+
+def _run_ids(brand_id: str, triggers: Sequence[str]) -> Select[str]:
     return select(AgentRun.id).where(AgentRun.brand_id == brand_id, AgentRun.trigger.in_(triggers))
+
+
+def _job_run_ids(brand_id: str, job_id: str) -> Select[str]:
+    return _run_ids(brand_id, PackageTriggers.for_job(job_id).family)
 
 
 def job_costs_in(session: Session, brand_id: str, job_id: str) -> JobCosts:
@@ -70,8 +122,15 @@ def job_costs_in(session: Session, brand_id: str, job_id: str) -> JobCosts:
 
 
 def billed_images(session_factory: sessionmaker[Session], brand_id: str, job_id: str) -> int:
-    """Imagens do pedido faturadas ou que o fornecedor pode ter faturado (ver o modulo)."""
-    runs = _job_run_ids(brand_id, job_id)
+    """Imagens do job faturadas ou que o fornecedor pode ter faturado (ver o modulo)."""
+    return family_billed_images(session_factory, brand_id, PackageTriggers.for_job(job_id).family)
+
+
+def family_billed_images(
+    session_factory: sessionmaker[Session], brand_id: str, triggers: Sequence[str]
+) -> int:
+    """Imagens faturadas (ou possivelmente) pelas execucoes cujo trigger esta em `triggers`."""
+    runs = _run_ids(brand_id, triggers)
     entries = select(func.count()).where(
         CostEntry.brand_id == brand_id,
         CostEntry.run_id.in_(runs),
@@ -95,3 +154,80 @@ def billed_images(session_factory: sessionmaker[Session], brand_id: str, job_id:
 def remaining_images(session_factory: sessionmaker[Session], brand_id: str, job_id: str) -> int:
     """Lugares de imagem que ainda restam a este pedido (nunca negativo)."""
     return max(0, MAX_IMAGES_PER_REQUEST - billed_images(session_factory, brand_id, job_id))
+
+
+def family_remaining_images(
+    session_factory: sessionmaker[Session], brand_id: str, triggers: Sequence[str]
+) -> int:
+    """Lugares de imagem que restam a uma familia de triggers (nunca negativo)."""
+    billed = family_billed_images(session_factory, brand_id, triggers)
+    return max(0, MAX_IMAGES_PER_REQUEST - billed)
+
+
+class PackageCostExceeded(Exception):
+    """O teto de custo do pacote esta esgotado: nao se faz mais nenhuma chamada paga.
+
+    A mensagem e fixa (`COST_CEILING_REASON`): serve de `last_error` sem copiar texto externo.
+    """
+
+    def __init__(self) -> None:
+        """Sem argumentos: a mensagem e sempre `COST_CEILING_REASON`."""
+        super().__init__(COST_CEILING_REASON)
+
+
+class PackageCostGuard:
+    """Teto de custo de UM pacote, somando todas as tentativas e voltas da sua familia de triggers.
+
+    O gasto vem sempre da base (nunca de memoria), por isso sobrevive a um worker morto e a
+    repeticoes do job: `cost_entry` das execucoes da familia mais as reservas ainda pendentes
+    (`open` e `unknown_outcome`, esta ultima conta como gasta: pode ter sido faturada). Uma
+    reserva ou e pendente ou e um `cost_entry`, por isso nunca se conta duas vezes.
+
+    `cap` aplica-se a CADA `engine.run` do pacote: o limite de custo da execucao passa a ser o
+    que sobra do teto, e como o motor recusa reservas acima do limite da execucao, o total do
+    pacote nunca ultrapassa o teto (as execucoes de um pacote correm em sequencia).
+    """
+
+    def __init__(
+        self,
+        session_factory: sessionmaker[Session],
+        brand_id: str,
+        triggers: Sequence[str],
+        ceiling_usd: Decimal,
+    ) -> None:
+        """Guarda a marca, a familia de triggers e o teto (USD, estritamente positivo)."""
+        if ceiling_usd <= 0:
+            raise ValueError("o teto de custo do pacote deve ser positivo")
+        self._session_factory = session_factory
+        self._brand_id = brand_id
+        self._triggers = tuple(triggers)
+        self._ceiling_usd = ceiling_usd
+
+    def spent_usd(self) -> Decimal:
+        """Gasto da familia: lancamentos de custo mais reservas pendentes (`PENDING_STATUSES`)."""
+        runs = _run_ids(self._brand_id, self._triggers)
+        entries = select(func.coalesce(func.sum(CostEntry.cost_usd), Decimal(0))).where(
+            CostEntry.brand_id == self._brand_id, CostEntry.run_id.in_(runs)
+        )
+        pending = select(func.coalesce(func.sum(CostReservation.reserved_usd), Decimal(0))).where(
+            CostReservation.brand_id == self._brand_id,
+            CostReservation.run_id.in_(runs),
+            CostReservation.status.in_(PENDING_STATUSES),
+        )
+        with self._session_factory() as session:
+            return Decimal(session.scalar(entries) or 0) + Decimal(session.scalar(pending) or 0)
+
+    def cap(self, spec: AgentSpec) -> AgentSpec:
+        """Copia de `spec` com o limite de custo da execucao reduzido ao que sobra do teto.
+
+        O `spec` recebido nunca e alterado (e partilhado entre threads). O que sobra arredonda-se
+        por defeito a 6 casas (a escala da base), para a soma nunca passar o teto; sem nada
+        a sobrar levanta `PackageCostExceeded`.
+        """
+        left = (self._ceiling_usd - self.spent_usd()).quantize(CENT_MILLI, rounding=ROUND_FLOOR)
+        if left <= 0:
+            raise PackageCostExceeded
+        limits = spec.limits.model_copy(
+            update={"max_cost_usd": min(spec.limits.max_cost_usd, left)}
+        )
+        return spec.model_copy(update={"limits": limits})

@@ -9,6 +9,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 Capability = Literal["text", "image_input", "image_output", "json_schema"]
 
+# Teto de custo (USD) de UM pacote texto e imagem, somando todas as tentativas e voltas do pedido.
+DEFAULT_PACKAGE_MAX_COST_USD = Decimal("1.50")
+
 # Papel que gera imagens (fundos). Nao e um papel de texto: o router LLM ignora esta rota e a
 # fabrica de imagens (`images.factory`) e a unica que a le.
 IMAGE_ROUTE = "designer_imagem"
@@ -65,6 +68,9 @@ class Settings(BaseSettings):
     # Tetos de publicacoes que o Diretor pode propor num plano semanal.
     plan_max_posts_per_week: int = Field(5, gt=0)
     plan_max_posts_per_day: int = Field(1, gt=0)
+    # Teto de custo de um pacote (texto e imagem) em todas as tentativas e voltas do pedido; vale
+    # igual para o percurso habitual e para a comparacao (nenhum dos dois gasta mais que o outro).
+    package_max_cost_usd: Decimal = Field(DEFAULT_PACKAGE_MAX_COST_USD, gt=0)
     model_prices_path: Path = Path("config/model_prices.yaml")
     media_dir: Path = Path("var/media")
 

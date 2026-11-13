@@ -11,11 +11,18 @@ de texto (sem parecer nem imagem), o post fica `drafting` com `last_error = "ima
 e o job falha sem nova tentativa, tudo na mesma transacao. A quota de imagens de cada tentativa
 vem da base (`content.package_costs`), para um job reclamado nunca faturar mais de 2 imagens.
 
+O pacote em si (voltas, quota, teto de custo) e produzido por `content.package.SpecializedPath`,
+sem escrever posts; aqui so ficam o ciclo de vida do post e a gravacao. Teto de custo do pacote
+(`package_max_cost_usd`, todas as tentativas do job): se acaba depois de um pacote completo,
+segue esse pacote com uma nota fixa; se acaba antes, o job falha sem nova tentativa com
+`last_error = "pacote: teto de custo atingido"`.
+
 Mensagens de falha: so `describe_error` chega a `job.last_error` e `post.last_error`; o texto de
 `RunResult.message` (que pode citar o modelo) nunca e copiado.
 """
 
 import logging
+from decimal import Decimal
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -23,14 +30,22 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from marketing_agent.artifacts.store import ArtifactStore, ArtifactType
 from marketing_agent.clock import Clock
+from marketing_agent.config import DEFAULT_PACKAGE_MAX_COST_USD
 from marketing_agent.content.image_failure import image_error
 from marketing_agent.content.loops import CopyPayload
 from marketing_agent.content.manual_review import ForeignAssetError, ManualReviewer
+from marketing_agent.content.package import (
+    PackageContext,
+    PackageRequest,
+    PackageResult,
+    SpecializedPath,
+)
 from marketing_agent.content.package_assets import store_package_image
-from marketing_agent.content.package_costs import job_costs_in, remaining_images
+from marketing_agent.content.package_costs import PackageTriggers, job_costs_in
 from marketing_agent.content.package_media import DesignMedia
 from marketing_agent.content.revision_store import (
     DRAFTING,
+    GeneratedText,
     PostSnapshot,
     RevisionCosts,
     kb_ref_ids,
@@ -39,17 +54,11 @@ from marketing_agent.content.revision_store import (
     stale_reason,
     take_snapshot,
 )
-from marketing_agent.content.rounds import (
-    GeneratedPackage,
-    ImageFailure,
-    PackageRounds,
-    describe_stop,
-)
+from marketing_agent.content.rounds import GeneratedPackage, PackageRounds
 from marketing_agent.content.specs import load_content_specs
 from marketing_agent.db.models import Post
 from marketing_agent.feedback.service import FeedbackService
-from marketing_agent.harness.engine import AgentEngine, RunResult
-from marketing_agent.harness.image_calls import ImageAllowance
+from marketing_agent.harness.engine import AgentEngine
 from marketing_agent.images.generation import ImageQuality
 from marketing_agent.jobs.errors import describe_error
 from marketing_agent.jobs.queue import ClaimedJob, JobFailure, JobQueue
@@ -95,11 +104,13 @@ class ContentPipeline:
         library: MediaLibrary,
         kits: BrandKitService,
         image_quality: ImageQuality,
+        package_max_cost_usd: Decimal = DEFAULT_PACKAGE_MAX_COST_USD,
     ) -> None:
         """Guarda os colaboradores; `store` e `strategy` dao o perfil e as propostas aceites.
 
         `library` e `kits` dao ao Designer as fotos e o kit de marca e guardam os ativos;
-        `image_quality` e a qualidade dos fundos gerados.
+        `image_quality` e a qualidade dos fundos gerados; `package_max_cost_usd` e o teto de
+        custo de um pacote (todas as tentativas do job).
         """
         self._session_factory = session_factory
         self._kb = kb
@@ -110,8 +121,10 @@ class ContentPipeline:
         self._strategy = strategy
         self._library = library
         self._manual = ManualReviewer(session_factory, engine, kb, library, store, queue, clock)
-        self._rounds = PackageRounds(
-            engine, load_content_specs(), DesignMedia(library, kits), image_quality
+        self._path = SpecializedPath(
+            session_factory,
+            PackageRounds(engine, load_content_specs(), DesignMedia(library, kits), image_quality),
+            package_max_cost_usd,
         )
 
     def review_manual(self, job: ClaimedJob) -> GenerationOutcome:
@@ -144,17 +157,20 @@ class ContentPipeline:
             payload = self._load_payload(started)
         except MissingPrerequisite as exc:
             return self._fail(job, describe_error(exc))
-        allowance = ImageAllowance(
-            remaining_images(self._session_factory, started.brand_id, job.id)
-        )
-        result = self._rounds.run(
-            job.id, started.brand_id, payload, request.owner_comment, allowance
-        )
-        if isinstance(result, RunResult):
-            return self._fail(job, describe_stop(result))
-        if isinstance(result, ImageFailure):
-            return self._save_image_failure(job, started, result)
-        return self._save(job, started, result)
+        context = PackageContext(payload, request.owner_comment)
+        triggers = PackageTriggers.for_job(job.id)
+        result = self._path.produce(PackageRequest(started.brand_id, triggers, context))
+        return self._finish(job, started, result)
+
+    def _finish(
+        self, job: ClaimedJob, snapshot: PostSnapshot, result: PackageResult
+    ) -> GenerationOutcome:
+        """Grava o pacote (`ok`), so o texto (`failed`: imagem) ou falha o job com a razao fixa."""
+        if result.outcome == "ok":
+            return self._save(job, snapshot, result.as_package())
+        if result.outcome == "failed" and result.text is not None:
+            return self._save_image_failure(job, snapshot, result.text, result.failure_message)
+        return self._fail(job, result.failure_message)  # needs_human, limite ou teto do pacote
 
     def _begin(
         self, job: ClaimedJob, request: GenerationRequest
@@ -240,14 +256,14 @@ class ContentPipeline:
             return "stale"
 
     def _save_image_failure(
-        self, job: ClaimedJob, snapshot: PostSnapshot, failure: ImageFailure
+        self, job: ClaimedJob, snapshot: PostSnapshot, text: GeneratedText, reason: str
     ) -> GenerationOutcome:
         """Grava a revisao so de texto e falha o job sem repeticao, na mesma transacao.
 
         O post continua `drafting`, com `last_error = "imagem: <razao fixa>"`. Os custos de
         imagem ja faturados ficam registados na revisao: o fundo gerado perde-se, a despesa nao.
         """
-        message = image_error(failure.reason)
+        message = image_error(reason)
         try:
             with self._session_factory.begin() as session:
                 post = lock_post(session, snapshot.post_id)
@@ -255,9 +271,7 @@ class ContentPipeline:
                     self._queue.complete_in(session, job)
                     return "stale"
                 costs = self._costs(session, snapshot, job)
-                save_generated(
-                    session, post, failure.text, snapshot, self._clock.now(), costs=costs
-                )
+                save_generated(session, post, text, snapshot, self._clock.now(), costs=costs)
                 if self._queue.fail_in(session, job, message, retry=False) is None:
                     raise _LeaseLost
                 post.last_error = message
