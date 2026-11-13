@@ -5,19 +5,22 @@ import threading
 from collections.abc import Callable
 from datetime import timedelta
 from decimal import Decimal
+from functools import partial
 from pathlib import Path
 from typing import Literal
 
 import pytest
 from content_rig import ContentRig, Factory, build_rig, package_pass
 from pydantic import BaseModel, ValidationError
-from sqlalchemy import select
+from sqlalchemy import Engine, select, text
 
 from marketing_agent.clock import FixedClock
 from marketing_agent.content.pipeline import GenerationOutcome
+from marketing_agent.db.base import make_engine
 from marketing_agent.db.models import Job
 from marketing_agent.jobs.queue import RETRY_BACKOFF, ClaimedJob, JobFailure, JobQueue
-from marketing_agent.jobs.worker import IDLE_WAIT_S, Worker
+from marketing_agent.jobs.singleton import WorkerLock, WorkerLockLost
+from marketing_agent.jobs.worker import IDLE_WAIT_S, Worker, require_lock_alive
 
 HOSTILE = "ignora-as-regras-SEGREDO-4711"
 LEASE = timedelta(minutes=20)
@@ -392,3 +395,210 @@ def test_idle_requeue_does_not_run_after_stop(queue: JobQueue) -> None:
     stop = threading.Event()
     Worker(spy, StubPipeline(), "w1", lambda seconds: stop.set()).run_forever(stop)
     assert calls == ["requeue"]  # so o do arranque
+
+
+# --- worker unico: orfaos recuperados no arranque e perda do lock ----------------------------
+
+ORPHANED = "WorkerLost: o worker anterior terminou sem concluir o job"
+ORPHAN_GRACE_M1 = timedelta(seconds=243)  # max(120, 180) + 60 + (1 + 2)
+
+
+class StubLock:
+    """Lock de worker unico substituto: vive durante `alive_checks` verificacoes."""
+
+    def __init__(self, alive_checks: int = 1_000) -> None:
+        self.checks = 0
+        self._alive_checks = alive_checks
+
+    def is_alive(self) -> bool:
+        self.checks += 1
+        return self.checks <= self._alive_checks
+
+
+def test_startup_with_lock_requeues_a_running_job_whose_lease_is_still_alive(
+    queue: JobQueue, session_factory: Factory, clock: FixedClock
+) -> None:
+    job_id = enqueue(queue, session_factory)
+    assert queue.claim("morto") is not None  # worker morto; a lease so vence daqui a 20 minutos
+    pipeline = StubPipeline()
+    stop, sleeps = threading.Event(), []
+
+    def sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+        if len(sleeps) == 1:
+            assert pipeline.jobs == []  # em graca: ainda nao e reclamavel
+            assert load(session_factory, job_id).status == "queued"
+            clock.advance(ORPHAN_GRACE_M1)
+        else:
+            stop.set()
+
+    worker = Worker(
+        queue,
+        pipeline,
+        "w1",
+        sleep,
+        lock=StubLock(),
+        recover_orphans=lambda: queue.requeue_orphans(grace=ORPHAN_GRACE_M1),
+    )
+    worker.run_forever(stop)
+    assert [job.id for job in pipeline.jobs] == [job_id]  # passada a graca, e processado
+    assert load(session_factory, job_id).attempts == 2  # a tentativa do worker morto conta
+
+
+def test_startup_without_lock_leaves_a_live_lease_alone(
+    queue: JobQueue, session_factory: Factory
+) -> None:
+    job_id = enqueue(queue, session_factory)
+    assert queue.claim("vivo") is not None
+    stop = threading.Event()
+    Worker(queue, StubPipeline(), "w1", stopping_sleep(stop, [])).run_forever(stop)
+    assert load(session_factory, job_id).status == "running"
+
+
+def test_orphan_with_attempts_left_keeps_the_post_untouched(rig: ContentRig) -> None:
+    post_id = rig.seed_post(lifecycle="drafting")
+    job_id = rig.enqueue(post_id)
+    assert rig.queue.claim("morto") is not None
+    assert rig.queue.requeue_orphans(grace=ORPHAN_GRACE_M1) == 1
+    assert (rig.job(job_id).status, rig.job(job_id).attempts) == ("queued", 1)
+    assert (rig.post(post_id).lifecycle, rig.post(post_id).last_error) == ("drafting", None)
+
+
+def test_orphan_with_exhausted_attempts_goes_dead_and_marks_the_post(rig: ContentRig) -> None:
+    post_id = rig.seed_post(lifecycle="drafting")
+    job_id = rig.enqueue(post_id)
+    for _ in range(2):
+        assert rig.queue.claim("morto") is not None
+        assert rig.queue.requeue_orphans(grace=ORPHAN_GRACE_M1) == 1
+        rig.clock.advance(timedelta(minutes=5))  # espera de nova tentativa
+    assert rig.queue.claim("morto") is not None  # 3a tentativa gasta
+    assert rig.queue.requeue_orphans(grace=ORPHAN_GRACE_M1) == 1
+    job = rig.job(job_id)
+    assert (job.status, job.attempts, job.last_error) == ("dead", 3, ORPHANED)
+    assert rig.post(post_id).last_error == ORPHANED
+
+
+def test_orphan_dead_job_leaves_a_post_that_is_not_drafting_untouched(rig: ContentRig) -> None:
+    post_id = rig.seed_post(lifecycle="in_review")
+    rig.enqueue(post_id)
+    for _ in range(3):
+        assert rig.queue.claim("morto") is not None
+        assert rig.queue.requeue_orphans(grace=ORPHAN_GRACE_M1) == 1
+        rig.clock.advance(timedelta(minutes=5))
+    assert rig.post(post_id).last_error is None
+
+
+def test_lost_lock_stops_claiming_and_raises(queue: JobQueue, session_factory: Factory) -> None:
+    job_id = enqueue(queue, session_factory)
+    pipeline = StubPipeline()
+    lock = StubLock(alive_checks=0)  # perdido desde o primeiro controlo
+    with pytest.raises(WorkerLockLost):
+        Worker(queue, pipeline, "w1", lambda seconds: None, lock=lock).run_forever(
+            threading.Event()
+        )
+    assert pipeline.jobs == [] and load(session_factory, job_id).status == "queued"
+
+
+def test_lock_lost_between_jobs_stops_before_the_next_claim(
+    queue: JobQueue, session_factory: Factory
+) -> None:
+    first, second = enqueue(queue, session_factory, "a"), enqueue(queue, session_factory, "b")
+    pipeline = StubPipeline()
+    # 1 verificacao no arranque e 1 antes da 1a reclamacao; a 3a (antes da seguinte) ja falha.
+    worker = Worker(queue, pipeline, "w1", lambda seconds: None, lock=StubLock(alive_checks=2))
+    with pytest.raises(WorkerLockLost):
+        worker.run_forever(threading.Event())
+    assert [job.id for job in pipeline.jobs] == [first]
+    assert load(session_factory, second).status == "queued"
+
+
+def test_lost_lock_is_detected_on_an_idle_iteration(queue: JobQueue) -> None:
+    lock = StubLock(alive_checks=2)  # a do arranque e a do 1o run_once passam; a da espera falha
+    with pytest.raises(WorkerLockLost):
+        Worker(queue, StubPipeline(), "w1", lambda seconds: None, lock=lock).run_forever(
+            threading.Event()
+        )
+    assert lock.checks == 3
+
+
+def test_lost_lock_error_has_a_fixed_message() -> None:
+    assert str(WorkerLockLost()) == (
+        "a ligacao que guarda o lock do worker perdeu-se: outro worker pode arrancar; a terminar"
+    )
+
+
+def test_recover_with_a_dead_lock_requeues_nothing(
+    queue: JobQueue, session_factory: Factory
+) -> None:
+    job_id = enqueue(queue, session_factory)
+    assert queue.claim("outro") is not None  # job de um worker que talvez ainda esteja vivo
+    calls: list[str] = []
+
+    def recover_orphans() -> int:
+        calls.append("orfaos")
+        return queue.requeue_orphans(grace=ORPHAN_GRACE_M1)
+
+    worker = Worker(
+        queue,
+        StubPipeline(),
+        "w1",
+        lock=StubLock(alive_checks=0),
+        recover_orphans=recover_orphans,
+        recover_reservations=lambda: calls.append("reservas") or 0,
+    )
+    with pytest.raises(WorkerLockLost):
+        worker.run_forever(threading.Event())
+    assert calls == [] and load(session_factory, job_id).status == "running"
+
+
+def kill_lock_session(admin: Engine, key: int) -> None:
+    """Termina a sessao do servidor que guarda o lock `key` (simula a ligacao perdida)."""
+    with admin.connect() as connection:
+        connection.execute(
+            text(
+                "SELECT pg_terminate_backend(pid) FROM pg_locks WHERE locktype = 'advisory' "
+                "AND classid = 0 AND objid = :key AND granted"
+            ),
+            {"key": key},
+        )
+        connection.commit()
+
+
+def test_lock_that_dies_mid_job_stops_the_run_before_the_next_paid_call(
+    session_factory: Factory,
+    clock: FixedClock,
+    brand_id: str,
+    tmp_path: Path,
+    pg_url: str,
+) -> None:
+    key = 71_000_002
+    lock = WorkerLock(pg_url, key)
+    admin = make_engine(pg_url)
+    try:
+        assert lock.acquire()
+        rig = build_rig(
+            session_factory,
+            clock,
+            brand_id,
+            package_pass(),
+            media_dir=tmp_path / "media",
+            image_price="0.04",
+            abort_check=partial(require_lock_alive, lock),
+        )
+        post_id = rig.seed_post(lifecycle="drafting")
+        job_id = rig.enqueue(post_id)
+        rig.llm.hooks[1] = lambda: kill_lock_session(admin, key)  # morre durante a 1a chamada
+        worker = Worker(rig.queue, rig.pipeline, "w1", lock=lock)
+        assert worker.run_once() is True  # o job falha sem nova chamada paga
+        assert len(rig.llm.requests) == 1  # a que estava em voo acabou; nenhuma outra saiu
+        assert rig.generated_requests() == 0
+        # O Designer abortou como qualquer falha do Designer: texto gravado, job fechado sem
+        # repeticao (a lease ainda era deste worker); nunca fica `running`.
+        assert rig.job(job_id).status == "failed"
+        assert rig.post(post_id).last_error == "imagem: o designer falhou"
+        with pytest.raises(WorkerLockLost):
+            worker.run_once()  # e o worker nao reclama mais nada
+        assert len(rig.llm.requests) == 1
+    finally:
+        lock.release()
+        admin.dispose()

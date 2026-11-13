@@ -41,7 +41,9 @@ def build_content_services(
     """
     kb = KbService(session_factory, store, clock)
     feedback = FeedbackService(session_factory, clock)
-    queue = JobQueue(session_factory, clock, content_job_lease(settings.llm_time_multiplier))
+    queue = JobQueue(
+        session_factory, clock, content_job_lease(time_multiplier=settings.llm_time_multiplier)
+    )
     limits = PlanLimits(settings.plan_max_posts_per_week, settings.plan_max_posts_per_day)
     planning = PlanningService(session_factory, engine, store, strategy, kb, queue, clock, limits)
     media = build_media_services(settings, session_factory, clock)

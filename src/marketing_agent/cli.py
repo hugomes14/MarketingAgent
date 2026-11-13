@@ -6,6 +6,7 @@ traceback); 1 erro inesperado. Os segredos nunca sao impressos.
 
 import argparse
 import logging
+import math
 import os
 import signal
 import sys
@@ -13,6 +14,7 @@ import threading
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from datetime import timedelta
+from functools import partial
 from pathlib import Path
 from types import FrameType
 
@@ -25,6 +27,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from marketing_agent.artifacts.store import ArtifactStore
 from marketing_agent.brands import ensure_brand
+from marketing_agent.budget.controller import BudgetController
 from marketing_agent.budget.pricing import (
     ModelPrice,
     PriceBook,
@@ -40,7 +43,13 @@ from marketing_agent.feedback.service import FeedbackService
 from marketing_agent.harness.engine import AgentEngine
 from marketing_agent.images.factory import ImageBackend, build_image_backend
 from marketing_agent.jobs.queue import JobQueue
-from marketing_agent.jobs.worker import Worker
+from marketing_agent.jobs.singleton import (
+    WorkerAlreadyRunning,
+    WorkerLock,
+    WorkerLockLost,
+    hold_worker_lock,
+)
+from marketing_agent.jobs.worker import LockGuard, Worker, require_lock_alive
 from marketing_agent.kb.service import KbService
 from marketing_agent.llm.factory import build_llm_router
 from marketing_agent.llm.router import LlmRouter
@@ -55,7 +64,9 @@ from marketing_agent.startup import (
     content_job_lease,
     database_error_message,
     load_settings,
+    log_time_settings,
     open_database,
+    orphan_grace,
     worker_stale_after,
 )
 from marketing_agent.strategy.service import StrategyService
@@ -111,12 +122,31 @@ def cmd_sync_prices(args: argparse.Namespace) -> int:
     return 0
 
 
+def _reservation_age_minutes(requested: int | None, time_multiplier: int) -> int:
+    """Idade a usar: o minimo seguro (`worker_stale_after` em minutos, por excesso) se omitida.
+
+    Abaixo desse minimo uma chamada ainda viva do worker (ate `max_duration_s` mais uma chamada
+    em excesso) seria dada como orfa e a sua reserva perdia a protecao do orcamento.
+    """
+    seconds = worker_stale_after(time_multiplier=time_multiplier).total_seconds()
+    floor = math.ceil(seconds / 60)
+    if requested is None:
+        return floor
+    if requested < floor:
+        raise StartupError(
+            f"--older-than-minutes {requested} esta abaixo do minimo seguro de {floor} min "
+            f"(LLM_TIME_MULTIPLIER={time_multiplier}): daria como orfa uma chamada ainda viva"
+        )
+    return requested
+
+
 def cmd_recover_reservations(args: argparse.Namespace) -> int:
-    """Marca como `unknown_outcome` as reservas abertas ha mais de N minutos."""
+    """Marca como `unknown_outcome` as reservas abertas ha mais de N minutos (N >= minimo)."""
     settings = load_settings()
+    minutes = _reservation_age_minutes(args.older_than_minutes, settings.llm_time_multiplier)
     with open_database(settings) as session_factory:
         budget = build_budget_controller(settings, session_factory, SystemClock())
-        count = budget.recover_stale(timedelta(minutes=args.older_than_minutes))
+        count = budget.recover_stale(timedelta(minutes=minutes))
     print(f"{count} reserva(s) marcada(s) como unknown_outcome")
     return 0
 
@@ -206,14 +236,18 @@ def _build_image_backend(settings: Settings) -> ImageBackend:
     return backend
 
 
-def build_worker(settings: Settings, session_factory: sessionmaker[Session]) -> Worker:
-    """Liga motor, servicos, fila (com a lease dos specs) e pipeline num `Worker`."""
-    clock = SystemClock()
-    budget = build_budget_controller(settings, session_factory, clock)
-    store = ArtifactStore(session_factory, clock)
+def _build_worker_engine(
+    settings: Settings,
+    session_factory: sessionmaker[Session],
+    budget: BudgetController,
+    store: ArtifactStore,
+    clock: Clock,
+    lock: LockGuard | None,
+) -> AgentEngine:
+    """Motor do worker: rotas validadas e, com lock, aborta chamadas pagas se o perder."""
     router = _build_worker_router(settings)
     check_content_routes(settings, PriceBook(session_factory))
-    engine = AgentEngine(
+    return AgentEngine(
         session_factory,
         router,
         budget,
@@ -221,10 +255,22 @@ def build_worker(settings: Settings, session_factory: sessionmaker[Session]) -> 
         clock,
         images=_build_image_backend(settings),
         time_multiplier=settings.llm_time_multiplier,
+        # Sem o lock outro worker pode estar a reclamar o job: nenhuma chamada paga nova.
+        abort_check=None if lock is None else partial(require_lock_alive, lock),
     )
-    queue = JobQueue(session_factory, clock, content_job_lease(settings.llm_time_multiplier))
+
+
+def _build_pipeline(
+    settings: Settings,
+    session_factory: sessionmaker[Session],
+    engine: AgentEngine,
+    store: ArtifactStore,
+    queue: JobQueue,
+    clock: Clock,
+) -> ContentPipeline:
+    """Pipeline do pacote sobre o mesmo `MEDIA_DIR` do painel."""
     library = _build_media_library(settings, session_factory, clock)
-    pipeline = ContentPipeline(
+    return ContentPipeline(
         session_factory,
         engine,
         KbService(session_factory, store, clock),
@@ -237,12 +283,33 @@ def build_worker(settings: Settings, session_factory: sessionmaker[Session]) -> 
         BrandKitService(session_factory, library, clock),
         settings.image_quality,
     )
-    older_than = worker_stale_after(settings.llm_time_multiplier)
+
+
+def build_worker(
+    settings: Settings, session_factory: sessionmaker[Session], *, lock: LockGuard | None
+) -> Worker:
+    """Liga motor, servicos, fila (com a lease dos specs) e pipeline num `Worker`.
+
+    `lock` e o lock de worker unico JA TOMADO (ver `cmd_worker`); `None` so quando nao ha
+    outro processo a disputar a base (o fumo, numa base descartavel propria). Sem lock o
+    worker nao recoloca jobs orfaos nem aborta chamadas por perda de exclusividade.
+    """
+    clock = SystemClock()
+    multiplier = settings.llm_time_multiplier
+    budget = build_budget_controller(settings, session_factory, clock)
+    store = ArtifactStore(session_factory, clock)
+    engine = _build_worker_engine(settings, session_factory, budget, store, clock, lock)
+    queue = JobQueue(session_factory, clock, content_job_lease(time_multiplier=multiplier))
+    pipeline = _build_pipeline(settings, session_factory, engine, store, queue, clock)
+    older_than = worker_stale_after(time_multiplier=multiplier)
+    grace = orphan_grace(time_multiplier=multiplier)
     return Worker(
         queue,
         pipeline,
         f"worker-{os.getpid()}",
         recover_reservations=lambda: budget.recover_stale(older_than),
+        lock=lock,
+        recover_orphans=None if lock is None else lambda: queue.requeue_orphans(grace=grace),
     )
 
 
@@ -278,12 +345,26 @@ def stop_on_signals(stop: threading.Event) -> Iterator[None]:
 
 
 def cmd_worker(args: argparse.Namespace) -> int:
-    """Processa a fila de geracao de texto ate `SIGINT`/`SIGTERM` (o job em curso termina)."""
+    """Processa a fila de geracao de texto ate `SIGINT`/`SIGTERM` (o job em curso termina).
+
+    Um so worker por base de dados: o lock de sessao e tomado antes de tudo e, com ele, os
+    jobs `running` que ficaram de um worker morto sao recolocados logo no arranque.
+    """
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     settings = load_settings()
+    log_time_settings(settings, "worker")
+    try:
+        with hold_worker_lock(settings.database_url) as lock:
+            return _run_worker(settings, lock)
+    except (WorkerAlreadyRunning, WorkerLockLost) as exc:  # mensagens fixas, sem detalhes da base
+        raise StartupError(str(exc)) from None
+
+
+def _run_worker(settings: Settings, lock: WorkerLock) -> int:
+    """Corre o worker com o lock ja tomado; devolve o codigo de saida."""
     stop = threading.Event()
     with open_database(settings) as session_factory:
-        worker = build_worker(settings, session_factory)
+        worker = build_worker(settings, session_factory, lock=lock)
         with stop_on_signals(stop):
             print(
                 "worker a escutar a fila (Ctrl+C ou SIGTERM para parar)",
@@ -313,11 +394,17 @@ def serve_forever(server: DevProxyServer) -> None:
 
 
 def cmd_dev_proxy(args: argparse.Namespace) -> int:
-    """Proxy de desenvolvimento que injeta o login (so em loopback)."""
+    """Proxy de desenvolvimento que injeta o login (so em loopback).
+
+    Le o `LLM_TIME_MULTIPLIER` das definicoes: o limite de espera pelo painel acompanha-o.
+    """
+    multiplier = load_settings().llm_time_multiplier
     try:
         listen = parse_loopback_endpoint(args.listen, "--listen")
         upstream = parse_loopback_endpoint(args.upstream, "--upstream")
-        server = build_dev_proxy(listen, upstream, args.login, args.name)
+        server = build_dev_proxy(
+            listen, upstream, args.login, args.name, time_multiplier=multiplier
+        )
     except ValueError as exc:
         raise StartupError(str(exc)) from exc
     except OSError as exc:

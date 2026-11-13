@@ -174,6 +174,7 @@ def make_image_rig(
     with_backend: bool = True,
     with_image_prices: bool = True,
     llm_script: Sequence[LlmResponse | Exception] = (),
+    abort_check: Callable[[], None] | None = None,
 ) -> ImageRig:
     """Sincroniza `price` USD por imagem para todas as qualidades e monta o motor.
 
@@ -204,5 +205,6 @@ def make_image_rig(
         clock,
         sleep=sleeps.append,
         images=backend if with_backend else None,
+        abort_check=abort_check,
     )
     return ImageRig(engine, backend, clock, factory, brand_id, sleeps, llm)

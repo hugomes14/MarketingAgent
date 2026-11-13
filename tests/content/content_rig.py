@@ -253,7 +253,7 @@ class ContentRig:
 
     def expire_leases(self) -> None:
         """Avanca o relogio para depois de qualquer lease."""
-        self.clock.advance(content_job_lease() + timedelta(seconds=1))
+        self.clock.advance(content_job_lease(time_multiplier=1) + timedelta(seconds=1))
 
 
 def package_pass(
@@ -288,6 +288,7 @@ def build_rig(
     image_price: str = "0",
     generator: ImageGenerator | None = None,
     with_kit: bool = True,
+    abort_check: Callable[[], None] | None = None,
 ) -> ContentRig:
     free = PriceTier(0, Decimal(0), Decimal(0))
     per_image = tuple(ImagePrice(q, SIZE, Decimal(image_price)) for q in ("low", "medium", "high"))
@@ -319,11 +320,12 @@ def build_rig(
         clock,
         sleep=lambda seconds: None,
         images=backend,
+        abort_check=abort_check,
     )
     strategy = StrategyService(session_factory, engine, store, clock)
     kb = KbService(session_factory, store, clock)
     feedback = FeedbackService(session_factory, clock)
-    queue = JobQueue(session_factory, clock, content_job_lease())
+    queue = JobQueue(session_factory, clock, content_job_lease(time_multiplier=1))
     library = MediaLibrary(session_factory, LocalMediaStore(media_dir), clock)
     kits = BrandKitService(session_factory, library, clock)
     photo_id = _seed_media(library, kits, brand_id, with_kit)

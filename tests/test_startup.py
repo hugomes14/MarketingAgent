@@ -31,6 +31,7 @@ from marketing_agent.startup import (
     content_job_lease,
     director_max_duration_s,
     max_spec_duration_s,
+    orphan_grace,
     worker_stale_after,
 )
 
@@ -63,25 +64,27 @@ def test_lease_covers_three_package_rounds() -> None:
     assert specs.reviewer.limits.max_duration_s == 180
     assert (MAX_IMAGES_PER_REQUEST, len(NETWORK_BACKOFF_S)) == (2, 2)
     expected = timedelta(seconds=3 * package_per_pass(specs) + 60)
-    assert content_job_lease() == expected
+    assert content_job_lease(time_multiplier=1) == expected
     # 3 x (180 + 300 + 180 + 3 x 120 + 2 x 3 x 180) + 60 = 6360 s
-    assert content_job_lease() == timedelta(seconds=6360)
+    assert content_job_lease(time_multiplier=1) == timedelta(seconds=6360)
 
 
 def test_lease_grows_with_the_designer_and_with_each_image_allowance(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     specs = load_content_specs()
-    base = content_job_lease()
+    base = content_job_lease(time_multiplier=1)
 
     def with_designer_duration(seconds: int) -> ContentSpecs:
         limits = specs.designer.limits.model_copy(update={"max_duration_s": seconds})
         return replace(specs, designer=specs.designer.model_copy(update={"limits": limits}))
 
     monkeypatch.setattr(startup, "load_content_specs", lambda: with_designer_duration(400))
-    assert content_job_lease() == base + timedelta(seconds=3 * 100)  # as 3 passagens
+    assert content_job_lease(time_multiplier=1) == base + timedelta(
+        seconds=3 * 100
+    )  # as 3 passagens
     monkeypatch.setattr(startup, "MAX_IMAGES_PER_REQUEST", 3)
-    assert content_job_lease() > base + timedelta(seconds=3 * 100)
+    assert content_job_lease(time_multiplier=1) > base + timedelta(seconds=3 * 100)
     # Sem o Designer na conta (a regra do 2A) a lease seria menor: nunca cobriria o pacote.
     assert base > timedelta(seconds=3 * (180 + 180 + 240) + 60)
 
@@ -92,7 +95,9 @@ def test_image_timeout_is_one_shared_constant_used_by_the_images_adapter() -> No
 
 
 def test_content_job_lease_is_longer_than_the_director_rule_it_replaces() -> None:
-    assert content_job_lease() > timedelta(seconds=director_max_duration_s() + 60) * 3
+    assert (
+        content_job_lease(time_multiplier=1) > timedelta(seconds=director_max_duration_s() + 60) * 3
+    )
 
 
 def test_max_spec_duration_is_the_longest_of_all_specs() -> None:
@@ -110,9 +115,13 @@ def test_worker_stale_reservation_threshold_outlives_a_live_image_reservation() 
     # Uma reserva de imagem fica aberta durante a chamada (ate IMAGE_CALL_TIMEOUT_S): o limiar
     # do arranque do painel nunca a pode dar como orfa enquanto o worker a espera.
     expected = timedelta(seconds=max_spec_duration_s() + IMAGE_CALL_TIMEOUT_S)
-    assert worker_stale_after() == expected == timedelta(seconds=480)
-    assert worker_stale_after() > timedelta(seconds=IMAGE_CALL_TIMEOUT_S + 60)  # com margem
-    assert worker_stale_after() < content_job_lease()  # uma execucao cabe numa lease
+    assert worker_stale_after(time_multiplier=1) == expected == timedelta(seconds=480)
+    assert worker_stale_after(time_multiplier=1) > timedelta(
+        seconds=IMAGE_CALL_TIMEOUT_S + 60
+    )  # com margem
+    assert worker_stale_after(time_multiplier=1) < content_job_lease(
+        time_multiplier=1
+    )  # uma execucao cabe numa lease
 
 
 # --- rotas do worker: capacidades e precos ----------------------------------------------------
@@ -265,7 +274,21 @@ def test_slow_local_times_extend_lease_and_reservation_recovery() -> None:
         )
     )
     increase = timedelta(seconds=3 * (multiplier - 1) * (durations + 3 * LLM_CALL_TIMEOUT_S))
-    assert content_job_lease(multiplier) == content_job_lease() + increase
-    assert worker_stale_after(multiplier) == timedelta(
+    assert (
+        content_job_lease(time_multiplier=multiplier)
+        == content_job_lease(time_multiplier=1) + increase
+    )
+    assert worker_stale_after(time_multiplier=multiplier) == timedelta(
         seconds=max_spec_duration_s() * multiplier + LLM_CALL_TIMEOUT_S * multiplier
     )
+    # Valores documentados: reservas 300 x 5 + 600 = 2100 s (35 min); lease 18600 s (310 min).
+    assert worker_stale_after(time_multiplier=multiplier) == timedelta(seconds=2100)
+    assert content_job_lease(time_multiplier=multiplier) == timedelta(seconds=18600)
+
+
+@pytest.mark.parametrize(("multiplier", "seconds"), [(1, 243), (5, 663), (10, 1263)])
+def test_orphan_grace_covers_one_in_flight_call_plus_the_fixed_margin(
+    multiplier: int, seconds: int
+) -> None:
+    # max(120 x m, 180) + 60 + (1 + 2): a chamada paga mais lenta ainda em voo no worker anterior.
+    assert orphan_grace(time_multiplier=multiplier) == timedelta(seconds=seconds)

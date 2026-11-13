@@ -62,6 +62,10 @@ from marketing_agent.llm.types import (
 Factory = sessionmaker[Session]
 Script = list[LlmResponse | Exception]
 VALID_FROM = datetime(2026, 11, 1, tzinfo=UTC)
+# Marcador da sessao ocupada = max_duration (120) x m + max(120 x m, 180) + 60 + (1 + 2) de margem:
+# 363 s com m=1 e 1263 s com m=5. Um segundo alem do limite o marcador e retomado.
+MARKER_LIMIT_S = 363
+MARKER_LIMIT_M5_S = 1263
 _request_ids = itertools.count(1)  # o ledger exige provider_request_id unico
 INTERRUPTED_TEXT = "Esta submissão foi interrompida. Envie a resposta de novo."
 INTERNAL_TEXT = "Ocorreu um erro interno ao processar a resposta. Tente novamente."
@@ -184,7 +188,11 @@ class Rig:
 
 
 def build_service(
-    factory: Factory, llm: HookedLlmClient, clock: FixedClock, settings: Settings
+    factory: Factory,
+    llm: HookedLlmClient,
+    clock: FixedClock,
+    settings: Settings,
+    time_multiplier: int = 1,
 ) -> tuple[InterviewService, ArtifactStore]:
     free = PriceTier(0, Decimal(0), Decimal(0))
     sync_model_prices(factory, [ModelPrice("fake", "fake-1", "v1", (free,), valid_from=VALID_FROM)])
@@ -200,20 +208,21 @@ def build_service(
         store,
         clock,
         sleep=lambda seconds: None,
+        time_multiplier=time_multiplier,
     )
     return InterviewService(factory, engine, store, settings, clock), store
 
 
 class RigFactory(Protocol):
-    def __call__(self, script: Script) -> Rig: ...
+    def __call__(self, script: Script, *, time_multiplier: int = 1) -> Rig: ...
 
 
 @pytest.fixture
 def make_rig(session_factory: Factory, clock: FixedClock, brand_id: str) -> RigFactory:
-    def make(script: Script) -> Rig:
+    def make(script: Script, *, time_multiplier: int = 1) -> Rig:
         settings = Settings(database_url="postgresql+psycopg://x/y")
         llm = HookedLlmClient(script)
-        service, store = build_service(session_factory, llm, clock, settings)
+        service, store = build_service(session_factory, llm, clock, settings, time_multiplier)
         return Rig(service, llm, clock, session_factory, brand_id, store, settings)
 
     return make
@@ -351,7 +360,7 @@ def test_stale_busy_reclaimed_after_max_duration(make_rig: RigFactory) -> None:
     session_id = rig.start()
     dead = rig.add_submission(session_id, "k1", "Vendemos pao.", "reserved")
     rig.set_busy(session_id, dead, rig.clock.now())
-    rig.clock.advance(timedelta(seconds=300))  # no limite exato ainda e ocupado
+    rig.clock.advance(timedelta(seconds=MARKER_LIMIT_S))  # no limite exato ainda e ocupado
     with pytest.raises(SessionBusy):
         rig.service.submit_answer(session_id, "Outra resposta.", "k2")
     rig.clock.advance(timedelta(seconds=1))
@@ -360,6 +369,23 @@ def test_stale_busy_reclaimed_after_max_duration(make_rig: RigFactory) -> None:
     by_key = {s.idempotency_key: s.status for s in rig.submissions()}
     assert by_key["k1"] == "failed" and by_key["k3"] == "completed"
     assert rig.session_row(session_id).busy_submission_id is None
+
+
+def test_stale_busy_marker_scales_with_the_time_multiplier(make_rig: RigFactory) -> None:
+    rig = make_rig([turn_response(topic=None), turn_response("E o cliente?")], time_multiplier=5)
+    session_id = rig.start()
+    dead = rig.add_submission(session_id, "k1", "Vendemos pao.", "reserved")
+    rig.set_busy(session_id, dead, rig.clock.now())
+    rig.clock.advance(timedelta(seconds=MARKER_LIMIT_S + 1))  # ja caducou com m=1, com m=5 nao
+    with pytest.raises(SessionBusy):
+        rig.service.submit_answer(session_id, "Outra resposta.", "k2")
+    rig.clock.advance(timedelta(seconds=MARKER_LIMIT_M5_S - MARKER_LIMIT_S - 1))  # limite exato
+    with pytest.raises(SessionBusy):
+        rig.service.submit_answer(session_id, "Outra resposta.", "k2")
+    rig.clock.advance(timedelta(seconds=1))
+    assert rig.service.submit_answer(session_id, "Outra resposta.", "k3").status is (
+        TurnStatus.COMPLETED
+    )
 
 
 def test_resume_after_restart(make_rig: RigFactory) -> None:
@@ -540,7 +566,7 @@ def test_dead_holder_key_replays_interrupted_after_other_key_reclaims(make_rig: 
     session_id = rig.start()
     dead = rig.add_submission(session_id, "k1", "Vendemos pao.", "reserved")
     rig.set_busy(session_id, dead, rig.clock.now())
-    rig.clock.advance(timedelta(seconds=301))
+    rig.clock.advance(timedelta(seconds=MARKER_LIMIT_S + 1))
     assert rig.service.submit_answer(session_id, "Outra.", "k2").status is TurnStatus.COMPLETED
     stored = rig.submission("k1")
     assert stored.status == "failed" and stored.result is not None
@@ -603,7 +629,7 @@ def test_reserved_with_stale_own_claim_becomes_interrupted_and_releases(
     session_id = rig.start()
     owner = rig.add_submission(session_id, "k1", "Vendemos pao.", "reserved")
     rig.set_busy(session_id, owner, rig.clock.now())
-    rig.clock.advance(timedelta(seconds=301))
+    rig.clock.advance(timedelta(seconds=MARKER_LIMIT_S + 1))
     assert_interrupted(rig.service.submit_answer(session_id, "Vendemos pao.", "k1"))
     assert rig.session_row(session_id).busy_submission_id is None
     stored = rig.submission("k1")
@@ -654,7 +680,7 @@ def test_record_turns_refuses_submission_reclaimed_and_failed_by_other_key(
 
     def other_key_reclaims_stale_claim() -> None:
         rig.llm.hook = None
-        rig.clock.advance(timedelta(seconds=301))
+        rig.clock.advance(timedelta(seconds=MARKER_LIMIT_S + 1))
         other_llm = HookedLlmClient([turn_response("Q2")])
         other, _ = build_service(rig.factory, other_llm, rig.clock, rig.settings)
         assert other.submit_answer(session_id, "Outra.", "k2").status is TurnStatus.COMPLETED
@@ -703,7 +729,7 @@ def test_cleanup_failure_is_logged_and_does_not_mask_original(
     assert "ValueError" in caplog.text and "SEGREDO" not in caplog.text
     # Sem limpeza a submissao fica `reserved`, mas o proximo pedido da chave resolve-a.
     monkeypatch.undo()
-    rig.clock.advance(timedelta(seconds=301))
+    rig.clock.advance(timedelta(seconds=MARKER_LIMIT_S + 1))
     assert_interrupted(rig.service.submit_answer(session_id, "SEGREDO", "k1"))
 
 
@@ -748,7 +774,7 @@ def test_request_profile_reclaims_stale_claim(make_rig: RigFactory) -> None:
     rig = make_rig(profile_script())
     session_id = rig.start()
     rig.set_busy(session_id, "morto", rig.clock.now())
-    rig.clock.advance(timedelta(seconds=301))
+    rig.clock.advance(timedelta(seconds=MARKER_LIMIT_S + 1))
     assert rig.store.get(rig.service.request_profile(session_id)).state is ArtifactState.SUBMITTED
 
 

@@ -36,7 +36,12 @@ from marketing_agent.config import IMAGE_ROUTE, RoleRoute, Settings
 from marketing_agent.content.design import GENERATED_SIZE
 from marketing_agent.content.specs import ContentSpecs, load_content_specs
 from marketing_agent.db.base import make_engine, make_session_factory
-from marketing_agent.harness.engine import NETWORK_BACKOFF_S
+from marketing_agent.harness.engine import (
+    CLAIM_MARGIN_S,
+    NETWORK_BACKOFF_S,
+    in_flight_call_bound_s,
+    run_overrun_bound_s,
+)
 from marketing_agent.harness.image_calls import MAX_IMAGES_PER_REQUEST
 from marketing_agent.harness.spec import AgentSpec, SpecLoadError, load_agent_spec
 from marketing_agent.images.factory import build_image_backend
@@ -209,7 +214,7 @@ def _has_image_price(price: ModelPrice, size: str, quality: str) -> bool:
     return True
 
 
-def _call_timeout(time_multiplier: int = 1) -> timedelta:
+def _call_timeout(*, time_multiplier: int) -> timedelta:
     return timedelta(seconds=LLM_CALL_TIMEOUT_S * time_multiplier)
 
 
@@ -223,7 +228,7 @@ def _image_call_bound() -> timedelta:
     return attempts * timedelta(seconds=IMAGE_CALL_TIMEOUT_S)
 
 
-def content_job_lease(time_multiplier: int = 1) -> timedelta:
+def content_job_lease(*, time_multiplier: int) -> timedelta:
     """Lease de um job `generate_post`: 3 x (Copywriter + Designer + Revisor + chamadas) + 60 s.
 
     `time_multiplier` escala os limites dos specs e chamadas de texto; imagem nao escala.
@@ -242,7 +247,7 @@ def content_job_lease(time_multiplier: int = 1) -> timedelta:
     )
     per_pass = (
         timedelta(seconds=run_limits * time_multiplier)
-        + 3 * _call_timeout(time_multiplier)
+        + 3 * _call_timeout(time_multiplier=time_multiplier)
         + _image_call_bound()
     )
     return 3 * per_pass + timedelta(seconds=60)
@@ -259,7 +264,7 @@ def max_spec_duration_s() -> int:
     )
 
 
-def worker_stale_after(time_multiplier: int = 1) -> timedelta:
+def worker_stale_after(*, time_multiplier: int) -> timedelta:
     """Idade a partir da qual uma reserva aberta e de um processo morto, vista pelo worker.
 
     Os tempos de texto e dos specs usam o mesmo `time_multiplier` do motor e adaptadores.
@@ -268,8 +273,34 @@ def worker_stale_after(time_multiplier: int = 1) -> timedelta:
     `IMAGE_CALL_TIMEOUT_S`). Uma reserva mais nova que isto pode ser de uma execucao viva do
     outro processo; uma reserva de imagem em voo nunca e dada como orfa.
     """
-    longest_call = max(LLM_CALL_TIMEOUT_S * time_multiplier, IMAGE_CALL_TIMEOUT_S)
-    return timedelta(seconds=max_spec_duration_s() * time_multiplier + longest_call)
+    return timedelta(seconds=run_overrun_bound_s(max_spec_duration_s(), time_multiplier))
+
+
+def orphan_grace(*, time_multiplier: int) -> timedelta:
+    """Espera de um job orfao antes de poder ser reclamado: uma chamada em voo mais a margem.
+
+    O worker anterior pode estar vivo mas sem o lock (ligacao perdida): enquanto a chamada
+    paga que ja tinha em voo nao terminar, um worker novo nao pode comecar a pagar o mesmo
+    job. 243 s com `time_multiplier` 1 e 663 s com 5 (`max(120 x m, 180) + 60 + 3`).
+    """
+    return timedelta(seconds=in_flight_call_bound_s(time_multiplier) + CLAIM_MARGIN_S)
+
+
+def log_time_settings(settings: Settings, process: str) -> None:
+    """Regista (so nomes e numeros) o multiplicador e os tempos que dele derivam.
+
+    O painel e o worker tem de usar o mesmo `LLM_TIME_MULTIPLIER`: comparar estas linhas do
+    arranque de cada processo mostra uma deriva (o de multiplicador menor daria como orfa a
+    reserva viva do outro).
+    """
+    multiplier = settings.llm_time_multiplier
+    logger.info(
+        "%s: LLM_TIME_MULTIPLIER=%d, lease do job=%d s, limiar das reservas=%d s",
+        process,
+        multiplier,
+        content_job_lease(time_multiplier=multiplier).total_seconds(),
+        worker_stale_after(time_multiplier=multiplier).total_seconds(),
+    )
 
 
 def database_error_message(exc: SQLAlchemyError) -> str:

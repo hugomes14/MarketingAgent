@@ -265,3 +265,21 @@ def test_image_route_error_hides_input(monkeypatch: pytest.MonkeyPatch) -> None:
     with pytest.raises(ValidationError) as excinfo:
         Settings(_env_file=None)  # type: ignore[call-arg]
     assert "modelo-secreto" not in str(excinfo.value)
+
+
+@pytest.mark.parametrize("value", [str(n) for n in range(1, 11)])
+def test_time_multiplier_accepts_one_to_ten(monkeypatch: pytest.MonkeyPatch, value: str) -> None:
+    monkeypatch.setenv("LLM_TIME_MULTIPLIER", value)
+    assert Settings(_env_file=None).llm_time_multiplier == int(value)  # type: ignore[call-arg]
+
+
+@pytest.mark.parametrize("value", ["0", "11", "-1", "1.5", "true", "abc"])
+def test_time_multiplier_rejects_values_outside_one_to_ten_or_not_integers(
+    monkeypatch: pytest.MonkeyPatch, value: str
+) -> None:
+    assert _first_error_loc(monkeypatch, "LLM_TIME_MULTIPLIER", value) == ("llm_time_multiplier",)
+
+
+def test_time_multiplier_defaults_to_one(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("LLM_TIME_MULTIPLIER", raising=False)
+    assert Settings(_env_file=None).llm_time_multiplier == 1  # type: ignore[call-arg]

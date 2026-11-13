@@ -2,10 +2,13 @@
 
 import itertools
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-from typing import Protocol
+from pathlib import Path
+from typing import Protocol, cast
+from unittest.mock import Mock
 
 import pytest
 from pydantic import BaseModel
@@ -206,13 +209,24 @@ class Rig:
 
 class RigFactory(Protocol):
     def __call__(
-        self, script: Script, output_per_million: str = "0", *, time_multiplier: int = 1
+        self,
+        script: Script,
+        output_per_million: str = "0",
+        *,
+        time_multiplier: int = 1,
+        abort_check: Callable[[], None] | None = None,
     ) -> Rig: ...
 
 
 @pytest.fixture
 def make_rig(session_factory: Factory, clock: FixedClock, brand_id: str) -> RigFactory:
-    def make(script: Script, output_per_million: str = "0", *, time_multiplier: int = 1) -> Rig:
+    def make(
+        script: Script,
+        output_per_million: str = "0",
+        *,
+        time_multiplier: int = 1,
+        abort_check: Callable[[], None] | None = None,
+    ) -> Rig:
         # Entrada custa um decimo da saida; "0" torna todas as chamadas gratuitas.
         out_price = Decimal(output_per_million)
         tier = PriceTier(0, out_price / 10, out_price)
@@ -235,6 +249,7 @@ def make_rig(session_factory: Factory, clock: FixedClock, brand_id: str) -> RigF
             clock,
             sleep=sleeps.append,
             time_multiplier=time_multiplier,
+            abort_check=abort_check,
         )
         return Rig(engine, llm, clock, sleeps, session_factory, brand_id, store)
 
@@ -703,7 +718,7 @@ def test_local_time_multiplier_extends_time_without_mutating_spec(make_rig: RigF
     result = rig.run(SlowLoop(rig.clock, 121), spec)
     assert result.status is RunStatus.SUCCEEDED
     assert spec.limits.max_duration_s == 60
-    assert rig.engine.claim_duration_s(spec) == 900
+    assert rig.engine.claim_duration_s(spec) == 963  # 60 x 5 + 600 + 60 + (1 + 2)
 
 
 def test_local_time_multiplier_still_blocks_after_scaled_limit(make_rig: RigFactory) -> None:
@@ -711,3 +726,107 @@ def test_local_time_multiplier_still_blocks_after_scaled_limit(make_rig: RigFact
     result = rig.run(SlowLoop(rig.clock, 301), make_spec(max_duration_s=60))
     assert result.status is RunStatus.BLOCKED_LIMIT
     assert rig.llm.requests == []
+
+
+class LockLost(Exception):
+    """Sinal de aborto dos testes (o motor nao conhece o tipo concreto)."""
+
+
+def test_abort_check_stops_the_run_before_any_paid_call(make_rig: RigFactory) -> None:
+    def abort() -> None:
+        raise LockLost
+
+    rig = make_rig([response()], abort_check=abort)
+    result = rig.run(OneCallLoop())
+    assert result.status is RunStatus.FAILED and result.message is not None
+    assert result.message.startswith("LockLost")
+    assert rig.llm.requests == [] and rig.reservations() == [] and rig.steps() == []
+
+
+def test_abort_check_is_consulted_before_each_call_and_the_inflight_one_finishes(
+    make_rig: RigFactory,
+) -> None:
+    calls: list[int] = []
+
+    def abort() -> None:
+        calls.append(len(calls) + 1)
+        if len(calls) == 2:  # perdido durante a 1a chamada, antes da 2a
+            raise LockLost
+
+    rig = make_rig([response(), response()], abort_check=abort)
+    result = rig.run(TwoCallLoop())
+    assert result.status is RunStatus.FAILED
+    assert len(rig.llm.requests) == 1  # a 1a acabou e foi acertada; a 2a nunca saiu
+    [reservation] = rig.reservations()
+    assert reservation.status == "settled"
+
+
+def test_without_abort_check_the_engine_behaves_as_before(make_rig: RigFactory) -> None:
+    rig = make_rig([response(), response()])
+    assert rig.run(TwoCallLoop()).status is RunStatus.SUCCEEDED
+    assert len(rig.llm.requests) == 2
+
+
+@pytest.mark.parametrize(
+    ("elapsed_s", "status"), [(60, RunStatus.SUCCEEDED), (61, RunStatus.BLOCKED_LIMIT)]
+)
+def test_duration_limit_is_inclusive_at_the_exact_boundary(
+    make_rig: RigFactory, elapsed_s: int, status: RunStatus
+) -> None:
+    rig = make_rig([response()])
+    result = rig.run(SlowLoop(rig.clock, elapsed_s), make_spec(max_duration_s=60))
+    assert result.status is status
+
+
+@pytest.mark.parametrize(("multiplier", "expected_s"), [(1, 303.0), (5, 963.0)])
+def test_claim_duration_adds_one_call_overrun_and_a_fixed_margin(
+    make_rig: RigFactory, multiplier: int, expected_s: float
+) -> None:
+    # 60 x m + max(120 x m, 180) + 60 + (1 + 2): m=1 -> 60 + 180 + 63; m=5 -> 300 + 600 + 63.
+    rig = make_rig([], time_multiplier=multiplier)
+    assert rig.engine.claim_duration_s(make_spec(max_duration_s=60)) == expected_s
+
+
+def test_repeated_compatible_provider_ids_settle_two_distinct_calls(
+    make_rig: RigFactory,
+    tmp_path: Path,
+) -> None:
+    """Duas chamadas legitimas do Ollama nao colidem na UNIQUE dos custos."""
+    import openai
+    from openai.types.chat import ChatCompletion
+
+    from marketing_agent.llm.openai_adapter import OpenAiClient
+
+    raw = {
+        "id": "chatcmpl-944",
+        "object": "chat.completion",
+        "created": 0,
+        "model": "fake-1",
+        "choices": [
+            {
+                "index": 0,
+                "finish_reason": "stop",
+                "message": {
+                    "role": "assistant",
+                    "content": GOOD,
+                },
+            }
+        ],
+        "usage": {"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150},
+    }
+    sdk = Mock(spec=openai.OpenAI)
+    sdk.chat.completions.create.return_value = ChatCompletion.model_validate(raw)
+    key = tmp_path / "local-key"
+    key.write_text("local")
+    client = OpenAiClient(
+        key,
+        frozenset({"text", "json_schema"}),
+        base_url="http://127.0.0.1:11434/v1",
+        sdk_client=cast(openai.OpenAI, sdk),
+    )
+    request = LlmRequest("fake-1", "sistema", [], 100)
+    rig = make_rig([client.complete(request), client.complete(request)])
+    assert rig.run(TwoCallLoop()).status is RunStatus.SUCCEEDED
+    assert len(rig.entries()) == 2
+    assert len({entry.provider_request_id for entry in rig.entries()}) == 2
+    assert all(reservation.status == "settled" for reservation in rig.reservations())
