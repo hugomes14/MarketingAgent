@@ -152,6 +152,18 @@ def _offered_photos(photos: Mapping[str, PhotoRef]) -> list[dict[str, str]]:
     ]
 
 
+def kit_block(kit: BrandKitView) -> str:
+    """Bloco de dados do kit: so as cores, nunca bytes nem referencias ao logotipo."""
+    return wrap_data(
+        "kit_marca", {"cor_primaria": kit.cor_primaria, "cor_secundaria": kit.cor_secundaria}
+    )
+
+
+def photos_block(photos: Mapping[str, PhotoRef]) -> str:
+    """Bloco de dados das fotos oferecidas ao modelo (ver `_offered_photos`)."""
+    return wrap_data("fotos_biblioteca", {"fotos": _offered_photos(photos)})
+
+
 def _design_messages(payload: DesignPayload) -> list[Message]:
     text = payload.texto
     notes = (
@@ -166,15 +178,8 @@ def _design_messages(payload: DesignPayload) -> list[Message]:
             "texto_post",
             {"legenda": text.legenda, "apelo_a_acao": text.apelo_a_acao, "alt_text": text.alt_text},
         ),
-        # So as cores: nunca bytes nem referencias ao logotipo.
-        wrap_data(
-            "kit_marca",
-            {
-                "cor_primaria": payload.kit.cor_primaria,
-                "cor_secundaria": payload.kit.cor_secundaria,
-            },
-        ),
-        wrap_data("fotos_biblioteca", {"fotos": _offered_photos(payload.photos)}),
+        kit_block(payload.kit),
+        photos_block(payload.photos),
         *notes,
     )
 
@@ -260,6 +265,24 @@ def _components(
     return tuple(parts)
 
 
+def finish_design(ctx: RunContext, payload: DesignPayload, draft: RascunhoVisual) -> DesignResult:
+    """Do rascunho visual JA VALIDADO ao resultado: fundo (gerado ou reutilizado) e composicao.
+
+    So o fundo `fundo_ia_titulo` chama o gerador de imagens do motor. Partilhado pelo Designer
+    e pelo percurso simples da comparacao, para comporem exatamente da mesma maneira.
+    """
+    background = _background(ctx, payload, draft)
+    final = _compose(payload, draft, background)
+    components = _components(payload, draft, background)
+    return DesignResult(
+        draft=draft,
+        final=final,
+        components=components,
+        is_ai_generated=any(c.tipo == "gerada" for c in components),
+        generated=background,
+    )
+
+
 class DesignerLoop:
     """Escolhe a imagem de um post: uma chamada estruturada, o fundo (se preciso) e a composicao."""
 
@@ -271,13 +294,4 @@ class DesignerLoop:
             RascunhoVisual,
             extra_validator=_visual_validator(payload.photos),
         )
-        background = _background(ctx, payload, draft)
-        final = _compose(payload, draft, background)
-        components = _components(payload, draft, background)
-        return DesignResult(
-            draft=draft,
-            final=final,
-            components=components,
-            is_ai_generated=any(c.tipo == "gerada" for c in components),
-            generated=background,
-        )
+        return finish_design(ctx, payload, draft)

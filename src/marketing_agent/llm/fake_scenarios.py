@@ -51,7 +51,7 @@ def _response(text: str, stop_reason: StopReason = StopReason.end) -> LlmRespons
     )
 
 
-def _json_response(body: dict[str, object]) -> LlmResponse:
+def _json_response(body: Mapping[str, object]) -> LlmResponse:
     return _response(json.dumps(body, ensure_ascii=False))
 
 
@@ -208,6 +208,22 @@ def weekly_plan(week: str, slots: int = 3) -> Script:
 _DEFAULT_HASHTAGS: Final = ("#padariadobairo", "#paoartesanal")
 
 
+def _caption_body(
+    legenda: str,
+    hashtags: Sequence[str],
+    apelo_a_acao: str,
+    alt_text: str,
+    alegacoes: Sequence[Mapping[str, str | None]],
+) -> dict[str, object]:
+    return {
+        "legenda": legenda,
+        "hashtags": list(hashtags),
+        "apelo_a_acao": apelo_a_acao,
+        "alt_text": alt_text,
+        "alegacoes": [dict(claim) for claim in alegacoes],
+    }
+
+
 def caption_draft(
     legenda: str = "Pao quente todas as manhas, feito com receitas de familia.",
     *,
@@ -220,14 +236,7 @@ def caption_draft(
 
     `alegacoes` e uma lista de `{"texto": ..., "kb_ref": id ou None}`.
     """
-    body: dict[str, object] = {
-        "legenda": legenda,
-        "hashtags": list(hashtags),
-        "apelo_a_acao": apelo_a_acao,
-        "alt_text": alt_text,
-        "alegacoes": [dict(claim) for claim in alegacoes],
-    }
-    return [_json_response(body)]
+    return [_json_response(_caption_body(legenda, hashtags, apelo_a_acao, alt_text, alegacoes))]
 
 
 _VISUAL_DEFAULTS: Final[dict[str, str | None]] = {
@@ -241,6 +250,13 @@ _VISUAL_DEFAULTS: Final[dict[str, str | None]] = {
 }
 
 
+def _visual_body(campos: Mapping[str, str | None]) -> dict[str, str | None]:
+    unknown = sorted(set(campos) - set(_VISUAL_DEFAULTS))
+    if unknown:
+        raise ValueError(f"campo desconhecido de RascunhoVisual: {unknown}")
+    return {**_VISUAL_DEFAULTS, **campos}
+
+
 def visual_draft(**campos: str | None) -> Script:
     """Rascunho visual valido por omissao (`fundo_ia_titulo`); cada campo e ajustavel.
 
@@ -248,10 +264,30 @@ def visual_draft(**campos: str | None) -> Script:
     exemplo `visual_draft(layout="foto_titulo", foto_id="f1", tema_fundo=None, estilo=None)`.
     Nome de campo desconhecido levanta `ValueError`.
     """
-    unknown = sorted(set(campos) - set(_VISUAL_DEFAULTS))
-    if unknown:
-        raise ValueError(f"campo desconhecido de RascunhoVisual: {unknown}")
-    return [_json_response({**_VISUAL_DEFAULTS, **campos})]
+    return [_json_response(_visual_body(campos))]
+
+
+def simple_package(
+    legenda: str = "Pao quente todas as manhas, feito com receitas de familia.",
+    *,
+    hashtags: Sequence[str] = _DEFAULT_HASHTAGS,
+    apelo_a_acao: str = "Passe pela loja e experimente.",
+    alt_text: str = "Pao artesanal acabado de sair do forno.",
+    alegacoes: Sequence[Mapping[str, str | None]] = (),
+    visual: Mapping[str, str | None] | None = None,
+) -> Script:
+    """Pacote do percurso simples: UMA resposta com `texto` e `visual` validos por omissao.
+
+    Os campos do texto sao os de `caption_draft`; `alt_text` e o do texto. `visual` substitui
+    campos de `RascunhoVisual` pelo nome, como em `visual_draft` (por omissao `fundo_ia_titulo`):
+    `simple_package(visual={"layout": "foto_titulo", "foto_id": "f1", "tema_fundo": None,
+    "estilo": None})`. Nome de campo desconhecido levanta `ValueError`.
+    """
+    body: dict[str, object] = {
+        "texto": _caption_body(legenda, hashtags, apelo_a_acao, alt_text, alegacoes),
+        "visual": _visual_body(visual or {}),
+    }
+    return [_json_response(body)]
 
 
 def review(

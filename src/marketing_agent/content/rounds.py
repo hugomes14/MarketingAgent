@@ -85,7 +85,7 @@ def describe_stop(result: RunResult) -> str:
     return describe_error(NeedsHuman(""))  # o motivo do motor pode citar o modelo: so a classe
 
 
-def _as_typed[T](result: RunResult, expected: type[T], role: str) -> T | RunResult:
+def as_typed[T](result: RunResult, expected: type[T], role: str) -> T | RunResult:
     """Saida tipada de uma execucao bem-sucedida; limites e `NeedsHuman` voltam como `RunResult`."""
     if result.status is RunStatus.SUCCEEDED:
         if not isinstance(result.output, expected):
@@ -301,14 +301,9 @@ class _PackageRun:
         `PackageCostExceeded` se o teto ja esgotou ou se a execucao parou por custo com o limite
         reduzido pelo teto: o limite que parou a execucao foi o do pacote, nao o do papel.
         """
-        capped = spec if self._guard is None else self._guard.cap(spec)
-        result = self._r.engine.run(
-            capped, self._brand_id, trigger, loop, payload, image_allowance=allowance
+        return run_capped(
+            self._r.engine, self._guard, spec, self._brand_id, trigger, loop, payload, allowance
         )
-        is_ceiling_binding = capped.limits.max_cost_usd < spec.limits.max_cost_usd
-        if is_ceiling_binding and _is_cost_block(result):
-            raise PackageCostExceeded
-        return result
 
     def _execute_rounds(self) -> PackageOutcome:
         notes: str | None = None
@@ -376,7 +371,7 @@ class _PackageRun:
             self._r.specs.copywriter, self._triggers.copy, CopywriterLoop(), payload
         )
         try:
-            draft = _as_typed(run, RascunhoTexto, "copywriter")
+            draft = as_typed(run, RascunhoTexto, "copywriter")
         except AgentRunFailed:
             if self._last is None:
                 raise
@@ -439,7 +434,7 @@ class _PackageRun:
             self._r.specs.reviewer, self._triggers.review, ReviewerLoop(), payload
         )
         try:
-            reviewed = _as_typed(run, Revisao, "revisor")
+            reviewed = as_typed(run, Revisao, "revisor")
         except AgentRunFailed:
             if self._last is None:
                 raise
@@ -475,6 +470,30 @@ class _PackageRun:
             complete.copy_run_id,
         )
         return GeneratedPackage(text, complete.design, review.imagem_verificada, complete.reviews)
+
+
+def run_capped[TIn, TOut](
+    engine: AgentEngine,
+    guard: PackageCostGuard | None,
+    spec: AgentSpec,
+    brand_id: str,
+    trigger: str,
+    loop: Loop[TIn, TOut],
+    payload: TIn,
+    allowance: ImageAllowance | None = None,
+) -> RunResult:
+    """Corre uma execucao sob o teto de custo do pacote (sem `guard`, com o `spec` tal e qual).
+
+    `PackageCostExceeded` se o teto ja esgotou ou se a execucao parou por custo com o limite
+    reduzido pelo teto: o limite que parou a execucao foi o do pacote, nao o do papel. E o
+    ponto unico desta decisao, usado pelos dois percursos da comparacao.
+    """
+    capped = spec if guard is None else guard.cap(spec)
+    result = engine.run(capped, brand_id, trigger, loop, payload, image_allowance=allowance)
+    is_ceiling_binding = capped.limits.max_cost_usd < spec.limits.max_cost_usd
+    if is_ceiling_binding and _is_cost_block(result):
+        raise PackageCostExceeded
+    return result
 
 
 def _is_cost_block(result: RunResult) -> bool:

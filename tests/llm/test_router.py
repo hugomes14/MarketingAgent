@@ -8,7 +8,12 @@ import pytest
 from marketing_agent.config import Capability, RoleRoute
 from marketing_agent.harness.spec import AgentLimits, AgentSpec, LoopType
 from marketing_agent.llm.fake import FakeLlmClient
-from marketing_agent.llm.router import LlmRouter, MissingCapability, RouteNotConfigured
+from marketing_agent.llm.router import (
+    ROUTE_FALLBACKS,
+    LlmRouter,
+    MissingCapability,
+    RouteNotConfigured,
+)
 
 _TEXT_JSON: frozenset[Capability] = frozenset({"text", "json_schema"})
 
@@ -63,3 +68,41 @@ def test_router_missing_capability_raises() -> None:
     router = LlmRouter(_routes(), {"fake": limited})
     with pytest.raises(MissingCapability, match="json_schema"):
         router.resolve(_spec("diretor"))
+
+
+def test_simples_route_falls_back_to_copywriter() -> None:
+    openai_client = FakeLlmClient([])
+    router = LlmRouter(_routes(), {"fake": FakeLlmClient([]), "openai": openai_client})
+    client, route = router.resolve(_spec("simples"))
+    assert client is openai_client and route.model_id == "m2"
+
+
+def test_explicit_simples_route_wins() -> None:
+    routes = {
+        **_routes(),
+        "simples": RoleRoute(provider="fake", model_id="m3", capabilities=_TEXT_JSON),
+    }
+    fake_client = FakeLlmClient([])
+    router = LlmRouter(routes, {"fake": fake_client, "openai": FakeLlmClient([])})
+    client, route = router.resolve(_spec("simples"))
+    assert client is fake_client and route.model_id == "m3"
+
+
+def test_simples_without_any_route_reports_the_simples_role() -> None:
+    router = LlmRouter({"diretor": _routes()["diretor"]}, {"fake": FakeLlmClient([])})
+    with pytest.raises(RouteNotConfigured, match="simples"):
+        router.resolve(_spec("simples"))
+
+
+def test_fallback_still_checks_the_capabilities_of_the_fallback_route() -> None:
+    routes = {"copywriter": RoleRoute(provider="fake", model_id="m2", capabilities={"text"})}
+    router = LlmRouter(routes, {"fake": FakeLlmClient([])})
+    with pytest.raises(MissingCapability, match="simples.*json_schema"):
+        router.resolve(_spec("simples"))
+
+
+def test_only_declared_roles_have_a_fallback() -> None:
+    assert ROUTE_FALLBACKS == {"simples": "copywriter"}
+    router = LlmRouter(_routes(), {"fake": FakeLlmClient([]), "openai": FakeLlmClient([])})
+    with pytest.raises(RouteNotConfigured, match="designer"):
+        router.resolve(_spec("designer"))

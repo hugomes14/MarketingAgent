@@ -128,7 +128,7 @@ class ReviewPayload:
     image: ReviewImage | None = None
 
 
-def _limits_text(channels: Sequence[str]) -> str:
+def limits_text(channels: Sequence[str]) -> str:
     """Limites dos canais em texto; levanta `ValueError` para canais invalidos (so nomes fixos)."""
     channel_limits(channels)
     parts = []
@@ -168,13 +168,13 @@ def _optional_text_block(tag: str, text: str | None) -> list[str]:
     return [] if not text else [wrap_data(tag, {"texto": text})]
 
 
-def _copy_messages(payload: CopyPayload) -> list[Message]:
-    instruction = COPY_REQUEST.format(
-        channels=", ".join(payload.channels), limits=_limits_text(payload.channels)
-    )
+def copy_blocks(payload: CopyPayload) -> list[str]:
+    """Os blocos de dados do Copywriter, pela ordem do pedido (todo o texto externo etiquetado).
+
+    Partilhado com o percurso simples da comparacao, que le exatamente o mesmo contexto.
+    """
     proposals = [p.model_dump(mode="json") for p in payload.accepted_proposals]
-    return build_request(
-        instruction,
+    return [
         wrap_data("perfil_marca", payload.perfil_marca),
         wrap_data("estrategia", {"pilares": list(payload.pilares)}),
         wrap_data("propostas_aceites", {"propostas": proposals}),
@@ -189,7 +189,14 @@ def _copy_messages(payload: CopyPayload) -> list[Message]:
         ),
         *_optional_text_block("notas_revisor", payload.reviewer_notes),
         *_optional_text_block("comentario_responsavel", payload.owner_comment),
+    ]
+
+
+def _copy_messages(payload: CopyPayload) -> list[Message]:
+    instruction = COPY_REQUEST.format(
+        channels=", ".join(payload.channels), limits=limits_text(payload.channels)
     )
+    return build_request(instruction, *copy_blocks(payload))
 
 
 def _draft_validator(payload: CopyPayload) -> ExtraValidator[RascunhoTexto]:
@@ -232,7 +239,7 @@ def _provenance_block(image: ReviewImage) -> str:
 
 def _review_messages(payload: ReviewPayload) -> list[Message]:
     instruction = REVIEW_REQUEST.format(
-        channels=", ".join(payload.channels), limits=_limits_text(payload.channels)
+        channels=", ".join(payload.channels), limits=limits_text(payload.channels)
     )
     image = payload.image
     blocks = [

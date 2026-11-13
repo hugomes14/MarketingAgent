@@ -147,6 +147,9 @@ def check_content_routes(settings: Settings, prices: PriceBook) -> None:
     para a qualidade configurada e o tamanho gerado. As mensagens so levam nomes (papel,
     fornecedor, modelo, capacidades, variavel), nunca valores de segredos.
 
+    O papel `simples` da comparacao (Plano 2C) nao e verificado aqui: nao e papel do worker e,
+    sem rota propria, usa a do Copywriter (`llm.router.ROUTE_FALLBACKS`), que ja e verificada.
+
     Raises:
         StartupError: na primeira rota que falha, com uma mensagem fixa.
     """

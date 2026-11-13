@@ -294,7 +294,10 @@ corre sempre o Designer, por isso a rota `designer`, com `text` e `json_schema`,
 usar um modelo diferente do Copywriter e a rota `revisor` tem de declarar `image_input` (o papel
 exige-o mesmo nas publicações só de texto). O arranque do `worker` recusa rotas sem as
 capacidades do spec ou sem preço (corra `marketing-agent sync-prices`; para o Ollama use
-`--file config/model_prices.local.yaml`). `PLAN_MAX_POSTS_PER_WEEK` (5) e
+`--file config/model_prices.local.yaml`). A comparação cega (Plano 2C) usa um quinto papel, `simples` (percurso de uma só chamada): não é
+exigido no arranque do `worker` e, sem rota própria em `ROLE_ROUTES`, usa a rota do `copywriter`
+(que tem de ter `text` e `json_schema`); uma rota `simples` explícita tem prioridade.
+`PLAN_MAX_POSTS_PER_WEEK` (5) e
 `PLAN_MAX_POSTS_PER_DAY` (1) limitam o plano do Diretor. As chaves de API e
 o segredo CSRF vão em ficheiros apontados por `ANTHROPIC_API_KEY_FILE`, `OPENAI_API_KEY_FILE` e
 `PANEL_CSRF_SECRET_FILE` (o segredo CSRF exige pelo menos 32 caracteres). A rota `fake` só existe

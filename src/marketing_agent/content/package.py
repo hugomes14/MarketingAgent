@@ -56,6 +56,7 @@ __all__ = [
     "PackageResult",
     "PackageTriggers",
     "SpecializedPath",
+    "stopped_result",
 ]
 
 type PackageOutcomeName = Literal["ok", "needs_human", "blocked_limit", "teto_pacote", "failed"]
@@ -211,10 +212,10 @@ def _to_result(outcome: PackageOutcome) -> PackageResult:
         return PackageResult("failed", text=outcome.text, reason=outcome.reason)
     if isinstance(outcome, CostCeilingReached):
         return PackageResult("teto_pacote", reason=COST_CEILING_REASON)
-    return _stopped(outcome)
+    return stopped_result(outcome)
 
 
-def _stopped(result: RunResult) -> PackageResult:
+def stopped_result(result: RunResult) -> PackageResult:
     """Paragem do Copywriter ou do Revisor na 1.a passagem: ajuda humana ou limite."""
     name: PackageOutcomeName = (
         "blocked_limit" if result.status is RunStatus.BLOCKED_LIMIT else "needs_human"
