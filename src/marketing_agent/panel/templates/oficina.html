@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}Oficina{% endblock %}
+{% block content %}
+<section id="oficina" data-selecionado="{{ selecionado }}">
+  <h1>Oficina da equipa</h1>
+  <p class="nota">Escolha um agente para consultar o trabalho e abrir as suas entregas.</p>
+  <div class="oficina-grelha">
+    {% include "_oficina_coluna.html" %}
+    <div id="oficina-cena" hidden aria-label="Oficina 3D da equipa"></div>
+    <section id="painel-trabalho" aria-label="Trabalho do agente" aria-live="polite">
+      {% include "_oficina_agente.html" %}
+    </section>
+  </div>
+  {% include "_oficina_revisao.html" %}
+</section>
+{% endblock %}

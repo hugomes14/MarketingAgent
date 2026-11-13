@@ -1,0 +1,21 @@
+<nav aria-label="Equipa">
+  <ul class="avatares">
+    {% for agente in equipa.agentes %}
+    {% set personagem = config.personagens[agente.papel] %}
+    <li>
+      <a class="avatar" href="/oficina?papel={{ agente.papel }}"
+         hx-get="/oficina/agente/{{ agente.papel }}" hx-target="#painel-trabalho"
+         data-papel="{{ agente.papel }}" data-cabelo="{{ personagem.cabelo }}"
+         data-roupa="{{ personagem.roupa }}" data-estilo="{{ estilos[personagem.estilo] }}"
+         {% if agente.papel == selecionado %}aria-current="true"{% endif %}>
+        <canvas class="avatar-cara" width="96" height="96" aria-hidden="true">{{ personagem.nome[0] }}</canvas>
+        <strong class="avatar-nome">{{ agente.nome }}</strong>
+        <span class="avatar-papel">{{ papeis_texto[agente.papel] }}</span>
+        <span class="estado-icone estado-{{ agente.estado }}" aria-hidden="true"></span>
+        <span class="estado-texto">{{ agente.estado_texto }}</span>
+        <span class="avatar-pendencias">Pendências: <span>{{ agente.pendencias }}</span></span>
+      </a>
+    </li>
+    {% endfor %}
+  </ul>
+</nav>

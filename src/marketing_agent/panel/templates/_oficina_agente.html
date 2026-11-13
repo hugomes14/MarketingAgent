@@ -1,0 +1,35 @@
+{% set agente = trabalho.agente %}
+<article id="agente-trabalho" data-papel="{{ agente.papel }}" class="cartao">
+  <h2>{{ agente.nome }} · {{ papeis_texto[agente.papel] }}</h2>
+  <p><span class="estado-icone estado-{{ agente.estado }}" aria-hidden="true"></span>
+     <span class="estado-texto">{{ agente.estado_texto }}</span></p>
+  <p>Pendências: {{ agente.pendencias }}</p>
+  <p class="ultima-atividade nota">Última atividade:
+    {% if agente.ultima_atividade_em %}<time datetime="{{ agente.ultima_atividade_em.isoformat() }}">{{ agente.ultima_atividade_em.strftime("%Y-%m-%d %H:%M UTC") }}</time>{% else %}sem registo{% endif %}
+  </p>
+  <h3>Entregas recentes</h3>
+  {% if agente.entregas %}
+  <ul class="entregas">
+    {% for entrega in agente.entregas %}
+    <li><a href="{{ entrega.url }}">{{ entrega.titulo }}</a> <span class="nota">{{ entrega.tipo }}</span></li>
+    {% endfor %}
+  </ul>
+  {% else %}<p class="nota">Ainda não há entregas deste agente.</p>{% endif %}
+  {% if trabalho.falhas %}
+  <h3>Falhas por resolver</h3>
+  <ul class="falhas">
+    {% for falha in trabalho.falhas %}
+    <li><a href="{{ falha.url }}">{{ falha.titulo }}</a>: {{ falha.last_error }}</li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+  {% if agente.papel == "diretor" %}
+  <p><a href="{{ resumo_url }}">Entrevistas (a pedido)</a></p>
+  {% elif agente.papel == "designer" %}
+  <p><a href="/lote">Imagens e origem no lote</a> · <a href="/biblioteca">Biblioteca de fotografias</a></p>
+  {% elif agente.papel == "copywriter" %}
+  <p><a href="/lote">Textos no lote</a></p>
+  {% else %}
+  <p><a href="/lote">Pareceres e pedidos de correção no lote</a></p>
+  {% endif %}
+</article>

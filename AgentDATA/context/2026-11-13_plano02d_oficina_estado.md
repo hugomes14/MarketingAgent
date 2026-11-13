@@ -54,3 +54,18 @@ Three.js0.186.1/integrity do lock igual ao plano. Nunca copiar React/Firebase.
 
 T3: NULL no parecer nao e uma devolucao do Revisor; contar apenas rever/rejeitar apos duas
 voltas. Esta decisao e de leitura e nao altera posts/revisoes.
+
+## Pausa pedida pelo utilizador — 2026-11-13
+
+- Tarefas1–4 concluidas. T4 commit f62c409; suite3045 passed/4 deselected258.17s;
+  teste adicional de duracoes efetivas e conjunto focado30 passed4.46s; ruff/format/mypy161 OK.
+- **Tarefa5 em curso:** vista2D implementada (rotas, quatro templates, navegacao e CSS).
+  RED observado11 falhas/2 passes; GREEN43 testes de vista+estado8.36s. Ruff/format e
+  mypy161 ficheiros OK. Suite completa da T5 interrompida com SIGINT a pedido do utilizador;
+  nao considerar T5 concluida antes de repetir a validacao global e task-done.
+- Fazer checkpoint Git da implementacao T5, sem marcar o ledger como complete.
+- Retomar: suite global na base exclusiva2D; rever/fechar T5 no ledger usando BASE f62c409;
+  depois T6 Playwright e percursos do painel no browser. T6 ainda nao integrada nem validada.
+- Rascunhos preparatorios T6 guardados apenas em var/oficina-pausa-2026-11-13/ (ignorado),
+  para nao perder os ficheiros temporarios. Ler o brief T6 e observar RED antes de integrar.
+- Nao ha migracao, chamadas LLM ou alteracoes aos servicos8000/8001/5434 nesta pausa.
