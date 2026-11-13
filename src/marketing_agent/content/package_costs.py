@@ -37,6 +37,7 @@ from marketing_agent.harness.spec import AgentSpec
 type RunStep = Literal["copy", "design", "review"]
 RUN_STEPS: Final[tuple[RunStep, ...]] = ("copy", "design", "review")
 IMAGE_STEP_NAME: Final = "generate_image"
+INVALID_OUTPUT_CLASS: Final = "invalid_output"
 EVAL_ITEM_TRIGGER_PREFIX: Final = "eval_item:"
 # Frase fixa (nunca texto do modelo) de quando o teto de custo do pacote ja nao deixa chamar.
 COST_CEILING_REASON: Final = "pacote: teto de custo atingido"
@@ -116,7 +117,16 @@ def job_costs_in(session: Session, brand_id: str, job_id: str) -> JobCosts:
     morto nunca correu (`cost_usd` ficou 0) mas os lancamentos, escritos no acerto, existem.
     Uma imagem reutilizada nao escreve lancamento, logo nunca se soma duas vezes.
     """
-    runs = _job_run_ids(brand_id, job_id)
+    return family_costs_in(session, brand_id, PackageTriggers.for_job(job_id).family)
+
+
+def family_costs_in(session: Session, brand_id: str, triggers: Sequence[str]) -> JobCosts:
+    """Soma os `cost_entry` das execucoes cujo trigger esta em `triggers` (ver `job_costs_in`).
+
+    E a unica ligacao entre um item de avaliacao e o seu custo: todas as tentativas do job do
+    item somam, nunca so a ultima.
+    """
+    runs = _run_ids(brand_id, triggers)
     total = func.coalesce(func.sum(CostEntry.cost_usd), Decimal(0))
     images = func.coalesce(
         func.sum(CostEntry.cost_usd).filter(CostEntry.units.has_key("images")), Decimal(0)
@@ -126,6 +136,15 @@ def job_costs_in(session: Session, brand_id: str, job_id: str) -> JobCosts:
     )
     image_usd, package_usd = session.execute(statement).one()
     return JobCosts(Decimal(image_usd), Decimal(package_usd))
+
+
+def family_invalid_outputs_in(session: Session, brand_id: str, triggers: Sequence[str]) -> int:
+    """Passos de modelo com saida invalida (`error_class = 'invalid_output'`) da familia."""
+    statement = select(func.count()).where(
+        AgentStep.run_id.in_(_run_ids(brand_id, triggers)),
+        AgentStep.error_class == INVALID_OUTPUT_CLASS,
+    )
+    return session.scalar(statement) or 0
 
 
 def billed_images(session_factory: sessionmaker[Session], brand_id: str, job_id: str) -> int:

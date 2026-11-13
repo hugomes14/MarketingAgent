@@ -45,6 +45,7 @@ from marketing_agent.harness.engine import (
 from marketing_agent.harness.image_calls import MAX_IMAGES_PER_REQUEST
 from marketing_agent.harness.spec import AgentSpec, SpecLoadError, load_agent_spec
 from marketing_agent.images.factory import build_image_backend
+from marketing_agent.llm.router import ROUTE_FALLBACKS
 from marketing_agent.llm.types import IMAGE_CALL_TIMEOUT_S, LLM_CALL_TIMEOUT_S
 from marketing_agent.planning.schemas import PlanoSemanal
 
@@ -149,6 +150,7 @@ def check_content_routes(settings: Settings, prices: PriceBook) -> None:
 
     O papel `simples` da comparacao (Plano 2C) nao e verificado aqui: nao e papel do worker e,
     sem rota propria, usa a do Copywriter (`llm.router.ROUTE_FALLBACKS`), que ja e verificada.
+    O inicio de uma corrida de avaliacao verifica-o com `check_simple_route`.
 
     Raises:
         StartupError: na primeira rota que falha, com uma mensagem fixa.
@@ -164,6 +166,28 @@ def check_content_routes(settings: Settings, prices: PriceBook) -> None:
     for spec, route in routed:
         _check_text_price(spec.role, route, prices)
     _check_image_route(settings, prices)
+
+
+def check_simple_route(settings: Settings, prices: PriceBook) -> None:
+    """Recusa uma corrida de avaliacao cuja rota `simples` nao serve ou nao tem preco.
+
+    Usa a rota `simples` se existir; senao a do Copywriter (`llm.router.ROUTE_FALLBACKS`), sem
+    exigir uma rota propria. Verifica as capacidades do spec `simples` (texto e `json_schema`)
+    contra a rota que o motor vai usar e que o modelo tem preco. So nomes nas mensagens.
+
+    Raises:
+        StartupError: sem rota utilizavel, com capacidades em falta ou sem preco.
+    """
+    spec = _content_specs().simple
+    route = settings.role_routes.get(spec.role)
+    if route is None:
+        route = settings.role_routes.get(ROUTE_FALLBACKS[spec.role])
+    if route is None:
+        raise StartupError(
+            f"ROLE_ROUTES: faltam a rota '{spec.role}' e a do '{ROUTE_FALLBACKS[spec.role]}'"
+        )
+    _check_capabilities(spec, route)
+    _check_text_price(spec.role, route, prices)
 
 
 def _check_capabilities(spec: AgentSpec, route: RoleRoute) -> None:

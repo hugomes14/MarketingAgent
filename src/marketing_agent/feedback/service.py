@@ -9,6 +9,7 @@ transacao da decisao que o motivou. O `detail` da auditoria so leva `kind` e `po
 mensagens de erro so nomeiam campo e motivo: o texto livre fica em `feedback_example`.
 """
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal
@@ -136,6 +137,21 @@ class FeedbackService:
             styles = self._usable(session, brand_id, "estilo", _STYLE_LIMIT)
             negatives = self._usable(session, brand_id, "negativo", _NEGATIVE_LIMIT)
         return styles, negatives
+
+    def examples_by_ids(self, brand_id: str, ids: Sequence[str]) -> list[FeedbackExampleView]:
+        """Exemplos da marca com estes ids, ativos ou nao, expirados ou nao, na ordem de `ids`.
+
+        Serve a quem fixou os exemplos do prompt num instante (corrida de avaliacao) e tem de
+        reler exatamente esses depois. Ids de outra marca ou inexistentes ficam de fora.
+        """
+        if not ids:
+            return []
+        statement = select(FeedbackExample).where(
+            FeedbackExample.brand_id == brand_id, FeedbackExample.id.in_(ids)
+        )
+        with self._session_factory() as session:
+            found = {row.id: _to_view(row) for row in session.scalars(statement)}
+        return [found[example_id] for example_id in ids if example_id in found]
 
     def list_examples(self, brand_id: str, limit: int | None = None) -> list[FeedbackExampleView]:
         """Exemplos da marca (ativos ou nao, de qualquer tipo), dos mais recentes.
