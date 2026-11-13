@@ -73,6 +73,8 @@ class Settings(BaseSettings):
     package_max_cost_usd: Decimal = Field(DEFAULT_PACKAGE_MAX_COST_USD, gt=0)
     model_prices_path: Path = Path("config/model_prices.yaml")
     media_dir: Path = Path("var/media")
+    # Diretorio dos conjuntos de avaliacao versionados da comparacao (`<nome>.yaml`).
+    evals_dir: Path = Path("evals")
 
     @field_validator(
         "anthropic_api_key_file",

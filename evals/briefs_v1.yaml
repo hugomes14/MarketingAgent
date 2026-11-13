@@ -1,0 +1,77 @@
+# RASCUNHO: rever pelos pilares da estratégia ativa antes da primeira corrida real; `pilar` tem de existir na estratégia ativa (validado ao iniciar a corrida)
+#
+# Conjunto de avaliação v1 da comparação entre percursos (Plano 2C). 8 briefs de um pequeno negócio local.
+# O responsável pode editá-lo; ao mudar o conteúdo, subir `version` e manter o nome do ficheiro.
+#
+# Como rever antes da primeira corrida real:
+# - `pilar`: copiar o nome exato de um pilar da estratégia ativa (os 5 valores abaixo são provisórios);
+# - `kb_refs`: os valores `kb-REVER-...` são marcadores; substituir pelo id de um item ativo da base
+#   (ou esvaziar a lista). Itens com preço ou prazo têm de existir na base com os dados verdadeiros;
+# - `tema`/`objetivo`: texto genérico de propósito, sem preços nem promessas reais; adaptar ao negócio;
+# - `tags` (uma de cada pelo menos): `com_preco`, `sem_foto_adequada`, `promessa_exagerada`.
+name: briefs_v1
+version: 1
+briefs:
+  - key: bastidores_producao
+    tema: Um dia de trabalho na produção, dos bastidores ao produto pronto
+    pilar: Bastidores
+    objetivo: Mostrar o cuidado e o processo por trás do produto
+    canais: [instagram]
+    kb_refs: []
+    tags: []
+
+  - key: oferta_temporada
+    tema: Oferta de temporada disponível por tempo limitado
+    pilar: Ofertas e novidades
+    objetivo: Dar a conhecer a oferta e levar o cliente a visitar ou a encomendar
+    canais: [instagram, facebook]
+    kb_refs: [kb-REVER-oferta-temporada]
+    tags: [com_preco]
+
+  - key: dica_conservacao
+    tema: Dica prática para conservar e aproveitar melhor o produto em casa
+    pilar: Dicas para clientes
+    objetivo: Ser útil e reforçar a confiança no negócio
+    canais: [facebook]
+    kb_refs: []
+    tags: []
+
+  - key: historia_equipa
+    tema: Apresentação de uma pessoa da equipa e do que gosta no seu trabalho
+    pilar: Comunidade
+    objetivo: Aproximar o negócio dos clientes e da vizinhança
+    canais: [instagram, facebook]
+    kb_refs: []
+    tags: []
+
+  - key: novidade_sem_imagem
+    tema: Novidade sazonal ainda sem fotografias próprias
+    pilar: Ofertas e novidades
+    objetivo: Anunciar a novidade mesmo sem uma boa fotografia na biblioteca
+    canais: [instagram]
+    kb_refs: []
+    tags: [sem_foto_adequada]
+
+  - key: produto_melhor_do_mundo
+    tema: Destacar a qualidade de um produto como superior a tudo o que existe
+    pilar: Bastidores
+    objetivo: Transmitir qualidade sem prometer resultados que o negócio não pode garantir
+    canais: [instagram]
+    kb_refs: []
+    tags: [promessa_exagerada]
+
+  - key: evento_local
+    tema: Participação do negócio num evento da comunidade local
+    pilar: Comunidade
+    objetivo: Convidar os clientes a juntar-se ao evento e a conhecer o negócio
+    canais: [facebook]
+    kb_refs: []
+    tags: []
+
+  - key: pedido_de_encomenda
+    tema: Como fazer uma encomenda com antecedência para uma ocasião especial
+    pilar: Dicas para clientes
+    objetivo: Explicar o processo de encomenda e levar a contactar o negócio
+    canais: [instagram, facebook]
+    kb_refs: []
+    tags: []
