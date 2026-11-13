@@ -65,3 +65,11 @@ intervalos de edicao e decisoes humanas auditadas.
    separado. Sem decisao humana, o pipeline habitual conserva o comportamento atual.
 5. Concluir o fumo real do par. Revisao tecnica e verificacoes automaticas aprovadas;
    M5 continua aberto por falta da corrida e decisoes humanas.
+
+## Ambiente de desenvolvimento observado
+
+A base configurada estava parada. Foi arrancado apenas o servico de `compose.dev.yaml`,
+com o volume existente preservado. Consulta de leitura: migracao 0001, marca `Minha marca`,
+sem estrategia ativa. Nenhuma migracao ou alteracao de dados foi aplicada ao desenvolvimento.
+Antes da corrida humana e preciso migrar a base e concluir perfil/estrategia/kit reais; depois
+adaptar e rever os oito briefs. O fumo em curso usa outra base descartavel e dados sinteticos.
