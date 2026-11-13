@@ -14,10 +14,13 @@
    montar TeamStateQueries, conservando o contrato anterior do Diretor.
 2. Estados/JSON/ETag implementados:33 testes novos, suite3016 passed/4 deselected152.74s;
    mypy158 e ruff/format OK. JSON minimo explicito, datas UTC, prioridades testadas nas16
-   combinacoes. Commit a concluir antes da T3.
-3. A seguir: leituras readonly do estado, ate10 consultas, com testes de isolamento, falhas,
-   pendencias, trabalhador morto e volume. Depois rotas/vista2D, browser, JS, Three/cena,
-   ligacao ao estado, desempenho e oficina por omissao (Tasks4–12).
+   combinacoes. Commit 04316ea.
+3. Leituras implementadas: nove SELECT fixos, 23 testes aprovados; suite3039 passed/4
+   deselected143.81s. Codigo em oficina/queries.py e sql.py, dados de teste em team_seed.py.
+   Snapshot REPEATABLE READ, ultimas execucoes por papel, pendencias, entregas limitadas,
+   atribuicao de jobs e falhas por resolver; nenhuma escrita ou chamada LLM.
+4. A seguir: rotas/vista2D, browser, JS, Three/cena, ligacao ao estado, desempenho e oficina
+   por omissao (Tasks4–12).
 
 ## Ambiente de testes
 
@@ -31,7 +34,7 @@ Sem chamadas LLM novas e sem migracao no2D.
 ## Referencia pronta como dados
 
 Conector GitHub verificou o commit073cbc2fdd9c52428e67935e35e0e616c892a258, MIT Ederland Studio2026.
-Fontes guardadas em var/oficina-reference: scene.js, minifig.js, navgrid.js, textures.js,
+Fontes verificadas pelo SHA Git de origem e guardadas em var/oficina-reference: scene.js, minifig.js, navgrid.js, textures.js,
 LICENSE, package.json e package-lock.json. Nao estao integradas na aplicacao ainda.
 Three.js0.186.1/integrity do lock igual ao plano. Nunca copiar React/Firebase.
 
@@ -44,3 +47,6 @@ Three.js0.186.1/integrity do lock igual ao plano. Nunca copiar React/Firebase.
 - Incluir review_post no mapa de jobs com papel revisor, alem do generate_post e eval_package.
 - Artefactos e posts expostos apenas por titulos limitados/ids/URLs internas; falhas curtas so
   no HTML do painel, nunca no JSON. Conteudo de modelo escapado, nao executado.
+
+T3: NULL no parecer nao e uma devolucao do Revisor; contar apenas rever/rejeitar apos duas
+voltas. Esta decisao e de leitura e nao altera posts/revisoes.
