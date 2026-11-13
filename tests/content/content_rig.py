@@ -288,6 +288,7 @@ def build_rig(
     image_price: str = "0",
     generator: ImageGenerator | None = None,
     with_kit: bool = True,
+    abort_check: Callable[[], None] | None = None,
 ) -> ContentRig:
     free = PriceTier(0, Decimal(0), Decimal(0))
     per_image = tuple(ImagePrice(q, SIZE, Decimal(image_price)) for q in ("low", "medium", "high"))
@@ -319,6 +320,7 @@ def build_rig(
         clock,
         sleep=lambda seconds: None,
         images=backend,
+        abort_check=abort_check,
     )
     strategy = StrategyService(session_factory, engine, store, clock)
     kb = KbService(session_factory, store, clock)

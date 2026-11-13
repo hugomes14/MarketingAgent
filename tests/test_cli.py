@@ -591,7 +591,7 @@ def test_worker_warns_about_simulated_backgrounds_without_an_image_route(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     caplog.set_level(logging.WARNING, logger="marketing_agent.cli")
-    cli.build_worker(load_settings(), session_factory)
+    cli.build_worker(load_settings(), session_factory, lock=None)
     assert "fundos simulados: sem rota designer_imagem" in caplog.text
 
 
@@ -731,7 +731,7 @@ def test_build_worker_hands_the_lock_to_the_worker(
     session_factory: Factory, worker_environment: dict[str, str]
 ) -> None:
     lock = WorkerLock("postgresql+psycopg://nunca-liga/x")
-    worker = cli.build_worker(load_settings(), session_factory, lock)
+    worker = cli.build_worker(load_settings(), session_factory, lock=lock)
     assert worker._lock is lock  # noqa: SLF001
 
 
@@ -757,7 +757,7 @@ def test_build_worker_passes_the_multiplier_to_engine_lease_and_reservation_reco
 
     monkeypatch.setattr(cli, "AgentEngine", spy_engine)
     monkeypatch.setattr(BudgetController, "recover_stale", spy_recover)
-    worker = cli.build_worker(load_settings(), session_factory)
+    worker = cli.build_worker(load_settings(), session_factory, lock=None)
     worker.recover()
     assert seen == {"engine": 5, "stale_after": timedelta(seconds=2100)}
     assert worker._queue._lease == timedelta(seconds=18600)  # noqa: SLF001

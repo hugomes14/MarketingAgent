@@ -2,6 +2,7 @@
 
 import itertools
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -208,13 +209,24 @@ class Rig:
 
 class RigFactory(Protocol):
     def __call__(
-        self, script: Script, output_per_million: str = "0", *, time_multiplier: int = 1
+        self,
+        script: Script,
+        output_per_million: str = "0",
+        *,
+        time_multiplier: int = 1,
+        abort_check: Callable[[], None] | None = None,
     ) -> Rig: ...
 
 
 @pytest.fixture
 def make_rig(session_factory: Factory, clock: FixedClock, brand_id: str) -> RigFactory:
-    def make(script: Script, output_per_million: str = "0", *, time_multiplier: int = 1) -> Rig:
+    def make(
+        script: Script,
+        output_per_million: str = "0",
+        *,
+        time_multiplier: int = 1,
+        abort_check: Callable[[], None] | None = None,
+    ) -> Rig:
         # Entrada custa um decimo da saida; "0" torna todas as chamadas gratuitas.
         out_price = Decimal(output_per_million)
         tier = PriceTier(0, out_price / 10, out_price)
@@ -237,6 +249,7 @@ def make_rig(session_factory: Factory, clock: FixedClock, brand_id: str) -> RigF
             clock,
             sleep=sleeps.append,
             time_multiplier=time_multiplier,
+            abort_check=abort_check,
         )
         return Rig(engine, llm, clock, sleeps, session_factory, brand_id, store)
 
@@ -713,6 +726,45 @@ def test_local_time_multiplier_still_blocks_after_scaled_limit(make_rig: RigFact
     result = rig.run(SlowLoop(rig.clock, 301), make_spec(max_duration_s=60))
     assert result.status is RunStatus.BLOCKED_LIMIT
     assert rig.llm.requests == []
+
+
+class LockLost(Exception):
+    """Sinal de aborto dos testes (o motor nao conhece o tipo concreto)."""
+
+
+def test_abort_check_stops_the_run_before_any_paid_call(make_rig: RigFactory) -> None:
+    def abort() -> None:
+        raise LockLost
+
+    rig = make_rig([response()], abort_check=abort)
+    result = rig.run(OneCallLoop())
+    assert result.status is RunStatus.FAILED and result.message is not None
+    assert result.message.startswith("LockLost")
+    assert rig.llm.requests == [] and rig.reservations() == [] and rig.steps() == []
+
+
+def test_abort_check_is_consulted_before_each_call_and_the_inflight_one_finishes(
+    make_rig: RigFactory,
+) -> None:
+    calls: list[int] = []
+
+    def abort() -> None:
+        calls.append(len(calls) + 1)
+        if len(calls) == 2:  # perdido durante a 1a chamada, antes da 2a
+            raise LockLost
+
+    rig = make_rig([response(), response()], abort_check=abort)
+    result = rig.run(TwoCallLoop())
+    assert result.status is RunStatus.FAILED
+    assert len(rig.llm.requests) == 1  # a 1a acabou e foi acertada; a 2a nunca saiu
+    [reservation] = rig.reservations()
+    assert reservation.status == "settled"
+
+
+def test_without_abort_check_the_engine_behaves_as_before(make_rig: RigFactory) -> None:
+    rig = make_rig([response(), response()])
+    assert rig.run(TwoCallLoop()).status is RunStatus.SUCCEEDED
+    assert len(rig.llm.requests) == 2
 
 
 @pytest.mark.parametrize(

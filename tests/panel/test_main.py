@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from marketing_agent.budget.controller import BudgetController
 from marketing_agent.db.models import AgentRun, Brand, CostReservation
 from marketing_agent.harness.engine import AgentEngine
-from marketing_agent.jobs.singleton import hold_worker_lock
+from marketing_agent.jobs.singleton import WORKER_LOCK_KEY, hold_worker_lock
 from marketing_agent.panel import main as panel_main
 from marketing_agent.panel.main import create_app_from_env
 from marketing_agent.startup import StartupError, director_max_duration_s, worker_stale_after
@@ -23,10 +23,14 @@ LOGIN = "dono@local"
 CSRF_SECRET = "s" * 48
 KEY_SECRET = "chave-de-api-super-secreta"
 DB_PASSWORD = "senha-da-base-xyz"
-ADVISORY_LOCKS_SQL = (
-    "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND database = "
+# So o lock do worker (uma chave bigint = classid << 32 | objid em `pg_locks`): outros locks
+# consultivos da base (por exemplo de ferramentas de migracao) nao contam.
+WORKER_LOCK_SQL = (
+    "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND classid = :class_id "
+    "AND objid = :object_id AND database = "
     "(SELECT oid FROM pg_database WHERE datname = current_database())"
 )
+WORKER_LOCK_PARAMS = {"class_id": WORKER_LOCK_KEY >> 32, "object_id": WORKER_LOCK_KEY & 0xFFFFFFFF}
 ROUTES = {
     "diretor": {
         "provider": "openai",
@@ -342,10 +346,12 @@ def test_panel_startup_never_takes_the_worker_lock(
 ) -> None:
     add_brand(session_factory)
     with session_factory() as session:
-        before = session.execute(text(ADVISORY_LOCKS_SQL)).scalar_one()
+        before = session.execute(text(WORKER_LOCK_SQL), WORKER_LOCK_PARAMS).scalar_one()
     create_app_from_env()
     with session_factory() as session:
-        assert session.execute(text(ADVISORY_LOCKS_SQL)).scalar_one() == before == 0
+        assert (
+            session.execute(text(WORKER_LOCK_SQL), WORKER_LOCK_PARAMS).scalar_one() == before == 0
+        )
 
 
 def test_panel_starts_while_a_worker_holds_the_lock(

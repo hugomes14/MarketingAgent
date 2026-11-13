@@ -25,8 +25,16 @@ ALREADY_RUNNING_MESSAGE = "ja existe um worker a correr nesta base de dados"
 LOCK_LOST_MESSAGE = (
     "a ligacao que guarda o lock do worker perdeu-se: outro worker pode arrancar; a terminar"
 )
-# Uma ligacao morta sem FIN (rede cortada) deve falhar em minutos, nao ficar presa para sempre.
-_KEEPALIVES = {"keepalives": 1, "keepalives_idle": 30, "keepalives_interval": 10}
+# Uma ligacao morta sem FIN (particao de rede silenciosa) tem de falhar em dezenas de segundos:
+# `tcp_user_timeout` (ms) limita dados nao confirmados (o `SELECT 1` nao fica preso) e
+# `connect_timeout` (s) a abertura da ligacao; os keepalives apanham a ligacao parada.
+_KEEPALIVES = {
+    "keepalives": 1,
+    "keepalives_idle": 30,
+    "keepalives_interval": 10,
+    "tcp_user_timeout": 30_000,
+    "connect_timeout": 10,
+}
 
 
 class WorkerAlreadyRunning(RuntimeError):

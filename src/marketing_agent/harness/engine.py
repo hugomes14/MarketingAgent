@@ -75,6 +75,11 @@ IMAGE_INPUT_TOKENS_ESTIMATE = 2000
 type ExtraValidator[M: BaseModel] = Callable[[M], list[str]]
 
 
+def in_flight_call_bound_s(time_multiplier: int) -> float:
+    """Duracao maxima de UMA chamada ao fornecedor: a de texto (escalada) ou a de imagem."""
+    return max(LLM_CALL_TIMEOUT_S * time_multiplier, IMAGE_CALL_TIMEOUT_S)
+
+
 def run_overrun_bound_s(max_duration_s: float, time_multiplier: int) -> float:
     """Pior caso de uma execucao: `max_duration_s` escalado mais uma chamada em excesso.
 
@@ -82,9 +87,7 @@ def run_overrun_bound_s(max_duration_s: float, time_multiplier: int) -> float:
     limite: a mais lenta e a de texto (escalada pelo multiplicador) ou a de imagem (que nao escala).
     E a formula unica de onde derivam o limiar das reservas, os marcadores e o proxy.
     """
-    return max_duration_s * time_multiplier + max(
-        LLM_CALL_TIMEOUT_S * time_multiplier, IMAGE_CALL_TIMEOUT_S
-    )
+    return max_duration_s * time_multiplier + in_flight_call_bound_s(time_multiplier)
 
 
 def claim_bound_s(max_duration_s: float, time_multiplier: int) -> float:
@@ -128,6 +131,7 @@ class _Services:
     clock: Clock
     sleep: Callable[[float], None]
     images: ImageBackend | None = None
+    abort_check: Callable[[], None] | None = None
 
 
 @dataclass(frozen=True)
@@ -353,6 +357,10 @@ class RunContext:
         ]
 
     def _check_limits(self) -> None:
+        # Antes de qualquer chamada paga (texto ou imagem): o chamador pode abortar a execucao
+        # (ex.: o worker perdeu o lock de worker unico) sem nova chamada ao fornecedor.
+        if self._s.abort_check is not None:
+            self._s.abort_check()
         limits = self.spec.limits
         if self._steps_done >= limits.max_steps:
             raise RunLimitExceeded(f"limite de {limits.max_steps} passos atingido")
@@ -487,8 +495,14 @@ class AgentEngine:
         sleep: Callable[[float], None] = time.sleep,
         images: ImageBackend | None = None,
         time_multiplier: int = 1,
+        abort_check: Callable[[], None] | None = None,
     ) -> None:
-        """Monta o motor; time_multiplier amplia apenas duracoes, de 1 a 10 vezes."""
+        """Monta o motor; time_multiplier amplia apenas duracoes, de 1 a 10 vezes.
+
+        `abort_check` (opcional) corre antes de cada chamada ao fornecedor, de texto ou de imagem:
+        se levantar, a execucao termina `FAILED` sem nova chamada paga (a que ja esta em voo
+        acaba). Sem ele o comportamento e o de sempre.
+        """
         self._session_factory = session_factory
         self._router = router
         self._budget = budget
@@ -496,6 +510,7 @@ class AgentEngine:
         self._clock = clock
         self._sleep = sleep
         self._images = images
+        self._abort_check = abort_check
         if (
             not isinstance(time_multiplier, int)
             or isinstance(time_multiplier, bool)
@@ -564,6 +579,7 @@ class AgentEngine:
             self._clock,
             self._sleep,
             self._images,
+            self._abort_check,
         )
 
     @staticmethod

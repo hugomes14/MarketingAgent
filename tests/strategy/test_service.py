@@ -422,7 +422,11 @@ def test_fresh_marker_blocks_and_stale_marker_is_taken_over(
     assert rig.llm.requests == []
     [held] = rig.markers()
     assert held.value == "outro"
-    rig.clock.advance(timedelta(seconds=MARKER_LIMIT_S + 1))
+    rig.clock.advance(timedelta(seconds=MARKER_LIMIT_S))  # no limite exato (483 s) ainda ocupado
+    with pytest.raises(ProposalInProgress):
+        rig.service.propose_diagnosis(rig.brand_id)
+    assert rig.llm.requests == []
+    rig.clock.advance(timedelta(seconds=1))  # 484 s: retomado
     assert rig.service.propose_diagnosis(rig.brand_id).status is RunStatus.SUCCEEDED
     assert rig.markers() == []
 

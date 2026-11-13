@@ -14,6 +14,7 @@ import threading
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from datetime import timedelta
+from functools import partial
 from pathlib import Path
 from types import FrameType
 
@@ -26,6 +27,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from marketing_agent.artifacts.store import ArtifactStore
 from marketing_agent.brands import ensure_brand
+from marketing_agent.budget.controller import BudgetController
 from marketing_agent.budget.pricing import (
     ModelPrice,
     PriceBook,
@@ -47,7 +49,7 @@ from marketing_agent.jobs.singleton import (
     WorkerLockLost,
     hold_worker_lock,
 )
-from marketing_agent.jobs.worker import LockGuard, Worker
+from marketing_agent.jobs.worker import LockGuard, Worker, require_lock_alive
 from marketing_agent.kb.service import KbService
 from marketing_agent.llm.factory import build_llm_router
 from marketing_agent.llm.router import LlmRouter
@@ -64,6 +66,7 @@ from marketing_agent.startup import (
     load_settings,
     log_time_settings,
     open_database,
+    orphan_grace,
     worker_stale_after,
 )
 from marketing_agent.strategy.service import StrategyService
@@ -233,19 +236,18 @@ def _build_image_backend(settings: Settings) -> ImageBackend:
     return backend
 
 
-def build_worker(
-    settings: Settings, session_factory: sessionmaker[Session], lock: LockGuard | None = None
-) -> Worker:
-    """Liga motor, servicos, fila (com a lease dos specs) e pipeline num `Worker`.
-
-    `lock` e o lock de worker unico ja tomado (ver `cmd_worker`).
-    """
-    clock = SystemClock()
-    budget = build_budget_controller(settings, session_factory, clock)
-    store = ArtifactStore(session_factory, clock)
+def _build_worker_engine(
+    settings: Settings,
+    session_factory: sessionmaker[Session],
+    budget: BudgetController,
+    store: ArtifactStore,
+    clock: Clock,
+    lock: LockGuard | None,
+) -> AgentEngine:
+    """Motor do worker: rotas validadas e, com lock, aborta chamadas pagas se o perder."""
     router = _build_worker_router(settings)
     check_content_routes(settings, PriceBook(session_factory))
-    engine = AgentEngine(
+    return AgentEngine(
         session_factory,
         router,
         budget,
@@ -253,12 +255,22 @@ def build_worker(
         clock,
         images=_build_image_backend(settings),
         time_multiplier=settings.llm_time_multiplier,
+        # Sem o lock outro worker pode estar a reclamar o job: nenhuma chamada paga nova.
+        abort_check=None if lock is None else partial(require_lock_alive, lock),
     )
-    queue = JobQueue(
-        session_factory, clock, content_job_lease(time_multiplier=settings.llm_time_multiplier)
-    )
+
+
+def _build_pipeline(
+    settings: Settings,
+    session_factory: sessionmaker[Session],
+    engine: AgentEngine,
+    store: ArtifactStore,
+    queue: JobQueue,
+    clock: Clock,
+) -> ContentPipeline:
+    """Pipeline do pacote sobre o mesmo `MEDIA_DIR` do painel."""
     library = _build_media_library(settings, session_factory, clock)
-    pipeline = ContentPipeline(
+    return ContentPipeline(
         session_factory,
         engine,
         KbService(session_factory, store, clock),
@@ -271,13 +283,33 @@ def build_worker(
         BrandKitService(session_factory, library, clock),
         settings.image_quality,
     )
-    older_than = worker_stale_after(time_multiplier=settings.llm_time_multiplier)
+
+
+def build_worker(
+    settings: Settings, session_factory: sessionmaker[Session], *, lock: LockGuard | None
+) -> Worker:
+    """Liga motor, servicos, fila (com a lease dos specs) e pipeline num `Worker`.
+
+    `lock` e o lock de worker unico JA TOMADO (ver `cmd_worker`); `None` so quando nao ha
+    outro processo a disputar a base (o fumo, numa base descartavel propria). Sem lock o
+    worker nao recoloca jobs orfaos nem aborta chamadas por perda de exclusividade.
+    """
+    clock = SystemClock()
+    multiplier = settings.llm_time_multiplier
+    budget = build_budget_controller(settings, session_factory, clock)
+    store = ArtifactStore(session_factory, clock)
+    engine = _build_worker_engine(settings, session_factory, budget, store, clock, lock)
+    queue = JobQueue(session_factory, clock, content_job_lease(time_multiplier=multiplier))
+    pipeline = _build_pipeline(settings, session_factory, engine, store, queue, clock)
+    older_than = worker_stale_after(time_multiplier=multiplier)
+    grace = orphan_grace(time_multiplier=multiplier)
     return Worker(
         queue,
         pipeline,
         f"worker-{os.getpid()}",
         recover_reservations=lambda: budget.recover_stale(older_than),
         lock=lock,
+        recover_orphans=None if lock is None else lambda: queue.requeue_orphans(grace=grace),
     )
 
 
@@ -332,7 +364,7 @@ def _run_worker(settings: Settings, lock: WorkerLock) -> int:
     """Corre o worker com o lock ja tomado; devolve o codigo de saida."""
     stop = threading.Event()
     with open_database(settings) as session_factory:
-        worker = build_worker(settings, session_factory, lock)
+        worker = build_worker(settings, session_factory, lock=lock)
         with stop_on_signals(stop):
             print(
                 "worker a escutar a fila (Ctrl+C ou SIGTERM para parar)",

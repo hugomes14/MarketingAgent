@@ -182,9 +182,9 @@ class JobQueue:
         Os posts dos que ficam `dead` e ainda estao `drafting` recebem `last_error` fixo (senao
         ficavam em geracao para sempre). Ordem dos locks: posts primeiro, depois os jobs.
         """
-        return self._requeue_running(expired_only=True, error=_LEASE_EXPIRED_ERROR)
+        return self._requeue_running(expired_only=True, error=_LEASE_EXPIRED_ERROR, grace=None)
 
-    def requeue_orphans(self) -> int:
+    def requeue_orphans(self, *, grace: timedelta) -> int:
         """Devolve a `queued` (ou `dead`) TODOS os jobs de post `running`, mesmo com lease viva.
 
         So e correto com o lock do worker unico tomado (`jobs.singleton`): o painel nunca
@@ -193,10 +193,15 @@ class JobQueue:
         nas reservas de custo: as do worker morto continuam a contar (a quota de imagens deriva
         da base) ate ao limiar de recuperacao, para nunca libertar dinheiro de uma chamada que
         pode ter sido faturada.
-        """
-        return self._requeue_running(expired_only=False, error=_ORPHANED_ERROR)
 
-    def _requeue_running(self, *, expired_only: bool, error: str) -> int:
+        Os que voltam a `queued` so podem ser reclamados depois de `grace` (ver
+        `startup.orphan_grace`, que a deriva do multiplicador de tempos): se o worker
+        anterior ainda esta vivo (perdeu o lock mas nao morreu), a chamada paga em voo tem de
+        terminar antes de outro comecar o mesmo job.
+        """
+        return self._requeue_running(expired_only=False, error=_ORPHANED_ERROR, grace=grace)
+
+    def _requeue_running(self, *, expired_only: bool, error: str, grace: timedelta | None) -> int:
         """Recoloca os `running` candidatos; devolve quantos mudaram de estado."""
         now = self._clock.now()
         with self._session_factory.begin() as session:
@@ -205,7 +210,7 @@ class JobQueue:
                 return 0
             self._lock_posts(session, {post_id for _, post_id in candidates if post_id})
             updated = self._requeue(
-                session, [job_id for job_id, _ in candidates], now, error, expired_only
+                session, [job_id for job_id, _ in candidates], now, error, expired_only, grace
             )
             self._mark_posts_failed(
                 session,
@@ -238,7 +243,12 @@ class JobQueue:
 
     @staticmethod
     def _requeue(
-        session: Session, job_ids: list[str], now: datetime, error: str, expired_only: bool
+        session: Session,
+        job_ids: list[str],
+        now: datetime,
+        error: str,
+        expired_only: bool,
+        grace: timedelta | None,
     ) -> dict[str, str]:
         """Aplica a recolocacao aos candidatos (ainda `running` e, se pedido, vencidos).
 
@@ -252,15 +262,18 @@ class JobQueue:
             select(Job.id).where(*conditions).order_by(Job.id).with_for_update()
         ).scalars()
         exhausted = Job.attempts >= Job.max_attempts
+        values: dict[str, object] = {
+            "status": case((exhausted, "dead"), else_="queued"),
+            "last_error": error,
+            "updated_at": now,
+            **_RELEASED_LOCK,
+        }
+        if grace is not None:
+            values["run_at"] = now + grace  # `claim` so reclama com `run_at` vencido
         statement = (
             update(Job)
             .where(Job.id.in_(list(locked)))
-            .values(
-                status=case((exhausted, "dead"), else_="queued"),
-                last_error=error,
-                updated_at=now,
-                **_RELEASED_LOCK,
-            )
+            .values(**values)
             .returning(Job.id, Job.status)
         )
         return {job_id: status for job_id, status in session.execute(statement)}

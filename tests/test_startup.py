@@ -31,6 +31,7 @@ from marketing_agent.startup import (
     content_job_lease,
     director_max_duration_s,
     max_spec_duration_s,
+    orphan_grace,
     worker_stale_after,
 )
 
@@ -283,3 +284,11 @@ def test_slow_local_times_extend_lease_and_reservation_recovery() -> None:
     # Valores documentados: reservas 300 x 5 + 600 = 2100 s (35 min); lease 18600 s (310 min).
     assert worker_stale_after(time_multiplier=multiplier) == timedelta(seconds=2100)
     assert content_job_lease(time_multiplier=multiplier) == timedelta(seconds=18600)
+
+
+@pytest.mark.parametrize(("multiplier", "seconds"), [(1, 243), (5, 663), (10, 1263)])
+def test_orphan_grace_covers_one_in_flight_call_plus_the_fixed_margin(
+    multiplier: int, seconds: int
+) -> None:
+    # max(120 x m, 180) + 60 + (1 + 2): a chamada paga mais lenta ainda em voo no worker anterior.
+    assert orphan_grace(time_multiplier=multiplier) == timedelta(seconds=seconds)

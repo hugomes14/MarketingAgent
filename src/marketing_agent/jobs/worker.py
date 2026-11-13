@@ -51,6 +51,15 @@ class LockGuard(Protocol):
         ...
 
 
+def require_lock_alive(lock: LockGuard) -> None:
+    """Levanta `WorkerLockLost` se a ligacao que guarda o lock deixou de responder.
+
+    Serve de `abort_check` do motor: sem o lock outro worker pode estar a reclamar o job.
+    """
+    if not lock.is_alive():
+        raise WorkerLockLost
+
+
 class Worker:
     """Consome a fila de `generate_post` ate lhe pedirem para parar."""
 
@@ -63,15 +72,17 @@ class Worker:
         *,
         recover_reservations: Callable[[], int] | None = None,
         lock: LockGuard | None = None,
+        recover_orphans: Callable[[], int] | None = None,
     ) -> None:
         """`sleep` substitui a espera de fila vazia (testes); por omissao `stop.wait`, que acorda
         logo que `stop` e ativado. `recover_reservations` corre no arranque e devolve quantas
         reservas orfas marcou (o chamador conhece o orcamento e o limiar).
 
-        `lock` e o lock de worker unico JA TOMADO por quem chama: com ele, o arranque recoloca
-        todos os jobs `running` (orfaos) e o worker para (`WorkerLockLost`) se a ligacao
-        que o guarda se perder, porque outro worker poderia arrancar. Sem `lock` (testes) so
-        as leases vencidas sao recuperadas.
+        `lock` e o lock de worker unico JA TOMADO por quem chama: o worker para
+        (`WorkerLockLost`) se a ligacao que o guarda se perder, porque outro worker poderia
+        arrancar. `recover_orphans` corre no arranque e devolve quantos jobs `running` recolocou
+        (so e correto com o lock tomado: sao orfaos de um worker morto). Sem eles (testes) so as
+        leases vencidas sao recuperadas.
         """
         self._queue = queue
         self._pipeline = pipeline
@@ -79,11 +90,12 @@ class Worker:
         self._sleep = sleep
         self._recover_reservations = recover_reservations
         self._lock = lock
+        self._recover_orphans = recover_orphans
 
     def _ensure_lock_alive(self) -> None:
         """Sem o lock nao se reclama nada: levanta `WorkerLockLost` se a ligacao se perdeu."""
-        if self._lock is not None and not self._lock.is_alive():
-            raise WorkerLockLost
+        if self._lock is not None:
+            require_lock_alive(self._lock)
 
     def run_once(self) -> bool:
         """Processa no maximo um job; `False` se a fila estava vazia.
@@ -112,8 +124,13 @@ class Worker:
         return True
 
     def recover(self) -> None:
-        """Arranque: devolve a fila os jobs de workers mortos e marca as reservas orfas."""
-        orphans = self._queue.requeue_orphans() if self._lock is not None else 0
+        """Arranque: devolve a fila os jobs de workers mortos e marca as reservas orfas.
+
+        Raises:
+            WorkerLockLost: o lock ja se perdeu; sem ele nao se recolocam jobs de ninguem.
+        """
+        self._ensure_lock_alive()
+        orphans = self._recover_orphans() if self._recover_orphans is not None else 0
         requeued = orphans + self._queue.requeue_expired()
         reservations = self._recover_reservations() if self._recover_reservations else 0
         logger.info(

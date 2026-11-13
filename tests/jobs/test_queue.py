@@ -18,10 +18,12 @@ from marketing_agent.jobs.queue import (
     ClaimedJob,
     JobQueue,
 )
+from marketing_agent.startup import orphan_grace
 
 Factory = sessionmaker[Session]
 LEASE = timedelta(minutes=10)
 BARRIER_TIMEOUT_S = 5
+GRACE_M1 = timedelta(seconds=243)  # max(120, 180) + 60 + (1 + 2); ver tests/test_startup.py
 
 
 @pytest.fixture
@@ -227,19 +229,49 @@ def test_requeue_expired_exhausted_attempts_goes_dead(
 
 
 def test_requeue_orphans_requeues_running_jobs_with_a_live_lease(
-    queue: JobQueue, session_factory: Factory
+    queue: JobQueue, session_factory: Factory, clock: FixedClock
 ) -> None:
     claimed = claim_one(queue, session_factory)  # a lease ainda nao venceu
     assert queue.requeue_expired() == 0
-    assert queue.requeue_orphans() == 1
+    assert queue.requeue_orphans(grace=GRACE_M1) == 1
     row = load(session_factory, claimed.id)
     # A tentativa foi gasta na reclamacao e continua gasta.
     assert (row.status, row.attempts) == ("queued", 1)
     assert (row.lease_token, row.locked_by, row.locked_until) == (None, None, None)
     assert row.last_error == "WorkerLost: o worker anterior terminou sem concluir o job"
+    clock.advance(timedelta(seconds=243))  # fim da graca (ver o teste seguinte)
     again = queue.claim("w2")
     assert again is not None and again.attempts == 2
-    assert queue.requeue_orphans() == 1  # e de novo: o lock do worker garante que e orfao
+    assert queue.requeue_orphans(grace=GRACE_M1) == 1
+
+
+@pytest.mark.parametrize(("multiplier", "grace_s"), [(1, 243), (5, 663)])
+def test_orphan_is_not_claimable_before_the_grace_period_and_is_after(
+    queue: JobQueue,
+    session_factory: Factory,
+    clock: FixedClock,
+    multiplier: int,
+    grace_s: int,
+) -> None:
+    # Graca = max(120 x m, 180) + 60 + (1 + 2): a chamada paga em voo do worker anterior acaba.
+    claimed = claim_one(queue, session_factory)
+    assert queue.requeue_orphans(grace=orphan_grace(time_multiplier=multiplier)) == 1
+    assert queue.claim("w2") is None
+    clock.advance(timedelta(seconds=grace_s - 1))
+    assert queue.claim("w2") is None
+    clock.advance(timedelta(seconds=1))  # no instante exato a graca acabou
+    again = queue.claim("w2")
+    assert again is not None and again.id == claimed.id and again.attempts == 2
+
+
+def test_orphan_grace_does_not_apply_to_expired_lease_recovery(
+    queue: JobQueue, session_factory: Factory, clock: FixedClock
+) -> None:
+    claimed = claim_one(queue, session_factory)
+    clock.advance(LEASE + timedelta(seconds=1))
+    assert queue.requeue_expired() == 1
+    again = queue.claim("w2")  # lease vencida: sem graca extra
+    assert again is not None and again.id == claimed.id
 
 
 def test_requeue_orphans_exhausted_attempts_goes_dead(
@@ -248,7 +280,7 @@ def test_requeue_orphans_exhausted_attempts_goes_dead(
     claimed = claim_one(queue, session_factory)
     with session_factory.begin() as session:
         session.get_one(Job, claimed.id).attempts = 3
-    assert queue.requeue_orphans() == 1
+    assert queue.requeue_orphans(grace=GRACE_M1) == 1
     assert load(session_factory, claimed.id).status == "dead"
 
 
@@ -262,10 +294,10 @@ def test_requeue_orphans_only_touches_running_post_jobs(
     assert running.id == waiting
     other_claim = queue.claim("w1")
     assert other_claim is not None and other_claim.id == other_type
-    assert queue.requeue_orphans() == 1  # so o do tipo de post
+    assert queue.requeue_orphans(grace=GRACE_M1) == 1  # so o do tipo de post
     assert load(session_factory, other_type).status == "running"
     assert load(session_factory, waiting).status == "queued"
-    assert queue.requeue_orphans() == 0
+    assert queue.requeue_orphans(grace=GRACE_M1) == 0
 
 
 def test_cancel_for_post(queue: JobQueue, session_factory: Factory) -> None:
