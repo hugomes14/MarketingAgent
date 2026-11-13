@@ -64,6 +64,12 @@ class PathReport:
     latency_max_ms: int | None
     invalid_outputs: int
     review_rounds: int
+    pending_usd: Decimal = Decimal(0)
+    unknown_usd: Decimal = Decimal(0)
+    unsettled_reservations: int = 0
+    latency_measured_packages: int = 0
+    timing_incomplete_packages: int = 0
+    latency_partial_ms: int | None = None
 
 
 @dataclass(frozen=True)
@@ -97,3 +103,11 @@ class EvalReport:
     decisions: tuple[DecisionView, ...]
     limitations: tuple[str, ...] = LIMITACOES
     question: str = PERGUNTA_D35
+    pending_usd: Decimal = Decimal(0)
+    unknown_usd: Decimal = Decimal(0)
+    unsettled_reservations: int = 0
+
+    @property
+    def accounting_incomplete(self) -> bool:
+        """Mesmo uma reserva de valor zero pode ter desfecho ainda desconhecido."""
+        return self.unsettled_reservations > 0

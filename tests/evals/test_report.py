@@ -4,10 +4,9 @@ from decimal import Decimal
 
 import pytest
 from content_rig import package_pass
+from eval_accounting import add_exposure
 from eval_rig import brief
-from sqlalchemy import select
 
-from marketing_agent.db.models import EvalItem
 from marketing_agent.evals.blind import JudgementInput, side_a_path
 from marketing_agent.evals.judging import JudgingService
 from marketing_agent.evals.report import (
@@ -20,9 +19,16 @@ from marketing_agent.evals.report import (
 from marketing_agent.llm.fake_scenarios import simple_package
 
 
-def prepare(rig, winners=("especializado", "empate")):
+def prepare(rig, winners=("especializado", "empate"), *, record_timings=False):
     run_id = rig.start()
     for item in rig.items(run_id):
+        if record_timings:
+            from datetime import timedelta
+
+            duration = timedelta(seconds=1 if item.path == "simples" else 3)
+            rig.content.llm.hooks[len(rig.content.llm.requests) + 1] = lambda elapsed=duration: (
+                rig.content.clock.advance(elapsed)
+            )
         script = (
             simple_package()
             if item.path == "simples"
@@ -68,10 +74,7 @@ def test_report_counts_wins_losses_ties_by_side_a_path(make_eval_rig):
 
 def test_report_errors_minutes_cost_latency_by_path(make_eval_rig):
     rig = make_eval_rig(image_price="0.04")
-    run_id, judging = prepare(rig)
-    with rig.factory.begin() as session:
-        for item in session.scalars(select(EvalItem)):
-            item.latency_ms = 1000 if item.path == "simples" else 3000
+    run_id, judging = prepare(rig, record_timings=True)
     judging.reveal(rig.brand_id, run_id, "ana")
     report = ReportService(rig.factory, rig.content.clock).build(rig.brand_id, run_id)
     paths = {p.path: p for p in report.paths}
@@ -126,3 +129,60 @@ def test_role_decision_before_reveal_refused_and_after_append_only(make_eval_rig
     assert len(reports.build(rig.brand_id, run_id).decisions) == 2
     with pytest.raises(ValueError):
         reports.record_role_decision(rig.brand_id, run_id, "diretor", "manter", "Errado", "ana")
+
+
+def test_report_separates_pending_unknown_exposure_and_late_settlement(make_eval_rig):
+    from marketing_agent.budget.pricing import ImageUsage
+
+    rig = make_eval_rig(image_price="0.04")
+    run_id, judging = prepare(rig)
+    judging.reveal(rig.brand_id, run_id, "ana")
+    item = next(i for i in rig.items(run_id) if i.path == "especializado")
+    unknown = add_exposure(rig, item, "0.04", "unknown_outcome")
+    add_exposure(rig, item, "0.02", "open")
+    reports = ReportService(rig.factory, rig.content.clock)
+    report = reports.build(rig.brand_id, run_id)
+    assert (report.actual_usd, report.pending_usd, report.unknown_usd) == (
+        Decimal("0.16"),
+        Decimal("0.02"),
+        Decimal("0.04"),
+    )
+    assert report.accounting_incomplete
+    text = render_markdown(report)
+    assert "Contabilidade incompleta" in text and "desfecho desconhecido" in text
+    # Acerto tardio depois do fecho do item: total/imagem/texto avancam juntos.
+    rig.budget.settle_image(unknown, ImageUsage(1, "1024x1536", "medium"), None)
+    report = reports.build(rig.brand_id, run_id)
+    assert report.actual_usd == Decimal("0.20") and report.unknown_usd == 0
+    path = next(p for p in report.paths if p.path == "especializado")
+    assert path.cost_mean_usd == path.image_mean_usd == Decimal("0.06")
+    assert path.text_mean_usd == path.text_max_usd == 0
+
+
+def test_report_flags_abandoned_timing_instead_of_zero(make_eval_rig):
+    from datetime import timedelta
+
+    from marketing_agent.db.models import AgentRun
+
+    rig = make_eval_rig(briefs=[brief("b1")])
+    run_id = rig.start()
+    items = rig.items(run_id)
+    for item in items:
+        rig.handler.fail_job(rig.claim(item), "worker morto", retry=False)
+    with rig.factory.begin() as session:
+        session.add(
+            AgentRun(
+                brand_id=rig.brand_id,
+                role="simples",
+                spec_version=1,
+                trigger=f"eval_item:{next(i.id for i in items if i.path == 'simples')}",
+                status="running",
+                started_at=rig.content.clock.now() - timedelta(minutes=4),
+            )
+        )
+    JudgingService(rig.factory, rig.content.clock).reveal(rig.brand_id, run_id, "ana")
+    report = ReportService(rig.factory, rig.content.clock).build(rig.brand_id, run_id)
+    path = next(p for p in report.paths if p.path == "simples")
+    assert path.latency_mean_ms is None and path.latency_max_ms is None
+    assert path.timing_incomplete_packages == 1 and path.latency_measured_packages == 0
+    assert "Tempos incompletos" in render_markdown(report)

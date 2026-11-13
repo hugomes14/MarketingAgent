@@ -51,6 +51,9 @@ def cmd_eval(args: argparse.Namespace) -> int:
                 f"gasto do mes USD {estimate.month_spent_usd:.2f}; "
                 f"referencia USD {estimate.month_reference_usd:.2f}"
             )
+            print(
+                "O teto controla reservas estimadas; o acerto depende do consumo e preco efetivos."
+            )
             if not args.yes:
                 if not sys.stdin.isatty():
                     raise StartupError("fora de um TTY use --yes para confirmar a estimativa")

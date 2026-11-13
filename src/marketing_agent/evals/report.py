@@ -1,6 +1,7 @@
 """Relatorio descritivo, acessivel so depois da revelacao; decisoes humanas acrescentadas."""
 
 from collections import Counter
+from collections.abc import Mapping
 from decimal import Decimal
 from typing import Literal
 
@@ -9,7 +10,6 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 from marketing_agent.clock import Clock
-from marketing_agent.content.package_costs import family_costs_in
 from marketing_agent.db.models import (
     EDIT_MINUTES,
     EVAL_ERROR_KINDS,
@@ -20,7 +20,7 @@ from marketing_agent.db.models import (
     RoleDecision,
 )
 from marketing_agent.evals.judging import current_answers_in, eligible_pairs_in
-from marketing_agent.evals.progress import item_triggers
+from marketing_agent.evals.measurements import ItemMeasurements, item_measurements_in
 from marketing_agent.evals.report_types import (
     LIMITACOES,
     OWNER_TO_REVIEWER,
@@ -80,19 +80,26 @@ def _answers_for_path(
 
 
 def _path_report(
-    session: Session,
     path: str,
     items: list[EvalItem],
     answers: list[EvalJudgement],
+    measurements: Mapping[str, ItemMeasurements],
 ) -> PathReport:
     selected = [item for item in items if item.path == path]
-    costs = [item.cost_usd for item in selected]
-    images = [
-        family_costs_in(session, item.brand_id, item_triggers(item.id).family).image_usd
-        for item in selected
-    ]
+    data = [measurements[item.id] for item in selected]
+    costs = [m.costs.package_usd for m in data]
+    images = [m.costs.image_usd for m in data]
     texts = [cost - image for cost, image in zip(costs, images, strict=True)]
-    latencies = [item.latency_ms for item in selected if item.latency_ms is not None]
+    latencies = [
+        m.timing.measured_ms
+        for m in data
+        if m.timing.measured_ms is not None and not m.timing.incomplete
+    ]
+    partial_times = [
+        m.timing.measured_ms
+        for m in data
+        if m.timing.measured_ms is not None and m.timing.incomplete
+    ]
     errors, minutes = _answers_for_path(answers, path)
     return PathReport(
         path,
@@ -110,6 +117,12 @@ def _path_report(
         max(latencies, default=None),
         sum(item.invalid_outputs for item in selected),
         sum(item.review_rounds for item in selected),
+        pending_usd=sum((m.pending_usd for m in data), Decimal(0)),
+        unknown_usd=sum((m.unknown_usd for m in data), Decimal(0)),
+        unsettled_reservations=sum(m.unsettled_reservations for m in data),
+        latency_measured_packages=len(latencies),
+        timing_incomplete_packages=sum(m.timing.incomplete for m in data),
+        latency_partial_ms=sum(partial_times) if partial_times else None,
     )
 
 
@@ -137,6 +150,9 @@ class ReportService:
     def build(self, brand_id: str, run_id: str) -> EvalReport:
         """Nao fornece resultados parciais antes da revelacao, mesmo a chamadores internos."""
         with self._factory() as session:
+            # Um acerto pode ocorrer depois do fecho do item: total, texto, imagem e reservas
+            # de TODOS os pacotes devem refletir a mesma snapshot, nunca misturar leituras.
+            session.connection(execution_options={"isolation_level": "REPEATABLE READ"})
             run = require_run(session, brand_id, run_id)
             if run.status != "revealed":
                 raise RevealPending
@@ -152,6 +168,7 @@ class ReportService:
             ties = sum(a.better == "empate" for a in answers)
             losses = len(answers) - wins - ties
             items = list(session.scalars(select(EvalItem).where(EvalItem.run_id == run_id)))
+            measurements = {item.id: item_measurements_in(session, item) for item in items}
             decisions = session.scalars(
                 select(RoleDecision)
                 .where(RoleDecision.run_id == run_id)
@@ -167,14 +184,17 @@ class ReportService:
                 losses,
                 ties,
                 wilson_interval(wins, wins + losses),
-                tuple(_path_report(session, path, items, answers) for path in EVAL_PATHS),
+                tuple(_path_report(path, items, answers, measurements) for path in EVAL_PATHS),
                 run.estimate_usd,
-                sum((item.cost_usd for item in items), Decimal(0)),
+                sum((m.costs.package_usd for m in measurements.values()), Decimal(0)),
                 _agreement(items, answers),
                 tuple(
                     DecisionView(d.role, d.decision, d.justificacao, d.decided_by, d.decided_at)
                     for d in decisions
                 ),
+                pending_usd=sum((m.pending_usd for m in measurements.values()), Decimal(0)),
+                unknown_usd=sum((m.unknown_usd for m in measurements.values()), Decimal(0)),
+                unsettled_reservations=sum(m.unsettled_reservations for m in measurements.values()),
             )
 
     def record_role_decision(

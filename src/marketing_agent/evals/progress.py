@@ -23,6 +23,7 @@ from marketing_agent.content.package_costs import (
     family_invalid_outputs_in,
 )
 from marketing_agent.db.models import EvalItem, EvalRun, Job, JsonObject
+from marketing_agent.evals.measurements import family_timing_in
 from marketing_agent.jobs.queue import truncate_error
 
 TERMINAL_ITEM_STATUSES: Final = ("succeeded", "failed")
@@ -89,7 +90,12 @@ def close_item_in(session: Session, run: EvalRun, item: EvalItem, outcome: ItemO
     item.cost_usd = costs.package_usd
     item.invalid_outputs = family_invalid_outputs_in(session, item.brand_id, triggers)
     item.review_rounds = outcome.review_rounds
-    item.latency_ms = outcome.latency_ms
+    timing = family_timing_in(session, item.brand_id, triggers)
+    item.latency_ms = (
+        timing.measured_ms
+        if timing.measured_ms is not None or timing.incomplete
+        else outcome.latency_ms
+    )
     item.last_error = outcome.last_error
     session.flush()
     return _ready_if_finished(session, run)

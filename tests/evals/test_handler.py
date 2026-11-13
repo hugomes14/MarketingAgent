@@ -14,6 +14,7 @@ from image_factory import make_jpeg
 from sqlalchemy import func, select
 
 from marketing_agent.clock import FixedClock
+from marketing_agent.content.rounds import AgentRunFailed
 from marketing_agent.db.models import (
     AgentRun,
     Approval,
@@ -501,3 +502,31 @@ def test_worker_cannot_raise_the_run_confirmed_package_ceiling(make_eval_rig, pa
     item = next(item for item in rig.items(run_id) if item.path == path)
     rig.process(item, simple_script() if path == "simples" else package_pass())
     assert rig.item(item.id).cost_usd <= Decimal("0.01")
+
+
+def test_latency_accumulates_known_failed_attempts_without_queue_wait(make_eval_rig):
+    rig = make_eval_rig(briefs=ONE_BRIEF)
+    _, simple, _ = one_run(rig)
+    rig.content.llm.hooks[1] = lambda: rig.content.clock.advance(timedelta(seconds=10))
+    rig.content.llm.load([RuntimeError("erro sintetico")])
+    claimed = rig.claim(simple)
+    with pytest.raises(AgentRunFailed):
+        rig.handler.handle(claimed)
+    rig.handler.fail_job(claimed, "erro de teste", retry=True)
+    rig.content.clock.advance(timedelta(minutes=5))  # fila/backoff nao e geracao
+    rig.content.llm.hooks[2] = lambda: rig.content.clock.advance(timedelta(seconds=2))
+    rig.process(simple, simple_script())
+    assert rig.item(simple.id).latency_ms == 12000
+
+
+def test_terminal_failure_retains_measured_attempt_duration(make_eval_rig):
+    rig = make_eval_rig(briefs=ONE_BRIEF)
+    _, simple, _ = one_run(rig)
+    rig.content.llm.hooks[1] = lambda: rig.content.clock.advance(timedelta(seconds=7))
+    rig.content.llm.load([RuntimeError("erro sintetico")])
+    claimed = rig.claim(simple)
+    with pytest.raises(AgentRunFailed):
+        rig.handler.handle(claimed)
+    rig.handler.fail_job(claimed, "erro de teste", retry=False)
+    assert rig.item(simple.id).status == "failed"
+    assert rig.item(simple.id).latency_ms == 7000

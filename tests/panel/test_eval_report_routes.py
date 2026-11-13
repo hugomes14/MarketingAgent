@@ -1,8 +1,10 @@
 """Relatorio restrito a revelacao, limitacoes visiveis e decisoes humanas com CSRF."""
 
 from content_rig import package_pass
+from eval_accounting import add_exposure
 from eval_panel_fixtures import evaluation
 
+from marketing_agent.db.models import AgentRun, CostReservation
 from marketing_agent.evals.blind import JudgementInput
 from marketing_agent.llm.fake_scenarios import simple_package
 
@@ -28,8 +30,14 @@ def test_report_shows_estimate_vs_actual_and_limits(evaluation):
             "ana",
         )
     judging.reveal(rig.brand_id, run_id, "ana")
+    reservation_id = add_exposure(rig, rig.items(run_id)[0], "0.07", "unknown_outcome")
+    with rig.factory.begin() as session:
+        reservation = session.get_one(CostReservation, reservation_id)
+        session.get_one(AgentRun, reservation.run_id).ended_at = None
     page = panel.get(path + "/relatorio")
     assert page.status_code == 200
+    assert "Contabilidade incompleta" in page.text and "desfecho desconhecido" in page.text
+    assert "0.0700" in page.text and "Tempos incompletos" in page.text
     for text in (
         "6.0000",
         "0.0000",

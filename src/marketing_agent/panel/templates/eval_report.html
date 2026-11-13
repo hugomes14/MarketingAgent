@@ -7,6 +7,7 @@
 <p>Intervalo de Wilson a 95 % sobre {{ report.wins + report.losses }} pares decisivos:
 {% if report.interval %}{{ '%.4f'|format(report.interval[0]) }}–{{ '%.4f'|format(report.interval[1]) }}{% else %}indisponível (nenhum par decisivo){% endif %}.</p>
 <p>Teto estimado: {{ report.estimate_usd|usd }} USD · Custo contabilizado: {{ report.actual_usd|usd }} USD</p>
+{% if report.accounting_incomplete %}<p class="aviso atencao" role="alert">Contabilidade incompleta: {{ report.unsettled_reservations }} reservas por acertar; abertas {{ report.pending_usd|usd }} USD; desfecho desconhecido {{ report.unknown_usd|usd }} USD. São exposição, não gasto confirmado; os totais podem mudar.</p>{% endif %}
 {% for path in report.paths %}
 <section class="cartao"><h2>{{ path.path|capitalize }}</h2>
 <dl>
@@ -16,12 +17,17 @@
 <dt>Imagem, média / máxima</dt><dd>{{ path.image_mean_usd|usd }} / {{ path.image_max_usd|usd }} USD</dd>
 <dt>Latência média / máxima</dt><dd>{{ path.latency_mean_ms if path.latency_mean_ms is not none else 'sem medida' }} / {{ path.latency_max_ms if path.latency_max_ms is not none else 'sem medida' }} ms</dd>
 <dt>Saídas inválidas / voltas</dt><dd>{{ path.invalid_outputs }} / {{ path.review_rounds }}</dd>
+<dt>Tempos completos</dt><dd>{{ path.latency_measured_packages }} pacotes medidos</dd>
 </dl>
+{% if path.timing_incomplete_packages %}<p class="aviso atencao">Tempos incompletos: {{ path.timing_incomplete_packages }} pacotes; parcial conhecido {{ path.latency_partial_ms if path.latency_partial_ms is not none else 'sem medida' }} ms. Excluídos da média/máximo.</p>{% endif %}
+{% if path.unsettled_reservations %}<p>Exposição por acertar: abertas {{ path.pending_usd|usd }} USD; desfecho desconhecido {{ path.unknown_usd|usd }} USD.</p>{% endif %}
 <h3>Erros marcados</h3><ul>{% for kind, count in path.errors.items() %}<li>{{ error_labels[kind] }}: {{ count }}</li>{% endfor %}</ul>
 <h3>Edição estimada (pacotes por intervalo de minutos)</h3><ul>{% for bucket, count in path.edit_minutes.items() %}<li>{{ edit_labels[bucket] }}: {{ count }}</li>{% endfor %}</ul>
 </section>
 {% endfor %}
 <p>Custos incluem pacotes falhados e todas as tentativas. Latência sem medida não conta como zero. Os minutos conservam os intervalos escolhidos.</p>
+<p>A latência soma execuções encerradas de todas as tentativas, sem fila/backoff; pacotes com tempos incompletos não entram na média/máximo.</p>
+<p>O teto controla reservas estimadas; preços ou consumo efetivos do fornecedor podem causar diferenças no acerto. Não é garantia absoluta de faturação.</p>
 <p>Concordância com o Revisor (qualquer volta): {{ report.reviewer_agreement.matched }}/{{ report.reviewer_agreement.total }} erros marcados no especializado. A correspondência de tipos é descritiva; não mede verdade factual nem causalidade.</p>
 <section class="cartao"><h2>Limitações</h2><ul>{% for limitation in report.limitations %}<li>{{ limitation }}</li>{% endfor %}</ul></section>
 <section class="cartao"><h2>Decisões do responsável</h2>

@@ -306,7 +306,10 @@ fica fixado no início. Quando todos os pacotes terminam, avalie cada par A/B: q
 e minutos de edição. Pares com falha ficam excluídos. Pode corrigir respostas antes de revelar;
 o histórico conserva ambas. **Revelar** só fica disponível quando todos os pares elegíveis
 tiverem resposta. O relatório mostra Wilson a 95 % nos pares decisivos, empates à parte,
-custos completos, latência, erros, esforço de edição e limitações. Registe a sua decisão para
+custos conhecidos, exposição de reservas por acertar, latência, erros, esforço de edição e
+limitações. A latência soma execuções encerradas de todas as tentativas; pacotes com tempos
+incompletos ficam assinalados e fora da média/máximo. O teto controla reservas estimadas,
+sujeitas ao acerto do consumo e preços efetivos do fornecedor. Registe a sua decisão para
 cada papel; o sistema não escolhe por si.
 
 ```bash

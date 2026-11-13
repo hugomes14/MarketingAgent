@@ -25,7 +25,22 @@ def _path_lines(path: PathReport) -> list[str]:
         f"{bucket.replace('2_5', '2–5').replace('mais_5', 'mais de 5')}: {count}"
         for bucket, count in path.edit_minutes.items()
     )
-    return [row, f"\nErros ({path.path}): {errors}.", f"Edição ({path.path}), minutos: {minutes}."]
+    lines = [row, f"\nErros ({path.path}): {errors}.", f"Edição ({path.path}), minutos: {minutes}."]
+    lines.append(
+        f"Tempos completos ({path.path}): {path.latency_measured_packages} pacotes medidos."
+    )
+    if path.timing_incomplete_packages:
+        partial = path.latency_partial_ms if path.latency_partial_ms is not None else "sem medida"
+        lines.append(
+            f"Tempos incompletos ({path.path}): {path.timing_incomplete_packages} pacotes; "
+            f"parcial conhecido {partial} ms, excluídos da média/máximo."
+        )
+    if path.unsettled_reservations:
+        lines.append(
+            f"Exposição ({path.path}): abertas {path.pending_usd:.4f} USD; "
+            f"desfecho desconhecido {path.unknown_usd:.4f} USD."
+        )
+    return lines
 
 
 def _measurement_lines(report: EvalReport) -> list[str]:
@@ -46,6 +61,14 @@ def _measurement_lines(report: EvalReport) -> list[str]:
         "| Imagem média / máxima | Latência média / máxima ms | Saídas inválidas | Voltas |",
         "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
+    if report.accounting_incomplete:
+        lines.insert(
+            0,
+            f"Contabilidade incompleta: {report.unsettled_reservations} reservas por acertar; "
+            f"abertas {report.pending_usd:.4f} USD; "
+            f"desfecho desconhecido {report.unknown_usd:.4f} USD. "
+            "Estes valores são exposição, não gasto confirmado; os totais podem mudar.",
+        )
     paths = [_path_lines(path) for path in report.paths]
     lines.extend(path[0] for path in paths)
     lines.append("")
@@ -60,6 +83,10 @@ def _measurement_lines(report: EvalReport) -> list[str]:
             "A correspondência de tipos é descritiva; não mede verdade factual nem causalidade.",
             "Custos incluem itens falhados e todas as tentativas; "
             "latência sem medida não conta como zero.",
+            "A latência soma execuções encerradas de todas as tentativas, sem fila/backoff; "
+            "pacotes com tempos incompletos não entram na média/máximo.",
+            "O teto controla reservas estimadas; preços ou consumo efetivos do fornecedor "
+            "podem causar diferenças no acerto. Não é garantia absoluta de faturação.",
             "Os minutos de edição conservam os intervalos escolhidos, "
             "sem converter 'mais de 5' numa média inventada.",
         ]

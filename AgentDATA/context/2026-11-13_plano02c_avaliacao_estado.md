@@ -5,7 +5,8 @@
 - Trabalho herdado: Claude ate `8b1c9b7` e quatro ficheiros de Task 5 ainda nao commitados
   (`handler.py`, `progress.py`, `test_handler.py`, `eval_rig.py`), copiados e validados.
   A worktree original `/home/marketing-agent/MarketingAgent-2c` permanece intacta.
-- Estado: Tasks 1–9 implementadas; validacao tecnica da Task 10 em curso.
+- Estado: Tasks 1–9 implementadas; codigo da Task 10 validado. Fumo Ollama em curso e
+  avaliacao/decisoes humanas pendentes.
 
 ## Entrega
 
@@ -29,7 +30,16 @@ intervalos de edicao e decisoes humanas auditadas.
   5, marketing-qwen2.5-14b:8k e marketing-qwen2.5vl-7b:8k no Windows 172.28.112.1:11434.
   Base descartavel propria no servidor 5543. Sem APIs pagas. Nao iniciar outro fumo concorrente.
 - Regressoes posteriores: 609 testes de conteudo/avaliacao aprovados (incluindo teto congelado e Markdown).
-- Suite completa: 2954 passed, 4 deselected in 158.65s; `/tmp/marketing-agent-2c-full-suite.log`.
+- Suite final apos revisao: 2961 passed, 4 deselected in 173.76s;
+  `/tmp/marketing-agent-2c-full-suite-reviewed.log`.
+- Revisao independente: zero Critical, dois Important corrigidos por testes RED→GREEN;
+  dois menores adiados (formularios de correcao e payload interno inconsistente).
+  Relatorio: `AgentDATA/docs/2026-11-13_revisao_tecnica_plano02c.md`.
+- Chromium apos fixes: 1 passed in 3.71s. Build offline de sdist/wheel aprovado e recursos
+  novos confirmados no wheel (`/tmp/marketing-agent-2c-build`).
+- O relatorio distingue gasto conhecido de reservas abertas/desconhecidas, numa snapshot
+  consistente. Latencia soma execucoes encerradas de todas as tentativas, sem fila/backoff;
+  pacotes com tempos incompletos ficam fora da media/maximo, com parcial conhecido separado.
 
 ## Decisoes tecnicas
 
@@ -53,4 +63,5 @@ intervalos de edicao e decisoes humanas auditadas.
    por julgamentos automaticos nem publicar um relatorio sintetico como evidencia real.
 4. Se a decisao for simplificar/retirar um papel, implementar e validar essa opcao num commit
    separado. Sem decisao humana, o pipeline habitual conserva o comportamento atual.
-5. Concluir revisao independente e verificacoes finais do ramo. M5 ainda nao esta fechado.
+5. Concluir o fumo real do par. Revisao tecnica e verificacoes automaticas aprovadas;
+   M5 continua aberto por falta da corrida e decisoes humanas.
