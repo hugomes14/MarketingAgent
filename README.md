@@ -316,6 +316,19 @@ referência mensal, a recuperação após uma morte do processo e o **fluxo sema
 (`test_weekly_text_flow.py`: plano, worker, lote, aprovar, editar com feedback e pedir alterações,
 com um LLM falso).
 
+### Testes no Chromium
+
+Playwright está nas dependências de desenvolvimento. Instale o browser com
+`uv run python -m playwright install chromium` e execute separadamente:
+
+```bash
+uv run pytest tests/e2e/test_batch_browser.py -m browser -q
+```
+
+Use a mesma configuração de TEST_DATABASE_URL da suite, sem outro pytest em paralelo.
+O teste abre o painel em loopback e usa modelos falsos. Para dependências Linux sem sudo,
+consulte [o registo Playwright](AgentDATA/tools/playwright.md).
+
 ### Teste de fumo com o Ollama (fora da suite)
 
 ```bash
@@ -389,7 +402,9 @@ conhecimento, contexto e registos ficam em [`AgentDATA/`](AgentDATA/). Detalhes 
   O lote já mostra a imagem, permite trocar a fotografia e carregar uma imagem à mão;
   editar o texto preserva a imagem. Faltam as verificações manuais dos marcos e a
   confirmação de um modelo pago compatível com o contrato de custos.
-- Verificação no browser: as páginas do painel só foram exercitadas por testes de HTTP.
+- O percurso de imagem no lote foi exercitado no Chromium com modelos falsos (troca, upload,
+  edição e aprovação). A semana completa com modelos reais e a entrevista no browser continuam
+  por validar.
 - Limitações conhecidas do plano semanal de texto:
   - se uma edição for recusada com 422 (por exemplo, hashtags a mais), o texto escrito perde-se
     (a página de erro é genérica); o botão Voltar do browser recupera-o;
