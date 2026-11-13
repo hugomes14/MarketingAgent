@@ -362,3 +362,18 @@ def test_slow_time_multiplier_is_explicit_and_bounded() -> None:
     for invalid in ("0", "11", "1.5"):
         with pytest.raises(SystemExit):
             smoke.parse_args(["--time-multiplier", invalid])
+
+
+def test_eval_only_smoke_requires_two_successful_packages() -> None:
+    args = smoke.parse_args(["--eval-only"])
+    assert args.eval_only is True
+    report = smoke.SmokeReport(eval_only=True)
+    assert report.is_success is False
+    report.eval_results = [
+        smoke.EvalSmokeItem("simples", "succeeded", True, 100, 0, 0),
+        smoke.EvalSmokeItem("especializado", "succeeded", True, 200, 1, 0, image_checked=True),
+    ]
+    assert report.is_success
+    assert "especializado" in smoke.format_report(report)
+    report.eval_results.pop()
+    assert report.is_success is False

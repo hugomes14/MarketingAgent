@@ -101,3 +101,30 @@ def test_judging_after_reveal_refused(make_eval_rig):
         judging.pair("outra-marca", run_id, 1)
     with pytest.raises(EvalNotFound):
         judging.pair_image(rig.brand_id, run_id, 0, "a")
+
+
+def test_concurrent_corrections_keep_one_active_answer(make_eval_rig):
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    rig = make_eval_rig(briefs=[brief("b1")])
+    run_id = ready(rig)
+    judging = service(rig)
+    answer = JudgementInput(**ANSWER)
+    first = judging.record(rig.brand_id, run_id, 1, answer, 0, None, "ana")
+    barrier = threading.Barrier(2, timeout=10)
+
+    def correct():
+        barrier.wait()
+        try:
+            return judging.record(rig.brand_id, run_id, 1, answer, 1, first, "ana")
+        except StaleJudgement:
+            return None
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(lambda _: correct(), range(2)))
+    assert sum(result is not None for result in results) == 1
+    with rig.factory() as session:
+        rows = list(session.scalars(select(EvalJudgement)))
+    assert len(rows) == 2
+    assert judging.pair(rig.brand_id, run_id, 1).current.id in results

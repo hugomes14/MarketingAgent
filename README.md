@@ -283,6 +283,52 @@ configuração (uma linha em stderr), `1` erro inesperado. O arranque do painel 
 do que o maior `max_duration_s` de todos os specs mais o timeout de uma chamada de imagem (480 s). Equivalente direto ao `serve`:
 `uvicorn --factory marketing_agent.panel.main:create_app_from_env --no-proxy-headers`.
 
+## Comparação cega (Plano 2C)
+
+O painel, em **Início → Comparação cega de pacotes**, permite estimar e iniciar uma corrida.
+Cada brief gera dois pacotes na fila, com prioridade inferior às publicações semanais. Os
+pacotes só aparecem na avaliação; não criam publicações nem feedback para a semana.
+
+Antes da primeira corrida, adapte `evals/briefs_v1.yaml` à estratégia ativa: os oito briefs
+ainda são um rascunho, com pilares provisórios e uma referência `kb-REVER-oferta-temporada`.
+Substitua essa referência por um item ativo da base (ou esvazie `kb_refs`) e aumente `version`
+sempre que mudar o conjunto. A corrida exige perfil, estratégia, kit e referências válidas.
+
+```bash
+uv run marketing-agent eval run --set briefs_v1
+# Sem terminal interativo, só inicia com confirmação explícita:
+uv run marketing-agent eval run --set briefs_v1 --yes
+uv run marketing-agent worker
+```
+
+A estimativa mostra o teto da corrida e a referência mensal antes da confirmação. O contexto
+fica fixado no início. Quando todos os pacotes terminam, avalie cada par A/B: qualidade, erros
+e minutos de edição. Pares com falha ficam excluídos. Pode corrigir respostas antes de revelar;
+o histórico conserva ambas. **Revelar** só fica disponível quando todos os pares elegíveis
+tiverem resposta. O relatório mostra Wilson a 95 % nos pares decisivos, empates à parte,
+custos completos, latência, erros, esforço de edição e limitações. Registe a sua decisão para
+cada papel; o sistema não escolhe por si.
+
+```bash
+uv run marketing-agent eval report RUN_ID
+```
+
+Exporta uma nova cópia Markdown em `AgentDATA/docs/`, apenas depois da revelação. A decisão
+registada conserva o histórico; simplificar ou retirar um papel exige implementar e validar
+essa alteração do pipeline depois da avaliação humana.
+
+Para testar os dois percursos com Ollama, sem julgamento automático e numa base descartável:
+
+```bash
+uv run python scripts/smoke_ollama.py --eval-only --time-multiplier 5 \
+  --model marketing-qwen2.5-14b:8k --reviewer-model marketing-qwen2.5vl-7b:8k \
+  --ollama-url http://<IP-do-host-WSL>:11434 \
+  --server-url postgresql+psycopg://marketing_agent:marketing_agent@127.0.0.1:5543/postgres
+```
+
+As variantes têm de existir no anfitrião. Os fundos deste fumo são simulados, sem API paga.
+O teste Chromium da avaliação corre com `uv run pytest tests/e2e/test_eval_browser.py -m browser`.
+
 ## Configuração
 
 Copie `.env.example` (ou `.env.local.example`) para `.env`. O `.env` contém apenas campos de
@@ -455,7 +501,7 @@ conhecimento, contexto e registos ficam em [`AgentDATA/`](AgentDATA/). Detalhes 
 
 ## O que ainda não está feito
 
-- Fecho operacional do Plano 02b (tarefa 16), comparação de variantes
+- Fecho operacional do Plano 02b (tarefa 16), avaliação humana e decisões da comparação
   (02c), oficina 3D (02d/Plano 4), publicação (Plano 3), revisão mensal e triagem (Plano 5).
   O lote já mostra a imagem, permite trocar a fotografia e carregar uma imagem à mão;
   editar o texto preserva a imagem. Faltam as verificações manuais dos marcos e a

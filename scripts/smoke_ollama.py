@@ -10,6 +10,10 @@ as voltas e o tempo de cada execucao, mais as saidas invalidas por papel. Sem cu
 modelos locais tem preco 0 e os fundos gerados sao os do gerador falso (sem rota
 `designer_imagem`, nunca se contacta nenhuma API paga).
 
+Com `--eval-only`, depois da estrategia e do kit gera um par do Plano 2C pela fila, sem
+plano semanal nem posts. Imprime estado, imagem, verificacao visual, latencia e custo de cada
+percurso. Nao grava respostas cegas ou decisoes: essas pertencem ao responsavel.
+
 SEGURANCA. Nunca toca na base de desenvolvimento nem nas portas do painel: por omissao cria uma
 base `marketing_agent_smoke_<aleatorio>` no Postgres de teste (127.0.0.1:5433), migra-a, usa-a e
 apaga-a no fim (mesmo se falhar). Com `--database-url` usa uma base ja existente (nunca a apaga),
@@ -74,6 +78,7 @@ from marketing_agent.db.models import (
     Post,
     PostRevision,
 )
+from marketing_agent.evals.smoke import EvalSmokeItem, run_eval_pair
 from marketing_agent.harness.engine import AgentEngine, RunResult, RunStatus
 from marketing_agent.interview.service import InterviewService
 from marketing_agent.kb.service import NewKbEntry
@@ -146,6 +151,7 @@ class SmokeArgs:
     posts: int
     photo: Path | None = None
     time_multiplier: int = 1
+    eval_only: bool = False
 
 
 @dataclass(frozen=True)
@@ -189,11 +195,23 @@ class SmokeReport:
     runs: dict[str, int] = field(default_factory=dict)
     cost_entries: int = 0
     ollama_contexts: dict[str, int] = field(default_factory=dict)
+    eval_only: bool = False
+    eval_results: list[EvalSmokeItem] = field(default_factory=list)
 
     @property
     def is_success(self) -> bool:
         """Todos os passos correram e todas as publicacoes chegaram a `in_review`."""
         steps_ok = all(step.is_ok for step in self.steps)
+        if self.eval_only:
+            return (
+                steps_ok
+                and len(self.eval_results) == 2
+                and {item.path for item in self.eval_results} == {"simples", "especializado"}
+                and all(item.status == "succeeded" and item.has_image for item in self.eval_results)
+                and all(
+                    item.image_checked for item in self.eval_results if item.path == "especializado"
+                )
+            )
         return steps_ok and bool(self.posts) and all(p.lifecycle == "in_review" for p in self.posts)
 
 
@@ -239,6 +257,9 @@ def parse_args(argv: Sequence[str] | None = None) -> SmokeArgs:
     )
     parser.add_argument("--posts", type=int, default=3, help="publicacoes do plano (1 a 14)")
     parser.add_argument(
+        "--eval-only", action="store_true", help="Gera um par 2C sem plano semanal."
+    )
+    parser.add_argument(
         "--time-multiplier",
         type=int,
         default=1,
@@ -266,6 +287,7 @@ def parse_args(argv: Sequence[str] | None = None) -> SmokeArgs:
         parsed.posts,
         parsed.photo,
         parsed.time_multiplier,
+        parsed.eval_only,
     )
 
 
@@ -394,6 +416,13 @@ def format_report(report: SmokeReport) -> str:
     checked = sum(1 for post in report.posts if post.image_checked)
     with_image = sum(1 for post in report.posts if post.layout is not None)
     lines.append(f"imagem_verificada=true: {checked} de {with_image} publicacoes com imagem")
+    for item in report.eval_results:
+        lines.append(
+            f"avaliacao {item.path}: {item.status}, imagem={item.has_image}, "
+            f"imagem_verificada={item.image_checked}, latencia={item.latency_ms} ms, "
+            f"voltas={item.review_rounds}, invalidas={item.invalid_outputs}, "
+            f"custo={item.cost_usd} USD"
+        )
     lines += ["", "Saidas invalidas por papel:"]
     if not any(report.invalid_outputs.values()):
         lines.append("  nenhuma")
@@ -775,7 +804,18 @@ def run_smoke(args: SmokeArgs, database_url: str, report: SmokeReport) -> None:
                 run_interview(report, services, brand_id)
                 run_strategy(report, services, brand_id)
                 seed_media(report, services, brand_id, args.photo)
-                run_weekly_text(report, services, brand_id)
+                if args.eval_only:
+                    with timed(report, "par de avaliacao 2C"):
+                        report.eval_results = run_eval_pair(
+                            settings,
+                            session_factory,
+                            services.store,
+                            services.strategy,
+                            services.clock,
+                            brand_id,
+                        )
+                else:
+                    run_weekly_text(report, services, brand_id)
             finally:
                 collect_statistics(session_factory, report)
                 report.posts = post_outcomes(session_factory, report.week)
@@ -790,7 +830,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     except OllamaUnavailable as exc:
         print(exc, file=sys.stderr)
         return EXIT_OLLAMA
-    report = SmokeReport()
+    report = SmokeReport(eval_only=args.eval_only)
     try:
         if args.database_url:
             run_smoke(args, args.database_url, report)

@@ -166,3 +166,7 @@ fieldset.feedback label { display: block; font-weight: 400; margin-right: 0; }
 
 /* Imagem final 4:5, adaptada ao cartao sem deformar. */
 .imagem-publicacao { display: block; width: 100%; max-width: 27rem; height: auto; margin: 0.75rem 0; }
+
+/* Pares cegos: os dois lados usam a mesma regra e cabem nas colunas sem deformar. */
+.lado-avaliacao { min-width: 0; overflow-wrap: anywhere; }
+.imagem-avaliacao { display: block; width: 100%; height: auto; }

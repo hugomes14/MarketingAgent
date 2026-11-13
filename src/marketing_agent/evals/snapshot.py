@@ -11,6 +11,7 @@ class SnapshotImage(BaseModel):
     model_config = ConfigDict(frozen=True, extra="ignore", strict=True)
     alt_text: str
     gerada_por_ia: bool
+    verificada: bool | None = False
 
 
 class SnapshotReview(BaseModel):

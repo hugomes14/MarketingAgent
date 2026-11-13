@@ -1,16 +1,25 @@
 """Atribuicao deterministica e DTO sem proveniencia dos percursos."""
 
+import os
+import subprocess
+import sys
 from dataclasses import fields
 
 from marketing_agent.evals.blind import BlindSide, side_a_path
 
 
 def test_side_assignment_reproducible_from_seed():
-    assert [side_a_path(42, key) for key in ("a", "b", "a")] == [
-        side_a_path(42, "a"),
-        side_a_path(42, "b"),
-        side_a_path(42, "a"),
+    command = (
+        "from marketing_agent.evals.blind import side_a_path; "
+        "print([side_a_path(42, key) for key in ('a', 'b', 'a')])"
+    )
+    outputs = [
+        subprocess.check_output(
+            [sys.executable, "-c", command], env={**os.environ, "PYTHONHASHSEED": salt}, text=True
+        )
+        for salt in ("1", "42")
     ]
+    assert outputs[0] == outputs[1]
 
 
 def test_side_assignment_balanced():
