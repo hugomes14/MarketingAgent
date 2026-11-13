@@ -11,6 +11,7 @@ from marketing_agent.artifacts.store import ArtifactRecord
 from marketing_agent.budget.controller import BudgetController
 from marketing_agent.clock import Clock
 from marketing_agent.content.review import ReviewService
+from marketing_agent.evals.judging import JudgingService
 from marketing_agent.evals.runs import EvalRunService
 from marketing_agent.evals.views import EvalViews
 from marketing_agent.feedback.service import FeedbackService
@@ -58,6 +59,7 @@ class EvalServices:
 
     runs: EvalRunService
     views: EvalViews
+    judging: JudgingService
 
 
 @dataclass(frozen=True)

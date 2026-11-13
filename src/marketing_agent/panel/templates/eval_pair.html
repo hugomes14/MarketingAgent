@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Avaliar par{% endblock %}
+{% block content %}
+<h1>Avaliar par {{ pair.index }} de {{ summary.pairs }}</h1>
+<section class="cartao"><h2>Brief</h2><p>{{ pair.brief.tema }}</p><p>{{ pair.brief.objetivo }}</p><p>{{ pair.brief.pilar }} · {{ pair.brief.canais|join(', ') }}</p></section>
+{% if pair.current %}<p>Este par já tem uma resposta. Ao guardar, a nova resposta substitui a anterior e ambas ficam no histórico.</p>{% endif %}
+<form method="post" action="/avaliacao/{{ run_id }}/par/{{ pair.index }}">
+<input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+<input type="hidden" name="inicio" value="{{ inicio }}">
+<input type="hidden" name="substitui" value="{{ pair.current.id if pair.current else '' }}">
+<div class="grelha">
+{% for side, package in [('a', pair.a), ('b', pair.b)] %}{% include "_eval_side.html" %}{% endfor %}
+</div>
+<fieldset><legend>Qual é melhor?</legend>
+<label><input type="radio" name="better" value="a" required>A</label>
+<label><input type="radio" name="better" value="b" required>B</label>
+<label><input type="radio" name="better" value="empate" required>Empate</label>
+</fieldset>
+<label>Nota opcional <textarea name="note" maxlength="{{ max_note_chars }}"></textarea></label>
+<button type="submit">Guardar avaliação</button>
+</form>
+<p><a href="/avaliacao/{{ run_id }}">Voltar à corrida</a></p>
+{% endblock %}

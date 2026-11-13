@@ -4,5 +4,16 @@
 <h1>Corrida de avaliação</h1>
 <p>{{ progress.set_name }} v{{ progress.set_version }}</p>
 {% include "_eval_progress.html" %}
+{% if summary %}
+<p>{{ summary.judged }} de {{ summary.pairs }} pares avaliados · {{ summary.excluded }} excluídos por falha</p>
+{% if progress.status == 'revealed' %}<p><a href="/avaliacao/{{ progress.id }}/relatorio">Ver relatório</a></p>
+{% else %}
+<ul>{% for index in range(1, summary.pairs + 1) %}<li><a href="/avaliacao/{{ progress.id }}/par/{{ index }}">Par {{ index }} · {{ 'por avaliar' if index in summary.missing else 'avaliado (pode corrigir)' }}</a></li>{% endfor %}</ul>
+<form action="/avaliacao/{{ progress.id }}/revelar" method="post">
+<input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+<button type="submit"{% if summary.missing %} disabled{% endif %}>Revelar e abrir relatório</button>
+</form>
+{% endif %}
+{% endif %}
 <p><a href="/avaliacao">Todas as corridas</a></p>
 {% endblock %}

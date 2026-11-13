@@ -1,5 +1,5 @@
 <section id="progresso-avaliacao" class="cartao"{% if progress.status == 'running' %} hx-get="/avaliacao/{{ progress.id }}/estado" hx-trigger="every 5s" hx-swap="outerHTML"{% endif %}>
 <p>{{ progress.finished }} de {{ progress.total }} pacotes terminados · {{ progress.failed }} falhados</p>
 <p>Total contabilizado: {{ progress.cost_usd|usd }} USD</p>
-{% if progress.status == 'running' %}<p>Em curso. O worker tem de estar a correr.</p>{% else %}<p>Geração terminada. Os pares com pacotes falhados ficam excluídos.</p>{% endif %}
+{% if progress.status == 'running' %}<p>Em curso. O worker tem de estar a correr.</p>{% else %}<p>Geração terminada. Os pares com pacotes falhados ficam excluídos.</p><a href="/avaliacao/{{ progress.id }}">Abrir avaliação</a>{% endif %}
 </section>

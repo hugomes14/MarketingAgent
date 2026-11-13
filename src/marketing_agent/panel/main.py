@@ -20,6 +20,7 @@ from marketing_agent.clock import SystemClock
 from marketing_agent.config import Settings
 from marketing_agent.db.base import make_engine, make_session_factory
 from marketing_agent.evals.assembly import build_eval_context, build_eval_runs
+from marketing_agent.evals.judging import JudgingService
 from marketing_agent.evals.views import EvalViews
 from marketing_agent.harness.engine import AgentEngine
 from marketing_agent.interview.service import InterviewService
@@ -103,6 +104,7 @@ def _assemble(
                     clock,
                 ),
                 EvalViews(session_factory),
+                JudgingService(session_factory, clock, settings.max_message_chars),
             ),
         )
     except ValueError as exc:
