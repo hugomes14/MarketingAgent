@@ -88,6 +88,11 @@ class PackageRequest:
     brand_id: str
     triggers: PackageTriggers
     context: PackageContext
+    ceiling_usd: Decimal | None = None
+
+    def cost_ceiling(self, configured: Decimal) -> Decimal:
+        """O teto confirmado pode reduzir o do worker, nunca aumenta-lo apos reinicio."""
+        return configured if self.ceiling_usd is None else min(configured, self.ceiling_usd)
 
 
 @dataclass(frozen=True)
@@ -185,7 +190,9 @@ class SpecializedPath:
         allowance = ImageAllowance(
             family_remaining_images(self._session_factory, request.brand_id, family)
         )
-        guard = PackageCostGuard(self._session_factory, request.brand_id, family, self._ceiling_usd)
+        guard = PackageCostGuard(
+            self._session_factory, request.brand_id, family, request.cost_ceiling(self._ceiling_usd)
+        )
         outcome = self._rounds.run(
             request.triggers,
             request.brand_id,

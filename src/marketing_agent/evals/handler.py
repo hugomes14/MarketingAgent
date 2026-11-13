@@ -41,7 +41,7 @@ from marketing_agent.content.revision_store import RevisionImage
 from marketing_agent.content.rounds import PackageRounds
 from marketing_agent.content.schemas import Revisao
 from marketing_agent.content.specs import load_content_specs
-from marketing_agent.db.models import EvalItem, EvalRun, JsonObject
+from marketing_agent.db.models import EVAL_PATHS, EvalItem, EvalRun, JsonObject
 from marketing_agent.evals.context import ContextSnapshot, EvalContext
 from marketing_agent.evals.progress import (
     DEAD_JOB_STATUSES,
@@ -94,6 +94,7 @@ class _Work:
     path: str
     brief: JsonObject
     snapshot: ContextSnapshot
+    ceiling_usd: Decimal
 
 
 def build_package_paths(
@@ -182,7 +183,9 @@ class EvalPackageHandler:
         if work is None:
             return
         context = self._context.build(work.brand_id, work.snapshot, work.brief)
-        request = PackageRequest(work.brand_id, item_triggers(work.item_id), context)
+        request = PackageRequest(
+            work.brand_id, item_triggers(work.item_id), context, work.ceiling_usd
+        )
         started = self._clock.now()
         result = self._paths[work.path].produce(request)
         latency_ms = int((self._clock.now() - started).total_seconds() * MS_PER_SECOND)
@@ -237,6 +240,8 @@ class EvalPackageHandler:
                 item.path,
                 _brief_of(run, item.brief_key),
                 ContextSnapshot.model_validate(run.context_snapshot),
+                # A estimativa guarda o teto de TODOS os pacotes, mesmo dos que falharem.
+                run.estimate_usd / (len(run.briefs) * len(EVAL_PATHS)),
             )
 
     def _finish(self, job: ClaimedJob, work: _Work, result: PackageResult, latency_ms: int) -> None:

@@ -240,7 +240,9 @@ class SimplePath:
             family_remaining_images(self._session_factory, request.brand_id, family)
         )
         payload = SimplePayload(copy, inputs, self._image_quality, allowance.remaining > 0)
-        guard = PackageCostGuard(self._session_factory, request.brand_id, family, self._ceiling_usd)
+        guard = PackageCostGuard(
+            self._session_factory, request.brand_id, family, request.cost_ceiling(self._ceiling_usd)
+        )
         try:
             run = run_capped(
                 self._engine, guard, self._spec, request.brand_id, request.triggers.copy,

@@ -481,3 +481,23 @@ def test_hostile_model_text_never_reaches_last_error_audit_or_logs(
         stored += [str(audit.detail) for audit in session.scalars(select(AuditLog))]
     assert all(HOSTILE not in str(value) for value in stored)
     assert HOSTILE not in caplog.text
+
+
+@pytest.mark.parametrize("path", ["simples", "especializado"])
+def test_worker_cannot_raise_the_run_confirmed_package_ceiling(make_eval_rig, path):
+    from marketing_agent.evals.handler import build_package_paths
+
+    rig = make_eval_rig(briefs=ONE_BRIEF, ceiling=Decimal("0.01"), image_price="0.04")
+    run_id = rig.start()
+    # Reiniciar o worker com configuracao mais alta nao aumenta o teto confirmado na corrida.
+    rig.handler._paths = build_package_paths(  # noqa: SLF001
+        rig.factory,
+        rig.content.engine,
+        rig.content.library,
+        rig.content.kits,
+        "medium",
+        Decimal("1.50"),
+    )
+    item = next(item for item in rig.items(run_id) if item.path == path)
+    rig.process(item, simple_script() if path == "simples" else package_pass())
+    assert rig.item(item.id).cost_usd <= Decimal("0.01")
