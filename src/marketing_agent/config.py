@@ -75,6 +75,7 @@ class Settings(BaseSettings):
     media_dir: Path = Path("var/media")
     # Diretorio dos conjuntos de avaliacao versionados da comparacao (`<nome>.yaml`).
     evals_dir: Path = Path("evals")
+    oficina_config_file: Path = Path("config/oficina.yaml")
 
     @field_validator(
         "anthropic_api_key_file",

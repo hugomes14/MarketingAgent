@@ -51,6 +51,7 @@ def environment(
     csrf_file = tmp_path / "csrf"
     csrf_file.write_text(CSRF_SECRET + "\n", encoding="utf-8")
     values = {
+        "OFICINA_CONFIG_FILE": str(Path(__file__).resolve().parents[2] / "config/oficina.yaml"),
         "DATABASE_URL": pg_url,
         "ROLE_ROUTES": json.dumps(ROUTES),
         "OPENAI_BASE_URL": "http://127.0.0.1:11434/v1",
@@ -360,3 +361,12 @@ def test_panel_starts_while_a_worker_holds_the_lock(
     add_brand(session_factory)
     with hold_worker_lock(pg_url):
         create_app_from_env()  # o painel nao disputa o lock: o worker continua a ser o unico
+
+
+def test_invalid_oficina_config_is_startup_error(environment, session_factory, monkeypatch):
+    add_brand(session_factory)
+    path = environment / "oficina.yaml"
+    path.write_text("versao: 1\npersonagens: {}")
+    monkeypatch.setenv("OFICINA_CONFIG_FILE", str(path))
+    with pytest.raises(StartupError, match="OFICINA_CONFIG_FILE"):
+        create_app_from_env()

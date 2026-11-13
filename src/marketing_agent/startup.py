@@ -47,6 +47,7 @@ from marketing_agent.harness.spec import AgentSpec, SpecLoadError, load_agent_sp
 from marketing_agent.images.factory import build_image_backend
 from marketing_agent.llm.router import ROUTE_FALLBACKS
 from marketing_agent.llm.types import IMAGE_CALL_TIMEOUT_S, LLM_CALL_TIMEOUT_S
+from marketing_agent.oficina.papeis import Papel
 from marketing_agent.planning.schemas import PlanoSemanal
 
 logger = logging.getLogger(__name__)
@@ -116,6 +117,21 @@ def build_budget_controller(
 
 def director_max_duration_s() -> int:
     """Maior `max_duration_s` entre os specs do Diretor (limiar de recuperacao no arranque)."""
+    return role_max_durations()["diretor"]
+
+
+def role_max_durations() -> dict[Papel, int]:
+    """Maior limite nominal de cada papel; o chamador aplica LLM_TIME_MULTIPLIER do processo."""
+    content = _content_specs()
+    return {
+        "diretor": _director_spec_duration_s(),
+        "copywriter": content.copywriter.limits.max_duration_s,
+        "designer": content.designer.limits.max_duration_s,
+        "revisor": content.reviewer.limits.max_duration_s,
+    }
+
+
+def _director_spec_duration_s() -> int:
     paths = sorted(DIRETOR_DIR.glob("spec_*.yaml"))
     if not paths:
         raise StartupError(f"nenhum spec do Diretor encontrado em {DIRETOR_DIR}")
@@ -282,13 +298,7 @@ def content_job_lease(*, time_multiplier: int) -> timedelta:
 
 def max_spec_duration_s() -> int:
     """Maior `max_duration_s` de TODOS os specs: Diretor, Copywriter, Designer e Revisor."""
-    specs = _content_specs()
-    return max(
-        director_max_duration_s(),
-        specs.copywriter.limits.max_duration_s,
-        specs.designer.limits.max_duration_s,
-        specs.reviewer.limits.max_duration_s,
-    )
+    return max(role_max_durations().values())
 
 
 def worker_stale_after(*, time_multiplier: int) -> timedelta:
