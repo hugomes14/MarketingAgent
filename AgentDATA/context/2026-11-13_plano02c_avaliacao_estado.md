@@ -71,7 +71,13 @@ M5 continua aberto por falta da corrida e decisoes humanas.
 ## Ambiente de desenvolvimento observado
 
 A base configurada estava parada. Foi arrancado apenas o servico de `compose.dev.yaml`,
-com o volume existente preservado. Consulta de leitura: migracao 0001, marca `Minha marca`,
-sem estrategia ativa. Nenhuma migracao ou alteracao de dados foi aplicada ao desenvolvimento.
-Antes da corrida humana e preciso migrar a base e concluir perfil/estrategia/kit reais; depois
-adaptar e rever os oito briefs. O fumo aprovado usou outra base descartavel e dados sinteticos.
+com o volume existente preservado. Estado inicial: migracao 0001, marca `Minha marca`,
+sem estrategia ativa. Depois de backup privado verificado, foi aplicado `marketing-agent migrate`
+ate **0004**. As 15 tabelas anteriores mantiveram contagens e assinaturas identicas; zero
+corridas, posts ou revisoes foram criados. Backup local ignorado pelo Git:
+`var/backups/marketing_agent_0001_before_2c_1be9791.dump` (44653 bytes), validado com pg_restore.
+Antes da corrida humana e preciso concluir perfil/estrategia/kit reais; depois adaptar e rever
+os oito briefs. O fumo aprovado usou outra base descartavel e dados sinteticos.
+
+O utilizador autorizou comecar o Plano 2D logo apos a entrega tecnica do 2C; as etapas humanas
+do 2C permanecem abertas e nao foram usadas como motivo para bloquear essa continuacao.
