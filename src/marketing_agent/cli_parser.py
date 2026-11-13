@@ -37,10 +37,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Ficheiro YAML de preços (repetível; por omissão MODEL_PRICES_PATH).",
     )
 
-    recover = sub.add_parser(
-        "recover-reservations", help="Marca reservas abertas antigas como unknown_outcome."
-    )
-    recover.add_argument("--older-than-minutes", type=_positive_int, required=True, metavar="N")
+    _add_recover_reservations(sub)
 
     sub.add_parser("migrate", help="Aplica as migrações da base (upgrade head).")
 
@@ -56,6 +53,26 @@ def build_parser() -> argparse.ArgumentParser:
         help="Processa a fila de geração de texto (um job de cada vez) até SIGINT/SIGTERM.",
     )
 
+    _add_dev_proxy(sub)
+    return parser
+
+
+def _add_recover_reservations(sub: "argparse._SubParsersAction[argparse.ArgumentParser]") -> None:
+    recover = sub.add_parser(
+        "recover-reservations", help="Marca reservas abertas antigas como unknown_outcome."
+    )
+    recover.add_argument(
+        "--older-than-minutes",
+        type=_positive_int,
+        metavar="N",
+        help=(
+            "Idade minima das reservas; omitido ou abaixo do minimo seguro "
+            "(worker_stale_after: 8 min com LLM_TIME_MULTIPLIER=1, 35 min com 5) usa/recusa."
+        ),
+    )
+
+
+def _add_dev_proxy(sub: "argparse._SubParsersAction[argparse.ArgumentParser]") -> None:
     proxy = sub.add_parser(
         "dev-proxy", help="Só desenvolvimento: proxy local que injeta a identidade."
     )
@@ -63,4 +80,3 @@ def build_parser() -> argparse.ArgumentParser:
     proxy.add_argument("--name", help="Nome de apresentação (opcional).")
     proxy.add_argument("--listen", default="127.0.0.1:8001", metavar="HOST:PORTA")
     proxy.add_argument("--upstream", default="127.0.0.1:8000", metavar="HOST:PORTA")
-    return parser

@@ -13,6 +13,7 @@ import logging
 from collections.abc import Iterable
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+from marketing_agent.harness.engine import claim_bound_s
 from marketing_agent.loopback import is_loopback_host, parse_loopback_endpoint
 from marketing_agent.panel.hosts import parse_host_header
 from marketing_agent.startup import director_max_duration_s
@@ -24,9 +25,6 @@ NAME_HEADER = "Tailscale-User-Name"
 MAX_LOGIN_CHARS = 254
 MAX_NAME_CHARS = 100
 MAX_BODY_BYTES = 1024 * 1024
-# Margem sobre o maior max_duration_s dos specs do Diretor: o destino pode demorar tanto como
-# uma execucao inteira (chamada ao LLM) antes de responder.
-UPSTREAM_MARGIN_S = 30
 CLIENT_READ_TIMEOUT_S = 30
 PROTECTED_HEADERS = frozenset({"content-length", "host"})
 HOP_BY_HOP = frozenset(
@@ -126,12 +124,19 @@ class DevProxyServer(ThreadingHTTPServer):
         upstream: tuple[str, int],
         login: str,
         name: str | None,
+        *,
+        time_multiplier: int,
     ) -> None:
-        """Escuta em `listen` e reencaminha para `upstream` como `login`."""
+        """Escuta em `listen` e reencaminha para `upstream` como `login`.
+
+        O destino pode demorar ate uma execucao inteira do Diretor (pedidos sincronos do painel)
+        mais a ultima chamada em excesso e a margem dos marcadores: `claim_bound_s` com o mesmo
+        `time_multiplier` do painel, senao o proxy dava 502 enquanto o painel ainda trabalha.
+        """
         self.upstream = upstream
         self.login = login
         self.name = name
-        self.upstream_timeout = director_max_duration_s() + UPSTREAM_MARGIN_S
+        self.upstream_timeout = claim_bound_s(director_max_duration_s(), time_multiplier)
         super().__init__(listen, _ProxyHandler)
 
 
@@ -231,7 +236,12 @@ class _ProxyHandler(BaseHTTPRequestHandler):
 
 
 def build_dev_proxy(
-    listen: tuple[str, int], upstream: tuple[str, int], login: str, name: str | None
+    listen: tuple[str, int],
+    upstream: tuple[str, int],
+    login: str,
+    name: str | None,
+    *,
+    time_multiplier: int,
 ) -> DevProxyServer:
     """Cria o proxy (ainda sem servir); recusa enderecos que nao sejam de loopback.
 
@@ -243,4 +253,4 @@ def build_dev_proxy(
     validate_login(login)
     if name is not None:
         validate_name(name)
-    return DevProxyServer(listen, upstream, login, name)
+    return DevProxyServer(listen, upstream, login, name, time_multiplier=time_multiplier)

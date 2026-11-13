@@ -606,7 +606,7 @@ def run_strategy(report: SmokeReport, services: Services, brand_id: str) -> None
 
 def run_worker(report: SmokeReport, services: Services) -> None:
     """Esvazia a fila uma vez, com o worker real (`build_worker`), cronometrando cada job."""
-    worker = build_worker(services.settings, services.session_factory)
+    worker = build_worker(services.settings, services.session_factory, lock=None)
     print("\n=== worker", flush=True)
     for number in range(1, MAX_JOBS + 1):
         started = time.monotonic()

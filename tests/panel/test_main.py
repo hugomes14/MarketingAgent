@@ -7,9 +7,14 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import text
 from sqlalchemy.orm import Session, sessionmaker
 
+from marketing_agent.budget.controller import BudgetController
 from marketing_agent.db.models import AgentRun, Brand, CostReservation
+from marketing_agent.harness.engine import AgentEngine
+from marketing_agent.jobs.singleton import WORKER_LOCK_KEY, hold_worker_lock
+from marketing_agent.panel import main as panel_main
 from marketing_agent.panel.main import create_app_from_env
 from marketing_agent.startup import StartupError, director_max_duration_s, worker_stale_after
 
@@ -18,6 +23,14 @@ LOGIN = "dono@local"
 CSRF_SECRET = "s" * 48
 KEY_SECRET = "chave-de-api-super-secreta"
 DB_PASSWORD = "senha-da-base-xyz"
+# So o lock do worker (uma chave bigint = classid << 32 | objid em `pg_locks`): outros locks
+# consultivos da base (por exemplo de ferramentas de migracao) nao contam.
+WORKER_LOCK_SQL = (
+    "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND classid = :class_id "
+    "AND objid = :object_id AND database = "
+    "(SELECT oid FROM pg_database WHERE datname = current_database())"
+)
+WORKER_LOCK_PARAMS = {"class_id": WORKER_LOCK_KEY >> 32, "object_id": WORKER_LOCK_KEY & 0xFFFFFFFF}
 ROUTES = {
     "diretor": {
         "provider": "openai",
@@ -211,7 +224,9 @@ def test_startup_recovers_reservations_older_than_the_shared_worker_threshold(
 ) -> None:
     brand_id = add_brand(session_factory)
     now = datetime.now(UTC)
-    stale_after = worker_stale_after()  # o mesmo limiar do worker: um so valor para os dois
+    stale_after = worker_stale_after(
+        time_multiplier=1
+    )  # o mesmo limiar do worker: um so valor para os dois
     assert stale_after > timedelta(seconds=director_max_duration_s())
     ids = {
         "old": seed_reservation(
@@ -283,3 +298,65 @@ def test_wildcard_allowed_hosts_fail_at_startup(
     monkeypatch.setenv("PANEL_ALLOWED_HOSTS", '["*"]')
     with pytest.raises(StartupError, match="PANEL_ALLOWED_HOSTS"):
         create_app_from_env()
+
+
+# --- multiplicador de tempos: propagacao, deriva visivel e ausencia de lock de worker --------
+
+
+def test_startup_logs_the_time_multiplier_lease_and_reservation_threshold(
+    environment: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    session_factory: Factory,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    monkeypatch.setenv("LLM_TIME_MULTIPLIER", "5")
+    add_brand(session_factory)
+    with caplog.at_level("INFO"):
+        create_app_from_env()
+    assert (
+        "painel: LLM_TIME_MULTIPLIER=5, lease do job=18600 s, limiar das reservas=2100 s"
+        in caplog.text
+    )
+
+
+def test_startup_passes_the_multiplier_to_the_engine_and_the_reservation_recovery(
+    environment: Path, monkeypatch: pytest.MonkeyPatch, session_factory: Factory
+) -> None:
+    monkeypatch.setenv("LLM_TIME_MULTIPLIER", "5")
+    add_brand(session_factory)
+    seen: dict[str, object] = {}
+    real_engine = panel_main.AgentEngine
+
+    def spy_engine(*args: object, **kwargs: object) -> AgentEngine:
+        seen["engine"] = kwargs.get("time_multiplier")
+        return real_engine(*args, **kwargs)  # type: ignore[arg-type]
+
+    def spy_recover(self: BudgetController, older_than: timedelta) -> int:
+        seen["stale_after"] = older_than
+        return 0
+
+    monkeypatch.setattr(panel_main, "AgentEngine", spy_engine)
+    monkeypatch.setattr(BudgetController, "recover_stale", spy_recover)
+    create_app_from_env()
+    assert seen == {"engine": 5, "stale_after": timedelta(seconds=2100)}
+
+
+def test_panel_startup_never_takes_the_worker_lock(
+    environment: Path, session_factory: Factory
+) -> None:
+    add_brand(session_factory)
+    with session_factory() as session:
+        before = session.execute(text(WORKER_LOCK_SQL), WORKER_LOCK_PARAMS).scalar_one()
+    create_app_from_env()
+    with session_factory() as session:
+        assert (
+            session.execute(text(WORKER_LOCK_SQL), WORKER_LOCK_PARAMS).scalar_one() == before == 0
+        )
+
+
+def test_panel_starts_while_a_worker_holds_the_lock(
+    environment: Path, pg_url: str, session_factory: Factory
+) -> None:
+    add_brand(session_factory)
+    with hold_worker_lock(pg_url):
+        create_app_from_env()  # o painel nao disputa o lock: o worker continua a ser o unico

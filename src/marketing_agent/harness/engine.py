@@ -44,6 +44,8 @@ from marketing_agent.images.generation import ImageQuality, ImageSize
 from marketing_agent.images.prompts import PromptFixo
 from marketing_agent.llm.router import LlmRouter, MissingCapability, RouteNotConfigured
 from marketing_agent.llm.types import (
+    IMAGE_CALL_TIMEOUT_S,
+    LLM_CALL_TIMEOUT_S,
     ImagePart,
     LlmClient,
     LlmNetworkError,
@@ -59,6 +61,9 @@ logger = logging.getLogger(__name__)
 
 MAX_INVALID_ATTEMPTS = 3  # 1 tentativa + 2 repeticoes
 NETWORK_BACKOFF_S = (1.0, 2.0)  # uma repeticao por espera
+# Folga fixa dos marcadores e do proxy de desenvolvimento sobre a duracao maxima de uma execucao:
+# esperas de rede (backoff) e a gravacao final, como os 60 s da lease dos jobs.
+CLAIM_MARGIN_S = 60.0 + sum(NETWORK_BACKOFF_S)
 MAX_ERROR_SUMMARY_CHARS = 500
 CHARS_PER_TOKEN = 3  # estimativa conservadora de tokens de entrada
 # Custo fixo por imagem na entrada: os bytes nao contam como caracteres (um JPEG de centenas de
@@ -68,6 +73,26 @@ IMAGE_INPUT_TOKENS_ESTIMATE = 2000
 
 # Validador de contexto passado por quem chama: saida tipada -> violacoes (vazio = ok).
 type ExtraValidator[M: BaseModel] = Callable[[M], list[str]]
+
+
+def in_flight_call_bound_s(time_multiplier: int) -> float:
+    """Duracao maxima de UMA chamada ao fornecedor: a de texto (escalada) ou a de imagem."""
+    return max(LLM_CALL_TIMEOUT_S * time_multiplier, IMAGE_CALL_TIMEOUT_S)
+
+
+def run_overrun_bound_s(max_duration_s: float, time_multiplier: int) -> float:
+    """Pior caso de uma execucao: `max_duration_s` escalado mais uma chamada em excesso.
+
+    O motor so verifica a duracao ANTES de cada passo, por isso a ultima chamada pode passar do
+    limite: a mais lenta e a de texto (escalada pelo multiplicador) ou a de imagem (que nao escala).
+    E a formula unica de onde derivam o limiar das reservas, os marcadores e o proxy.
+    """
+    return max_duration_s * time_multiplier + in_flight_call_bound_s(time_multiplier)
+
+
+def claim_bound_s(max_duration_s: float, time_multiplier: int) -> float:
+    """`run_overrun_bound_s` mais `CLAIM_MARGIN_S`: quanto dura, no maximo, quem fez o pedido."""
+    return run_overrun_bound_s(max_duration_s, time_multiplier) + CLAIM_MARGIN_S
 
 
 class RunStatus(StrEnum):
@@ -106,6 +131,7 @@ class _Services:
     clock: Clock
     sleep: Callable[[float], None]
     images: ImageBackend | None = None
+    abort_check: Callable[[], None] | None = None
 
 
 @dataclass(frozen=True)
@@ -331,6 +357,10 @@ class RunContext:
         ]
 
     def _check_limits(self) -> None:
+        # Antes de qualquer chamada paga (texto ou imagem): o chamador pode abortar a execucao
+        # (ex.: o worker perdeu o lock de worker unico) sem nova chamada ao fornecedor.
+        if self._s.abort_check is not None:
+            self._s.abort_check()
         limits = self.spec.limits
         if self._steps_done >= limits.max_steps:
             raise RunLimitExceeded(f"limite de {limits.max_steps} passos atingido")
@@ -465,8 +495,14 @@ class AgentEngine:
         sleep: Callable[[float], None] = time.sleep,
         images: ImageBackend | None = None,
         time_multiplier: int = 1,
+        abort_check: Callable[[], None] | None = None,
     ) -> None:
-        """Monta o motor; time_multiplier amplia apenas duracoes, de 1 a 10 vezes."""
+        """Monta o motor; time_multiplier amplia apenas duracoes, de 1 a 10 vezes.
+
+        `abort_check` (opcional) corre antes de cada chamada ao fornecedor, de texto ou de imagem:
+        se levantar, a execucao termina `FAILED` sem nova chamada paga (a que ja esta em voo
+        acaba). Sem ele o comportamento e o de sempre.
+        """
         self._session_factory = session_factory
         self._router = router
         self._budget = budget
@@ -474,6 +510,7 @@ class AgentEngine:
         self._clock = clock
         self._sleep = sleep
         self._images = images
+        self._abort_check = abort_check
         if (
             not isinstance(time_multiplier, int)
             or isinstance(time_multiplier, bool)
@@ -483,12 +520,8 @@ class AgentEngine:
         self._time_multiplier = time_multiplier
 
     def claim_duration_s(self, spec: AgentSpec) -> float:
-        """Duracao maxima da execucao com a ultima chamada em excesso, para marcadores."""
-        from marketing_agent.llm.types import IMAGE_CALL_TIMEOUT_S, LLM_CALL_TIMEOUT_S
-
-        return spec.limits.max_duration_s * self._time_multiplier + max(
-            LLM_CALL_TIMEOUT_S * self._time_multiplier, IMAGE_CALL_TIMEOUT_S
-        )
+        """Duracao maxima de um pedido sincrono com `spec` (marcadores; ver `claim_bound_s`)."""
+        return claim_bound_s(spec.limits.max_duration_s, self._time_multiplier)
 
     def run[TIn, TOut](
         self,
@@ -546,6 +579,7 @@ class AgentEngine:
             self._clock,
             self._sleep,
             self._images,
+            self._abort_check,
         )
 
     @staticmethod

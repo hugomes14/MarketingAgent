@@ -238,6 +238,27 @@ def test_two_fake_images_in_one_run_have_null_request_ids(
     assert_steps_closed(rig)
 
 
+class LockLost(Exception):
+    """Sinal de aborto dos testes (o motor nao conhece o tipo concreto)."""
+
+
+def test_abort_check_stops_an_image_before_consuming_the_allowance_or_reserving(
+    session_factory: Factory, clock: FixedClock, brand_id: str
+) -> None:
+    def abort() -> None:
+        raise LockLost
+
+    generator = FakeImageGenerator()
+    rig = make_image_rig(
+        session_factory, clock, brand_id, generator, price="0.04", abort_check=abort
+    )
+    allowance = ImageAllowance(2)
+    result = rig.run(lambda ctx: generate(ctx), allowance)
+    assert result.status is RunStatus.FAILED
+    assert allowance.remaining == 2  # a quota nao foi tocada
+    assert generator.requests == [] and rig.reservations() == [] and rig.steps() == []
+
+
 def test_allowance_is_never_exceeded_by_concurrent_runs(
     session_factory: Factory, clock: FixedClock, brand_id: str
 ) -> None:

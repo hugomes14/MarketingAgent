@@ -148,6 +148,8 @@ class _Complete:
 
 
 type PackageOutcome = GeneratedPackage | ImageFailure | RunResult
+# Paragem de um papel de texto: a paragem tal como veio (1.a passagem) ou o ultimo pacote completo.
+type _Stop = GeneratedPackage | RunResult
 
 
 def _designer_output(result: RunResult) -> DesignResult | _NoImage:
@@ -197,9 +199,10 @@ class PackageRounds:
           (nao se reutiliza um fundo que o Revisor acabou de recusar).
         `rejeitar` para as voltas, como no 2A. Uma falha do Designer na 1.a passagem devolve
         `ImageFailure`. Depois de uma passagem completa, uma falha do Designer (limite de
-        imagens incluido) ou uma paragem do Revisor nao descartam o pacote ja revisto e
-        faturado: segue a ultima passagem completa (texto e imagem dessa passagem) com uma nota
-        fixa (`IMAGE_LIMIT_NOTE` ou `FINAL_REVIEW_UNAVAILABLE_NOTE`).
+        imagens incluido), uma paragem ou falha do Copywriter ou do Revisor nao descartam o
+        pacote ja revisto e faturado: segue a ultima passagem completa (texto e imagem dessa
+        passagem) com uma nota fixa (`IMAGE_LIMIT_NOTE` ou `FINAL_REVIEW_UNAVAILABLE_NOTE`).
+        Na 1.a passagem essas paragens e falhas mantem-se: `RunResult` ou `AgentRunFailed`.
         """
         run = _PackageRun(self, job_id, brand_id, payload, owner_comment, allowance)
         return run.execute()
@@ -236,15 +239,15 @@ class _PackageRun:
         for rounds in range(MAX_REVIEW_ROUNDS + 1):
             if is_copy_needed:
                 copied = self._copy(notes)
-                if isinstance(copied, RunResult):
+                if copied is not None:
                     return copied
             designed = self._design(notes, design, is_new_background)
             if isinstance(designed, _NoImage):
                 return self._without_image(rounds, designed)
             design = designed
             review = self._review(design)
-            if isinstance(review, RunResult):
-                return self._without_review(review)
+            if not isinstance(review, Revisao):
+                return review
             self._last = _Complete(self._require_draft(), self._copy_run_id, design, review, rounds)
             if _effective(review) != "rever" or rounds == MAX_REVIEW_ROUNDS:
                 return self._ship(self._last, None)
@@ -268,14 +271,20 @@ class _PackageRun:
         note = IMAGE_LIMIT_NOTE if no_image.is_limit else _unavailable_note(no_image.reason)
         return self._ship(last, note)
 
-    def _without_review(self, result: RunResult) -> PackageOutcome:
-        """Revisor parado (ajuda humana ou limite): 1.a passagem => a paragem; depois, o ultimo."""
+    def _stopped(self, result: RunResult, role: str) -> _Stop:
+        """Parado (ajuda humana ou limite): 1.a passagem => a paragem; depois, o ultimo pacote."""
         last = self._last
         if last is None:
             return result
-        return self._ship(last, _unavailable_note(_review_stop_reason(result)))
+        return self._ship(last, _unavailable_note(_stop_reason(result, role)))
 
-    def _copy(self, notes: str | None) -> RunResult | None:
+    def _failed(self, role: str) -> GeneratedPackage:
+        """Papel de texto falhou depois de uma passagem completa: segue o ultimo pacote."""
+        last = self._require_last()
+        return self._ship(last, _unavailable_note(f"falha do {role}"))
+
+    def _copy(self, notes: str | None) -> _Stop | None:
+        """Corre o Copywriter; `None` se produziu o rascunho, senao a paragem a devolver."""
         payload = replace(self._payload, reviewer_notes=notes, owner_comment=self._owner_comment)
         run = self._r.engine.run(
             self._r.specs.copywriter,
@@ -284,9 +293,14 @@ class _PackageRun:
             CopywriterLoop(),
             payload,
         )
-        draft = _as_typed(run, RascunhoTexto, "copywriter")
+        try:
+            draft = _as_typed(run, RascunhoTexto, "copywriter")
+        except AgentRunFailed:
+            if self._last is None:
+                raise
+            return self._failed("copywriter")
         if isinstance(draft, RunResult):
-            return draft
+            return self._stopped(draft, "copywriter")
         self._draft, self._copy_run_id = draft, run.run_id
         return None
 
@@ -331,7 +345,7 @@ class _PackageRun:
             return notes
         return NO_IMAGE_QUOTA_NOTE if not notes else f"{notes}\n{NO_IMAGE_QUOTA_NOTE}"
 
-    def _review(self, design: DesignResult) -> Revisao | RunResult:
+    def _review(self, design: DesignResult) -> Revisao | _Stop:
         payload = ReviewPayload(
             draft=self._require_draft(),
             brief=self._payload.brief,
@@ -347,7 +361,20 @@ class _PackageRun:
             ReviewerLoop(),
             payload,
         )
-        return _as_typed(run, Revisao, "revisor")
+        try:
+            reviewed = _as_typed(run, Revisao, "revisor")
+        except AgentRunFailed:
+            if self._last is None:
+                raise
+            return self._failed("revisor")
+        if isinstance(reviewed, RunResult):
+            return self._stopped(reviewed, "revisor")
+        return reviewed
+
+    def _require_last(self) -> _Complete:
+        if self._last is None:  # inalcancavel: so se chama depois de uma passagem completa
+            raise AssertionError("sem passagem completa para enviar")
+        return self._last
 
     def _require_draft(self) -> RascunhoTexto:
         if self._draft is None:  # inalcancavel: a primeira passagem corre sempre o Copywriter
@@ -378,11 +405,11 @@ def _unavailable_note(reason: str) -> str:
     return f"{FINAL_REVIEW_UNAVAILABLE_NOTE}{reason}"
 
 
-def _review_stop_reason(result: RunResult) -> str:
-    """Razao fixa de uma paragem do Revisor (nunca o texto do motor)."""
+def _stop_reason(result: RunResult, role: str) -> str:
+    """Razao fixa de uma paragem de um papel de texto (nunca o texto do motor)."""
     if result.status is RunStatus.BLOCKED_LIMIT:
-        return "limite do revisor atingido"
-    return "o revisor pediu ajuda humana"
+        return f"limite do {role} atingido"
+    return f"o {role} pediu ajuda humana"
 
 
 def _previous_background(design: DesignResult | None) -> GeneratedImage | None:

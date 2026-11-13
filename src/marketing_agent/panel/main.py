@@ -33,6 +33,7 @@ from marketing_agent.startup import (
     build_budget_controller,
     database_error_message,
     load_settings,
+    log_time_settings,
     worker_stale_after,
 )
 from marketing_agent.strategy.service import StrategyService
@@ -51,13 +52,14 @@ def create_app_from_env() -> FastAPI:
             inacessivel ou sem migracoes, ou nao haver exatamente uma marca.
     """
     settings = load_settings()
+    log_time_settings(settings, "painel")
     csrf_secret = _read_csrf_secret(settings)
     router = _build_router(settings)
     session_factory = _open_session_factory(settings)
     brand_id = _single_brand(session_factory)
     app = _assemble(settings, csrf_secret, router, session_factory, brand_id)
     panel: PanelContext = app.state.panel
-    _recover_stale_reservations(panel.budget, settings.llm_time_multiplier)
+    _recover_stale_reservations(panel.budget, time_multiplier=settings.llm_time_multiplier)
     return app
 
 
@@ -135,11 +137,11 @@ def _single_brand(session_factory: sessionmaker[Session]) -> str:
         raise StartupError(database_error_message(exc)) from None
 
 
-def _recover_stale_reservations(budget: BudgetController, time_multiplier: int = 1) -> None:
+def _recover_stale_reservations(budget: BudgetController, *, time_multiplier: int) -> None:
     """Reservas abertas ha mais do que `worker_stale_after()` pertencem a um processo morto.
 
     O mesmo limiar do worker: o painel partilha a base com ele, e uma chamada viva pode passar
     do `max_duration_s` do spec (a duracao so se verifica entre passos).
     """
-    count = budget.recover_stale(worker_stale_after(time_multiplier))
+    count = budget.recover_stale(worker_stale_after(time_multiplier=time_multiplier))
     logger.info("arranque: %d reserva(s) aberta(s) marcada(s) como unknown_outcome", count)

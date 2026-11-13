@@ -21,7 +21,7 @@ from marketing_agent.content.review import (
     StaleRevision,
 )
 from marketing_agent.content.revision_store import canonical_revision_hash
-from marketing_agent.db.models import AuditLog, Job, MediaAsset, Post, PostRevision
+from marketing_agent.db.models import AuditLog, Brand, Job, MediaAsset, Post, PostRevision
 from marketing_agent.jobs.queue import REVIEW_POST_JOB
 from marketing_agent.jobs.worker import Worker
 from marketing_agent.llm import fake_scenarios
@@ -209,6 +209,51 @@ def test_manual_review_does_not_overwrite_cancelled_post(ready: Ready) -> None:
     assert len(rig.revisions(post_id)) == 1
     assert rig.post(post_id).lifecycle == "cancelled"
     assert rig.job(job_id).status == "succeeded"
+
+
+def test_asset_of_another_brand_fails_the_review_job_without_retry(ready: Ready) -> None:
+    rig, _, post_id, base = ready
+    with rig.factory.begin() as session:
+        other = Brand(name="Outra marca")
+        session.add(other)
+        session.flush()
+        foreign = MediaAsset(
+            brand_id=other.id,
+            kind="foto",
+            storage_backend="local",
+            storage_key="foreign.jpg",
+            mime="image/jpeg",
+            width=1080,
+            height=1350,
+            bytes=100,
+            sha256="f" * 64,
+            mostra="produto",
+            descricao="Foto da outra marca",
+            origem="propria",
+            created_by="dono",
+            created_at=rig.clock.now(),
+        )
+        session.add(foreign)
+        session.flush()
+        foreign_id = foreign.id
+    force_lifecycle(rig, post_id, "drafting", None)
+    payload = {
+        "post_id": post_id,
+        "base_revision_id": base.id,
+        "asset_id": foreign_id,
+        "meta": manual_meta().model_dump(),
+    }
+    with rig.factory.begin() as session:
+        job_id = rig.queue.enqueue_in(session, REVIEW_POST_JOB, payload, "foreign")
+    assert job_id is not None
+    calls, revisions = len(rig.llm.requests), len(rig.revisions(post_id))
+
+    assert Worker(rig.queue, rig.pipeline, "w").run_once()
+
+    job = rig.job(job_id)
+    assert (job.status, job.attempts, job.last_error) == ("failed", 1, "ForeignAssetError")
+    assert rig.post(post_id).last_error == "ForeignAssetError"
+    assert len(rig.llm.requests) == calls and len(rig.revisions(post_id)) == revisions
 
 
 def test_unknown_worker_job_fails_without_retry(ready: Ready) -> None:
