@@ -46,3 +46,33 @@ def test_cli_eval_tty_confirms_estimate(eval_cli, monkeypatch, capsys, answer, c
     assert "4 pacotes" in text and "referencia" in text
     assert ("Corrida criada:" in text) == created
     assert eval_cli.content.llm.requests == []
+
+
+def test_cli_eval_report_writes_markdown_to_docs(eval_cli, monkeypatch, tmp_path, capsys):
+    from content_rig import package_pass
+
+    from marketing_agent.evals.blind import JudgementInput
+    from marketing_agent.evals.judging import JudgingService
+    from marketing_agent.llm.fake_scenarios import simple_package
+
+    monkeypatch.setattr(cli_eval, "report_directory", lambda: tmp_path / "AgentDATA" / "docs")
+    run_id = eval_cli.start()
+    assert cli.main(["eval", "report", run_id]) == 2
+    assert not list(tmp_path.rglob("*relatorio_avaliacao*"))
+    for item in eval_cli.items(run_id):
+        eval_cli.process(item, simple_package() if item.path == "simples" else package_pass())
+    judging = JudgingService(eval_cli.factory, eval_cli.content.clock)
+    for index in (1, 2):
+        judging.record(
+            eval_cli.brand_id,
+            run_id,
+            index,
+            JudgementInput(better="empate", errors_a=[], errors_b=[], edit_a="0", edit_b="0"),
+            1,
+            None,
+            "ana",
+        )
+    judging.reveal(eval_cli.brand_id, run_id, "ana")
+    assert cli.main(["eval", "report", run_id]) == 0
+    files = list((tmp_path / "AgentDATA" / "docs").glob("*_relatorio_avaliacao_conj.md"))
+    assert len(files) == 1 and "Sem causalidade" in files[0].read_text()

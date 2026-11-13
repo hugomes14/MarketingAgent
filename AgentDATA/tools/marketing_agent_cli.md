@@ -40,12 +40,16 @@ uv run marketing-agent --help
 | `serve [--host --port --allow-non-loopback]` | Serve o painel (uvicorn, `proxy_headers=False`) | `marketing-agent serve` |
 | `worker` | Processa a fila de geracao (Copywriter, Designer, Revisor), um job de cada vez, ate `SIGINT`/`SIGTERM`; um so por base de dados | `marketing-agent worker` |
 | `eval run --set NOME [--yes]` | Mostra pacotes, teto e referencia mensal; confirma e cria a corrida com jobs de menor prioridade | `marketing-agent eval run --set briefs_v1` |
+| `eval report RUN_ID` | Exporta relatorio revelado para AgentDATA/docs, sem sobrescrever ficheiros | `marketing-agent eval report ID` |
 | `dev-proxy --login L [--name N --listen H:P --upstream H:P]` | Proxy local de desenvolvimento que injeta a identidade | `marketing-agent dev-proxy --login dono@local` |
 
 ## Entradas
 
 `eval run` pede `sim` num TTY; fora de um terminal exige `--yes` (sem ele sai com 2, sem criar
 jobs). O conjunto fica em `EVALS_DIR` e exige perfil, estrategia, kit e referencias validas.
+`eval report` sai com 2 antes da revelacao ou para uma corrida de outra marca. O ficheiro leva
+timestamp e conjunto no nome; as limitacoes e a pergunta D35 aparecem sempre. Os minutos de
+edicao conservam as categorias (0, 1, 2–5, mais de 5), sem inventar medias para intervalos abertos.
 O worker executa os dois percursos; avaliacoes escrevem apenas tabelas de avaliacao, media e
 contabilidade, sem publicacoes semanais. Os custos somam todas as tentativas de cada item.
 O arranque e as iteracoes ociosas do worker reconciliam itens com jobs mortos.

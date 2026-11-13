@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}Relatório de avaliação{% endblock %}
+{% block content %}
+<h1>Relatório · {{ report.set_name }} v{{ report.set_version }}</h1>
+<p>{{ report.pairs }} pares elegíveis · {{ report.excluded }} excluídos por falha</p>
+<p>Especializado: {{ report.wins }} vitórias, {{ report.losses }} derrotas, {{ report.ties }} empates.</p>
+<p>Intervalo de Wilson a 95 % sobre {{ report.wins + report.losses }} pares decisivos:
+{% if report.interval %}{{ '%.4f'|format(report.interval[0]) }}–{{ '%.4f'|format(report.interval[1]) }}{% else %}indisponível (nenhum par decisivo){% endif %}.</p>
+<p>Teto estimado: {{ report.estimate_usd|usd }} USD · Custo contabilizado: {{ report.actual_usd|usd }} USD</p>
+{% for path in report.paths %}
+<section class="cartao"><h2>{{ path.path|capitalize }}</h2>
+<dl>
+<dt>Pacotes / falhas</dt><dd>{{ path.packages }} / {{ path.failures }}</dd>
+<dt>Custo médio / máximo</dt><dd>{{ path.cost_mean_usd|usd }} / {{ path.cost_max_usd|usd }} USD</dd>
+<dt>Texto, médio / máximo</dt><dd>{{ path.text_mean_usd|usd }} / {{ path.text_max_usd|usd }} USD</dd>
+<dt>Imagem, média / máxima</dt><dd>{{ path.image_mean_usd|usd }} / {{ path.image_max_usd|usd }} USD</dd>
+<dt>Latência média / máxima</dt><dd>{{ path.latency_mean_ms if path.latency_mean_ms is not none else 'sem medida' }} / {{ path.latency_max_ms if path.latency_max_ms is not none else 'sem medida' }} ms</dd>
+<dt>Saídas inválidas / voltas</dt><dd>{{ path.invalid_outputs }} / {{ path.review_rounds }}</dd>
+</dl>
+<h3>Erros marcados</h3><ul>{% for kind, count in path.errors.items() %}<li>{{ error_labels[kind] }}: {{ count }}</li>{% endfor %}</ul>
+<h3>Edição estimada (pacotes por intervalo de minutos)</h3><ul>{% for bucket, count in path.edit_minutes.items() %}<li>{{ edit_labels[bucket] }}: {{ count }}</li>{% endfor %}</ul>
+</section>
+{% endfor %}
+<p>Custos incluem pacotes falhados e todas as tentativas. Latência sem medida não conta como zero. Os minutos conservam os intervalos escolhidos.</p>
+<p>Concordância com o Revisor (qualquer volta): {{ report.reviewer_agreement.matched }}/{{ report.reviewer_agreement.total }} erros marcados no especializado. A correspondência de tipos é descritiva; não mede verdade factual nem causalidade.</p>
+<section class="cartao"><h2>Limitações</h2><ul>{% for limitation in report.limitations %}<li>{{ limitation }}</li>{% endfor %}</ul></section>
+<section class="cartao"><h2>Decisões do responsável</h2>
+<ul>{% for decision in report.decisions %}<li>{{ decision.role }}: {{ decision.decision }} — {{ decision.justificacao }} ({{ decision.actor }}, {{ decision.at.strftime('%Y-%m-%d %H:%M') }} UTC)</li>{% else %}<li>Ainda não há decisões registadas.</li>{% endfor %}</ul>
+<form method="post" action="/avaliacao/{{ report.run_id }}/decisao">
+<input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+<label>Papel <select name="role" required><option value="">Escolher</option>{% for role in ['copywriter', 'designer', 'revisor'] %}<option value="{{ role }}">{{ role|capitalize }}</option>{% endfor %}</select></label>
+<label>Decisão <select name="decision" required><option value="">Escolher</option>{% for value, label in [('manter', 'Manter'), ('simplificar', 'Simplificar'), ('retirar', 'Retirar')] %}<option value="{{ value }}">{{ label }}</option>{% endfor %}</select></label>
+<label>Justificação <textarea name="justificacao" required maxlength="2000"></textarea></label>
+<button type="submit">Registar decisão</button>
+</form>
+</section>
+<p>{{ report.question }}</p>
+{% endblock %}

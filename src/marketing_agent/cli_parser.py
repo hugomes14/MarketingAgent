@@ -59,6 +59,8 @@ def build_parser() -> argparse.ArgumentParser:
     run = commands.add_parser("run", help="Estima e enfileira uma corrida de avaliacao.")
     run.add_argument("--set", dest="set_name", required=True, help="Nome do conjunto de briefs.")
     run.add_argument("--yes", action="store_true", help="Confirma a estimativa sem TTY.")
+    report = commands.add_parser("report", help="Exporta o relatório de uma corrida revelada.")
+    report.add_argument("run_id", metavar="RUN_ID")
     return parser
 
 

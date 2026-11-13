@@ -2,6 +2,7 @@
 
 import argparse
 import sys
+from pathlib import Path
 
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -10,7 +11,9 @@ from marketing_agent.brands import resolve_single_brand
 from marketing_agent.clock import SystemClock
 from marketing_agent.config import Settings
 from marketing_agent.evals.assembly import build_eval_context, build_eval_runs
+from marketing_agent.evals.report import ReportService, RevealPending, render_markdown
 from marketing_agent.evals.runs import EVAL_START_ERRORS, EvalRunService
+from marketing_agent.evals.views import EvalNotFound
 from marketing_agent.harness.engine import AgentEngine
 from marketing_agent.llm.factory import build_llm_router
 from marketing_agent.startup import (
@@ -36,6 +39,8 @@ def build_cli_runs(settings: Settings, factory: sessionmaker[Session]) -> EvalRu
 def cmd_eval(args: argparse.Namespace) -> int:
     """Imprime estimativa; sem TTY exige `--yes` antes de criar os jobs da corrida."""
     settings = load_settings()
+    if args.eval_command == "report":
+        return _export_report(settings, args.run_id)
     try:
         with open_database(settings) as factory:
             brand_id = resolve_single_brand(factory)
@@ -63,4 +68,32 @@ def cmd_eval(args: argparse.Namespace) -> int:
     except EVAL_START_ERRORS as exc:
         raise StartupError(str(exc)) from None
     print(f"Corrida criada: {run_id}")
+    return 0
+
+
+def report_directory() -> Path:
+    """Pasta de documentacao do repositorio, independente do diretorio atual da shell."""
+    from marketing_agent.cli import find_repository_root
+
+    return find_repository_root() / "AgentDATA" / "docs"
+
+
+def _export_report(settings: Settings, run_id: str) -> int:
+    clock = SystemClock()
+    try:
+        with open_database(settings) as factory:
+            report = ReportService(factory, clock).build(resolve_single_brand(factory), run_id)
+    except RevealPending:
+        raise StartupError("o relatorio exige revelar a corrida primeiro") from None
+    except EvalNotFound:
+        raise StartupError("corrida inexistente nesta marca") from None
+    stamp = clock.now().strftime("%Y-%m-%dT%H-%M-%S.%fZ")
+    destination = report_directory() / f"{stamp}_relatorio_avaliacao_{report.set_name}.md"
+    try:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        with destination.open("x", encoding="utf-8") as output:
+            output.write(render_markdown(report))
+    except OSError:
+        raise StartupError("nao foi possivel gravar o relatorio em AgentDATA/docs") from None
+    print(destination)
     return 0

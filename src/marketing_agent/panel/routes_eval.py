@@ -16,6 +16,7 @@ from marketing_agent.evals.judging import (
     RunNotReady,
     StaleJudgement,
 )
+from marketing_agent.evals.report import RevealPending
 from marketing_agent.evals.runs import (
     EVAL_START_ERRORS,
     EstimateChanged,
@@ -53,7 +54,7 @@ def eval_errors() -> Iterator[None]:
         yield
     except EvalNotFound:
         raise HTTPException(404, "Par ou corrida inexistente.") from None
-    except (AlreadyRevealed, RevealBlocked, RunNotReady, StaleJudgement):
+    except (AlreadyRevealed, RevealBlocked, RunNotReady, StaleJudgement, RevealPending):
         raise HTTPException(
             409, "A avaliação mudou ou ainda não permite esta ação. Recarregue."
         ) from None
@@ -243,4 +244,37 @@ def reveal_run(run_id: RecordId, panel: Panel, user: CurrentUser) -> RedirectRes
     """Revelacao explicita depois de avaliar todos os pares elegiveis."""
     with eval_errors():
         services(panel).judging.reveal(panel.brand_id, run_id, user.login)
-    return see_other(f"/avaliacao/{run_id}")
+    return see_other(f"/avaliacao/{run_id}/relatorio")
+
+
+@router.get("/avaliacao/{run_id}/relatorio")
+def show_report(run_id: RecordId, panel: Panel, user: CurrentUser) -> HTMLResponse:
+    """Resultados e limitacoes, apenas depois da revelacao explicita."""
+    with eval_errors():
+        report = services(panel).report.build(panel.brand_id, run_id)
+    return panel.renderer.page(
+        "eval_report.html",
+        user,
+        {
+            "report": report,
+            "error_labels": ERROR_LABELS,
+            "edit_labels": EDIT_LABELS,
+        },
+    )
+
+
+@router.post("/avaliacao/{run_id}/decisao", dependencies=[MUTATION_GUARD])
+def record_decision(
+    run_id: RecordId, panel: Panel, user: CurrentUser, fields: Fields
+) -> RedirectResponse:
+    """Acrescenta uma decisao do responsavel, sem converter estatistica em politica automatica."""
+    with eval_errors():
+        services(panel).report.record_role_decision(
+            panel.brand_id,
+            run_id,
+            fields.get("role", ""),
+            fields.get("decision", ""),
+            fields.get("justificacao", ""),
+            user.login,
+        )
+    return see_other(f"/avaliacao/{run_id}/relatorio")

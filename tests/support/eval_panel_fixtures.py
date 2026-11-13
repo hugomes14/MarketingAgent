@@ -7,6 +7,7 @@ from content_rig import build_rig
 from eval_rig import build_eval_rig
 
 from marketing_agent.evals.judging import JudgingService
+from marketing_agent.evals.report import ReportService
 from marketing_agent.evals.views import EvalViews
 from marketing_agent.panel.context import EvalServices
 
@@ -21,7 +22,10 @@ def evaluation(make_panel, tmp_path):
     panel.app.state.panel = replace(
         panel.app.state.panel,
         evals=EvalServices(
-            rig.service, EvalViews(panel.factory), JudgingService(panel.factory, panel.clock)
+            rig.service,
+            EvalViews(panel.factory),
+            JudgingService(panel.factory, panel.clock),
+            ReportService(panel.factory, panel.clock),
         ),
     )
     return panel, rig
