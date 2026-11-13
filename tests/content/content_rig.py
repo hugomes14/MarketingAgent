@@ -253,7 +253,7 @@ class ContentRig:
 
     def expire_leases(self) -> None:
         """Avanca o relogio para depois de qualquer lease."""
-        self.clock.advance(content_job_lease() + timedelta(seconds=1))
+        self.clock.advance(content_job_lease(time_multiplier=1) + timedelta(seconds=1))
 
 
 def package_pass(
@@ -323,7 +323,7 @@ def build_rig(
     strategy = StrategyService(session_factory, engine, store, clock)
     kb = KbService(session_factory, store, clock)
     feedback = FeedbackService(session_factory, clock)
-    queue = JobQueue(session_factory, clock, content_job_lease())
+    queue = JobQueue(session_factory, clock, content_job_lease(time_multiplier=1))
     library = MediaLibrary(session_factory, LocalMediaStore(media_dir), clock)
     kits = BrandKitService(session_factory, library, clock)
     photo_id = _seed_media(library, kits, brand_id, with_kit)

@@ -51,7 +51,7 @@ class WeeklyRig:
 
     def __init__(self, panel: PanelRig) -> None:
         self.panel = panel
-        queue = JobQueue(panel.factory, panel.clock, content_job_lease())
+        queue = JobQueue(panel.factory, panel.clock, content_job_lease(time_multiplier=1))
         pipeline = ContentPipeline(
             panel.factory,
             panel.engine,

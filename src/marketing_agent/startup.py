@@ -209,7 +209,7 @@ def _has_image_price(price: ModelPrice, size: str, quality: str) -> bool:
     return True
 
 
-def _call_timeout(time_multiplier: int = 1) -> timedelta:
+def _call_timeout(*, time_multiplier: int) -> timedelta:
     return timedelta(seconds=LLM_CALL_TIMEOUT_S * time_multiplier)
 
 
@@ -223,7 +223,7 @@ def _image_call_bound() -> timedelta:
     return attempts * timedelta(seconds=IMAGE_CALL_TIMEOUT_S)
 
 
-def content_job_lease(time_multiplier: int = 1) -> timedelta:
+def content_job_lease(*, time_multiplier: int) -> timedelta:
     """Lease de um job `generate_post`: 3 x (Copywriter + Designer + Revisor + chamadas) + 60 s.
 
     `time_multiplier` escala os limites dos specs e chamadas de texto; imagem nao escala.
@@ -242,7 +242,7 @@ def content_job_lease(time_multiplier: int = 1) -> timedelta:
     )
     per_pass = (
         timedelta(seconds=run_limits * time_multiplier)
-        + 3 * _call_timeout(time_multiplier)
+        + 3 * _call_timeout(time_multiplier=time_multiplier)
         + _image_call_bound()
     )
     return 3 * per_pass + timedelta(seconds=60)
@@ -259,7 +259,7 @@ def max_spec_duration_s() -> int:
     )
 
 
-def worker_stale_after(time_multiplier: int = 1) -> timedelta:
+def worker_stale_after(*, time_multiplier: int) -> timedelta:
     """Idade a partir da qual uma reserva aberta e de um processo morto, vista pelo worker.
 
     Os tempos de texto e dos specs usam o mesmo `time_multiplier` do motor e adaptadores.
@@ -283,8 +283,8 @@ def log_time_settings(settings: Settings, process: str) -> None:
         "%s: LLM_TIME_MULTIPLIER=%d, lease do job=%d s, limiar das reservas=%d s",
         process,
         multiplier,
-        content_job_lease(multiplier).total_seconds(),
-        worker_stale_after(multiplier).total_seconds(),
+        content_job_lease(time_multiplier=multiplier).total_seconds(),
+        worker_stale_after(time_multiplier=multiplier).total_seconds(),
     )
 
 

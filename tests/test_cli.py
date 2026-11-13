@@ -224,6 +224,43 @@ def test_recover_reservations_marks_unknown(
     assert status.unknown_usd == Decimal("0.5")
 
 
+@pytest.mark.parametrize(
+    ("multiplier", "minutes", "accepted"),
+    [("1", "7", False), ("1", "8", True), ("5", "34", False), ("5", "35", True)],
+)
+def test_recover_reservations_enforces_the_safe_minimum_age(
+    multiplier: str,
+    minutes: str,
+    accepted: bool,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # worker_stale_after: 480 s (8 min) com m=1 e 2100 s (35 min) com m=5.
+    monkeypatch.setenv("LLM_TIME_MULTIPLIER", multiplier)
+    code, _, err = run(capsys, "recover-reservations", "--older-than-minutes", minutes)
+    if accepted:
+        assert code == 0
+    else:
+        assert code == 2 and "abaixo do minimo seguro" in err and "Traceback" not in err
+
+
+def test_recover_reservations_defaults_to_the_safe_minimum_age(
+    session_factory: Factory,
+    brand_id: str,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("LLM_TIME_MULTIPLIER", "5")
+    clock = SystemClock()
+    old = seed_open_reservation(session_factory, brand_id, clock, timedelta(minutes=36))
+    live = seed_open_reservation(session_factory, brand_id, clock, timedelta(minutes=20))
+    code, out, _ = run(capsys, "recover-reservations")  # omitido: 35 min com m=5
+    assert code == 0 and out.strip() == "1 reserva(s) marcada(s) como unknown_outcome"
+    with session_factory() as session:
+        assert session.get_one(CostReservation, old).status == "unknown_outcome"
+        assert session.get_one(CostReservation, live).status == "open"
+
+
 @pytest.mark.parametrize("minutes", ["0", "-5", "abc"])
 def test_recover_reservations_rejects_bad_minutes(
     minutes: str, capsys: pytest.CaptureFixture[str]

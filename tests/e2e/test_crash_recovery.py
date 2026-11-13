@@ -81,12 +81,12 @@ def test_kill_after_llm_call_before_commit(make_panel: MakePanel) -> None:
     rig = make_panel(fake_scenarios.interview_full(3))
     session_id = rig.start_session()
     requests_before = len(rig.llm.requests)
-    age = worker_stale_after() + timedelta(seconds=60)
+    age = worker_stale_after(time_multiplier=1) + timedelta(seconds=60)
     reservation_id = seed_killed_turn(rig, session_id, age)
     assert reservation_status(rig, reservation_id) == "open"
     assert rig.budget.status(rig.brand_id).reserved_usd == RESERVED
 
-    recovered = rig.budget.recover_stale(worker_stale_after())
+    recovered = rig.budget.recover_stale(worker_stale_after(time_multiplier=1))
 
     assert recovered == 1
     assert reservation_status(rig, reservation_id) == "unknown_outcome"

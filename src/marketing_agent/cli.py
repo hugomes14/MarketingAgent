@@ -6,6 +6,7 @@ traceback); 1 erro inesperado. Os segredos nunca sao impressos.
 
 import argparse
 import logging
+import math
 import os
 import signal
 import sys
@@ -118,12 +119,31 @@ def cmd_sync_prices(args: argparse.Namespace) -> int:
     return 0
 
 
+def _reservation_age_minutes(requested: int | None, time_multiplier: int) -> int:
+    """Idade a usar: o minimo seguro (`worker_stale_after` em minutos, por excesso) se omitida.
+
+    Abaixo desse minimo uma chamada ainda viva do worker (ate `max_duration_s` mais uma chamada
+    em excesso) seria dada como orfa e a sua reserva perdia a protecao do orcamento.
+    """
+    seconds = worker_stale_after(time_multiplier=time_multiplier).total_seconds()
+    floor = math.ceil(seconds / 60)
+    if requested is None:
+        return floor
+    if requested < floor:
+        raise StartupError(
+            f"--older-than-minutes {requested} esta abaixo do minimo seguro de {floor} min "
+            f"(LLM_TIME_MULTIPLIER={time_multiplier}): daria como orfa uma chamada ainda viva"
+        )
+    return requested
+
+
 def cmd_recover_reservations(args: argparse.Namespace) -> int:
-    """Marca como `unknown_outcome` as reservas abertas ha mais de N minutos."""
+    """Marca como `unknown_outcome` as reservas abertas ha mais de N minutos (N >= minimo)."""
     settings = load_settings()
+    minutes = _reservation_age_minutes(args.older_than_minutes, settings.llm_time_multiplier)
     with open_database(settings) as session_factory:
         budget = build_budget_controller(settings, session_factory, SystemClock())
-        count = budget.recover_stale(timedelta(minutes=args.older_than_minutes))
+        count = budget.recover_stale(timedelta(minutes=minutes))
     print(f"{count} reserva(s) marcada(s) como unknown_outcome")
     return 0
 
@@ -234,7 +254,9 @@ def build_worker(
         images=_build_image_backend(settings),
         time_multiplier=settings.llm_time_multiplier,
     )
-    queue = JobQueue(session_factory, clock, content_job_lease(settings.llm_time_multiplier))
+    queue = JobQueue(
+        session_factory, clock, content_job_lease(time_multiplier=settings.llm_time_multiplier)
+    )
     library = _build_media_library(settings, session_factory, clock)
     pipeline = ContentPipeline(
         session_factory,
@@ -249,7 +271,7 @@ def build_worker(
         BrandKitService(session_factory, library, clock),
         settings.image_quality,
     )
-    older_than = worker_stale_after(settings.llm_time_multiplier)
+    older_than = worker_stale_after(time_multiplier=settings.llm_time_multiplier)
     return Worker(
         queue,
         pipeline,

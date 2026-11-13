@@ -259,7 +259,7 @@ O painel e o worker marcam como `unknown_outcome` reservas abertas há mais de 4
 | --- | --- |
 | `create-brand NOME` | Cria a marca e imprime o seu id; idempotente por nome, e recusa um nome diferente se já existir uma marca (instalação de marca única) |
 | `sync-prices [--file CAMINHO ...]` | Sincroniza os preços dos modelos (por omissão `MODEL_PRICES_PATH`) |
-| `recover-reservations --older-than-minutes N` | Marca como `unknown_outcome` as reservas abertas há mais de N minutos |
+| `recover-reservations [--older-than-minutes N]` | Marca como `unknown_outcome` as reservas abertas há mais de N minutos; N tem um mínimo seguro (`worker_stale_after`: 8 min com `LLM_TIME_MULTIPLIER=1`, 35 min com 5, 70 com 10; valores abaixo são recusados) e, omitido, usa esse mínimo |
 | `migrate` | Aplica as migrações (`upgrade head`) na base de `DATABASE_URL` |
 | `serve [--host 127.0.0.1] [--port 8000]` | Serve o painel com o uvicorn (recusa `FORWARDED_ALLOW_IPS` e hosts fora do loopback) |
 | `worker` | Processa a fila de geração de publicações (pacote texto e imagem: Copywriter, Designer e Revisor com visão) até `SIGINT`/`SIGTERM`; exige as rotas `copywriter`, `designer` e `revisor` e recusa o fornecedor `fake` |

@@ -220,7 +220,9 @@ def test_startup_recovers_reservations_older_than_the_shared_worker_threshold(
 ) -> None:
     brand_id = add_brand(session_factory)
     now = datetime.now(UTC)
-    stale_after = worker_stale_after()  # o mesmo limiar do worker: um so valor para os dois
+    stale_after = worker_stale_after(
+        time_multiplier=1
+    )  # o mesmo limiar do worker: um so valor para os dois
     assert stale_after > timedelta(seconds=director_max_duration_s())
     ids = {
         "old": seed_reservation(

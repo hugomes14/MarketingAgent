@@ -40,7 +40,15 @@ def build_parser() -> argparse.ArgumentParser:
     recover = sub.add_parser(
         "recover-reservations", help="Marca reservas abertas antigas como unknown_outcome."
     )
-    recover.add_argument("--older-than-minutes", type=_positive_int, required=True, metavar="N")
+    recover.add_argument(
+        "--older-than-minutes",
+        type=_positive_int,
+        metavar="N",
+        help=(
+            "Idade minima das reservas; omitido ou abaixo do minimo seguro "
+            "(worker_stale_after: 8 min com LLM_TIME_MULTIPLIER=1, 35 min com 5) usa/recusa."
+        ),
+    )
 
     sub.add_parser("migrate", help="Aplica as migrações da base (upgrade head).")
 

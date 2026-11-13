@@ -35,7 +35,7 @@ uv run marketing-agent --help
 | --- | --- | --- |
 | `create-brand NOME` | Cria a marca (idempotente por nome) e imprime o id | `marketing-agent create-brand "Padaria"` |
 | `sync-prices [--file P ...]` | Sincroniza precos de modelos | `marketing-agent sync-prices --file config/model_prices.yaml` |
-| `recover-reservations --older-than-minutes N` | Marca reservas abertas antigas como `unknown_outcome` | `marketing-agent recover-reservations --older-than-minutes 10` |
+| `recover-reservations [--older-than-minutes N]` | Marca reservas abertas antigas como `unknown_outcome`; N abaixo do minimo seguro e recusado (saida 2) e, omitido, usa o minimo: 8 min com `LLM_TIME_MULTIPLIER=1`, 35 min com 5 (= `worker_stale_after` arredondado para cima) | `marketing-agent recover-reservations --older-than-minutes 10` (so com multiplicador 1) |
 | `migrate` | Alembic `upgrade head` | `marketing-agent migrate` |
 | `serve [--host --port --allow-non-loopback]` | Serve o painel (uvicorn, `proxy_headers=False`) | `marketing-agent serve` |
 | `worker` | Processa a fila de geracao (Copywriter, Designer, Revisor), um job de cada vez, ate `SIGINT`/`SIGTERM`; um so por base de dados | `marketing-agent worker` |
