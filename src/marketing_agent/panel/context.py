@@ -11,6 +11,8 @@ from marketing_agent.artifacts.store import ArtifactRecord
 from marketing_agent.budget.controller import BudgetController
 from marketing_agent.clock import Clock
 from marketing_agent.content.review import ReviewService
+from marketing_agent.evals.runs import EvalRunService
+from marketing_agent.evals.views import EvalViews
 from marketing_agent.feedback.service import FeedbackService
 from marketing_agent.harness.engine import RunResult, RunStatus
 from marketing_agent.interview.service import InterviewService
@@ -51,6 +53,14 @@ class MediaServices:
 
 
 @dataclass(frozen=True)
+class EvalServices:
+    """Servicos da comparacao cega, independentes do lote semanal."""
+
+    runs: EvalRunService
+    views: EvalViews
+
+
+@dataclass(frozen=True)
 class PanelContext:
     """Servicos, leituras e marca com que as rotas trabalham (guardado em `app.state.panel`)."""
 
@@ -63,6 +73,7 @@ class PanelContext:
     max_message_chars: int
     content: ContentServices
     media: MediaServices
+    evals: EvalServices | None = None
 
 
 def get_panel(request: Request) -> PanelContext:

@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}Avaliação{% endblock %}
+{% block content %}
+<h1>Avaliação</h1>
+<form action="/avaliacao/nova" method="get">
+<label>Conjunto <input name="conjunto" value="briefs_v1" required pattern="[a-z0-9_]{1,40}"></label>
+<button type="submit">Estimar nova corrida</button>
+</form>
+<ul>{% for run in runs %}<li><a href="/avaliacao/{{ run.id }}">{{ run.set_name }} v{{ run.set_version }} · {{ run.created_at.strftime('%Y-%m-%d %H:%M') }} UTC</a> · {{ run.finished }}/{{ run.total }} terminados</li>{% else %}<li>Ainda não há corridas.</li>{% endfor %}</ul>
+{% endblock %}

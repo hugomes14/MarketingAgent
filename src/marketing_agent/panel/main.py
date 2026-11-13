@@ -19,13 +19,15 @@ from marketing_agent.budget.controller import BudgetController
 from marketing_agent.clock import SystemClock
 from marketing_agent.config import Settings
 from marketing_agent.db.base import make_engine, make_session_factory
+from marketing_agent.evals.assembly import build_eval_context, build_eval_runs
+from marketing_agent.evals.views import EvalViews
 from marketing_agent.harness.engine import AgentEngine
 from marketing_agent.interview.service import InterviewService
 from marketing_agent.llm.factory import build_llm_router
 from marketing_agent.llm.router import LlmRouter
 from marketing_agent.panel.app import create_app
 from marketing_agent.panel.assembly import build_content_services, build_media_services
-from marketing_agent.panel.context import PanelContext
+from marketing_agent.panel.context import EvalServices, PanelContext
 from marketing_agent.panel.queries import PanelQueries
 from marketing_agent.secrets import SecretFileError, read_secret_file
 from marketing_agent.startup import (
@@ -92,6 +94,16 @@ def _assemble(
                 settings, session_factory, engine, store, strategy, clock
             ),
             media=build_media_services(settings, session_factory, clock),
+            evals=EvalServices(
+                build_eval_runs(
+                    settings,
+                    session_factory,
+                    build_eval_context(session_factory, store, strategy, clock),
+                    budget,
+                    clock,
+                ),
+                EvalViews(session_factory),
+            ),
         )
     except ValueError as exc:
         raise StartupError(str(exc)) from exc

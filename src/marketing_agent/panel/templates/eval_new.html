@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}Nova avaliação{% endblock %}
+{% block content %}
+<h1>Confirmar avaliação</h1>
+<p>{{ estimate.set_name }} v{{ estimate.set_version }} · {{ estimate.packages }} pacotes</p>
+<p>Teto estimado: {{ estimate.upper_bound_usd|usd(2) }} USD</p>
+<p>Gasto do mês: {{ estimate.month_spent_usd|usd }} USD · Referência mensal: {{ estimate.month_reference_usd|usd(2) }} USD</p>
+<p>A referência mensal informa; não bloqueia a corrida. Os pacotes não entram no lote semanal.</p>
+<form action="/avaliacao" method="post">
+<input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+<input type="hidden" name="conjunto" value="{{ estimate.set_name }}">
+<input type="hidden" name="teto" value="{{ estimate.upper_bound_usd }}">
+<input type="hidden" name="versao" value="{{ estimate.set_version }}">
+<button type="submit">Confirmar e iniciar corrida</button>
+</form>
+{% endblock %}

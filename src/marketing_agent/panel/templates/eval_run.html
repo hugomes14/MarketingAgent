@@ -1,0 +1,8 @@
+{% extends "base.html" %}
+{% block title %}Corrida de avaliação{% endblock %}
+{% block content %}
+<h1>Corrida de avaliação</h1>
+<p>{{ progress.set_name }} v{{ progress.set_version }}</p>
+{% include "_eval_progress.html" %}
+<p><a href="/avaliacao">Todas as corridas</a></p>
+{% endblock %}
