@@ -187,15 +187,20 @@ Carregue fotografias JPEG, PNG ou WebP em `/biblioteca` (até 15 MB e pelo menos
 em cada lado), com origem e autorização das pessoas retratadas. Configure as cores e o
 logótipo PNG transparente em `/kit`. As cópias normalizadas removem EXIF/GPS e metadados.
 
-- **Trocar foto** recompõe a publicação com uma fotografia ativa, um texto alternativo novo e
-  o kit atual, sem LLM. O título mantém-se; um fundo de IA passa a fotografia com título.
-  A revisão nova fica sem parecer e exige nova aprovação. Pacotes antigos sem o título
+- **Trocar foto** (`POST /post/{id}/trocar-foto`) recompõe a publicação com uma fotografia
+  ativa, um texto alternativo novo e o kit atual, sem LLM. O título mantém-se; um fundo de IA
+  passa a fotografia com título. A revisão nova fica sem parecer e exige nova aprovação; trocar
+  para a mesma fotografia com o mesmo texto alternativo é recusado. Pacotes antigos sem o título
   guardado precisam de ser gerados novamente antes desta ação.
-- **Carregar imagem à mão** exige texto alternativo, origem e uma declaração explícita de IA.
-  Recorta em 4:5 e enfileira `review_post`; o worker faz uma passagem pelo Revisor, sem
-  Copywriter nem Designer. Mesmo que o parecer falhe, entrega a imagem ao responsável.
-  Uma base desatualizada é recusada com 409. Uma revisão de imagem de uma publicação aprovada
-  exige nova aprovação do pacote.
+- **Carregar imagem à mão** (`POST /post/{id}/imagem`, campo de ficheiro `ficheiro`) exige texto
+  alternativo, origem e uma declaração explícita de IA. Recorta em 4:5 e enfileira `review_post`;
+  o worker faz uma passagem pelo Revisor, sem Copywriter nem Designer. Mesmo que o parecer falhe,
+  entrega a imagem ao responsável. Uma base desatualizada é recusada com 409.
+
+As duas ações só existem com a publicação em revisão (ou com uma geração falhada e nenhum
+trabalho ativo, como a edição): publicações aprovadas, rejeitadas ou canceladas não se reabrem
+(409). Os custos aparecem só nas revisões do agente; edições, trocas e uploads mostram
+«Custo: ver a geração original» (o upload regista apenas o custo da sua própria revisão visual).
 
 Inclua `MEDIA_DIR` nas cópias de segurança juntamente com o Postgres: os bytes das imagens
 não estão na base. Preserve a correspondência entre a base e os ficheiros ao restaurar.
@@ -332,20 +337,20 @@ fixa; nunca descarrega modelos. Pode levar bastante tempo com modelos locais.
 ### Validação no Windows/WSL
 
 Quando o Ollama corre no Windows e o projeto no WSL, `127.0.0.1` pode apontar apenas para
-o Linux. Nesta instalação o anfitrião respondeu em `172.18.48.1:11434`. O endereço pode mudar;
-confirme-o antes de usar. Consulte a rota com `ip route show default` e verifique o serviço:
+o Linux. O endereço do anfitrião (`<IP-do-host-WSL>` abaixo) varia entre instalações e a cada
+reinício do WSL; confirme-o antes de usar. Consulte a rota com `ip route show default` e verifique o serviço:
 
 ```bash
-curl --noproxy '*' http://172.18.48.1:11434/api/version
-curl --noproxy '*' http://172.18.48.1:11434/api/tags
+curl --noproxy '*' http://<IP-do-host-WSL>:11434/api/version
+curl --noproxy '*' http://<IP-do-host-WSL>:11434/api/tags
 ```
 
-No `.env`, ajuste `OPENAI_BASE_URL=http://172.18.48.1:11434/v1`. O teste de fumo não lê o
+No `.env`, ajuste `OPENAI_BASE_URL=http://<IP-do-host-WSL>:11434/v1`. O teste de fumo não lê o
 `.env`: passe o endereço sem `/v1` explicitamente. Para a base isolada desta instalação:
 
 ```bash
 uv run python scripts/smoke_ollama.py --posts 3 \
-  --ollama-url http://172.18.48.1:11434 \
+  --ollama-url http://<IP-do-host-WSL>:11434 \
   --server-url postgresql+psycopg://marketing_agent:marketing_agent@127.0.0.1:5543/postgres
 ```
 

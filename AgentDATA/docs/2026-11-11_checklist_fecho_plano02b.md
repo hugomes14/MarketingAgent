@@ -17,7 +17,7 @@
 
 ## Verificar depois das descargas
 
-- [ ] Confirmar ambos os modelos em `http://172.18.48.1:11434/api/tags`.
+- [ ] Confirmar ambos os modelos em `http://<IP-do-host-WSL>:11434/api/tags` (o IP varia; ver `ip route show default`).
 - [ ] Confirmar o IP atual do Windows; `127.0.0.1:11434` nao respondia neste WSL.
 - [ ] Ajustar OPENAI_BASE_URL no .env, preservando as restantes configuracoes e segredos.
 - [ ] Confirmar contexto do servidor >= 8192 tokens antes de gerar pacotes longos.
