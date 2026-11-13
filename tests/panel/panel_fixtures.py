@@ -39,9 +39,12 @@ from marketing_agent.images.generation import FAKE_IMAGE_MODEL, FakeImageGenerat
 from marketing_agent.interview.service import InterviewService
 from marketing_agent.llm.fake import FakeLlmClient
 from marketing_agent.llm.router import LlmRouter
+from marketing_agent.oficina.config import load_oficina_config
+from marketing_agent.oficina.queries import TeamStateQueries
 from marketing_agent.panel.app import create_app
 from marketing_agent.panel.assembly import build_content_services, build_media_services
 from marketing_agent.panel.queries import PanelQueries
+from marketing_agent.startup import content_job_lease, role_max_durations
 from marketing_agent.strategy.service import StrategyService
 
 
@@ -59,8 +62,15 @@ def make_panel(
         ],
     )
 
-    def make(script: Script, *, peer: str = PEER) -> PanelRig:
-        settings = build_settings(media_dir=tmp_path / "media")
+    def make(
+        script: Script, *, peer: str = PEER, settings_overrides: dict[str, object] | None = None
+    ) -> PanelRig:
+        overrides = {"media_dir": tmp_path / "media", **(settings_overrides or {})}
+        settings = build_settings(**overrides)
+        oficina = load_oficina_config(Path(__file__).resolve().parents[2] / "config/oficina.yaml")
+        durations = {
+            p: seconds * settings.llm_time_multiplier for p, seconds in role_max_durations().items()
+        }
         media = build_media_services(settings, session_factory, clock)
         llm = FakeLlmClient(scripted(script), VISION_CAPABILITIES)
         route = RoleRoute(provider="fake", model_id="fake-1", capabilities=VISION_CAPABILITIES)
@@ -93,6 +103,14 @@ def make_panel(
             queries=PanelQueries(session_factory, store),
             content=content,
             media=media,
+            oficina=oficina,
+            team=TeamStateQueries(
+                session_factory,
+                clock,
+                durations,
+                oficina,
+                job_lease=content_job_lease(time_multiplier=settings.llm_time_multiplier),
+            ),
         )
         client = TestClient(app, client=(peer, 5000))
         return PanelRig(

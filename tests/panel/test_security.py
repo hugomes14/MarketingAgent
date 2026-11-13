@@ -159,6 +159,8 @@ def build_with(
             queries=PanelQueries(factory, store),
             content=rig.content,
             media=rig.media,
+            team=rig.app.state.panel.team,
+            oficina=rig.app.state.panel.oficina,
         )
 
     return build

@@ -36,6 +36,8 @@ def browser_server(rig: WeeklyRig) -> Iterator[str]:
         queries=panel.app.state.panel.queries,
         content=panel.content,
         media=panel.media,
+        team=panel.app.state.panel.team,
+        oficina=panel.app.state.panel.oficina,
     )
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))

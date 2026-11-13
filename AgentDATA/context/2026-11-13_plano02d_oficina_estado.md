@@ -19,8 +19,12 @@
    deselected143.81s. Codigo em oficina/queries.py e sql.py, dados de teste em team_seed.py.
    Snapshot REPEATABLE READ, ultimas execucoes por papel, pendencias, entregas limitadas,
    atribuicao de jobs e falhas por resolver; nenhuma escrita ou chamada LLM.
-4. A seguir: rotas/vista2D, browser, JS, Three/cena, ligacao ao estado, desempenho e oficina
-   por omissao (Tasks4–12).
+4. Rota autenticada /oficina/estado integrada com ETag/304/no-store e multiplicador real de
+   duracoes/lease. Testes HTTP de autenticacao, Host, privacidade e imutabilidade de todas as
+   tabelas. Contexto do painel exige team/oficina; todos os montadores existentes atualizados.
+5. A seguir: vista2D, browser, JS, Three/cena, ligacao ao estado, desempenho e oficina por
+   omissao (Tasks5–12). M1 manual com morte de worker em ambiente real continua pendente;
+   nao interromper o worker em uso ou afirmar fecho de marco antes da validacao humana.
 
 ## Ambiente de testes
 

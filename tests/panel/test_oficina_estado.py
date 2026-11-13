@@ -257,3 +257,134 @@ def test_director_deliveries_ordered_by_transition_timestamp(team_seed, team_que
     assert director.pendencias == 8
     assert [d.id for d in director.entregas] == list(reversed(ids[-5:]))
     assert all(d.titulo == "Perfil de marca" for d in director.entregas)
+
+
+@pytest.fixture
+def office_panel(make_panel):
+    return make_panel([])
+
+
+def test_estado_requires_auth_and_rejects_unknown_host(office_panel):
+    from fastapi.testclient import TestClient
+
+    panel = office_panel
+    assert panel.client.get("/oficina/estado").status_code == 401
+    assert (
+        panel.get("/oficina/estado", {"Tailscale-User-Login": "outsider@example.com"}).status_code
+        == 403
+    )
+    untrusted = TestClient(panel.app, client=("198.51.100.8", 5000))
+    assert untrusted.get("/oficina/estado", headers=panel.headers()).status_code == 403
+    assert panel.get("/oficina/estado", {"Host": "evil.example"}).status_code == 400
+
+
+def test_estado_json_shape_and_etag_304(office_panel):
+    from team_seed import TeamSeed
+
+    panel = office_panel
+    first = panel.get("/oficina/estado")
+    assert first.status_code == 200 and first.headers["content-type"].startswith("application/json")
+    data = first.json()
+    assert set(data) == {"agentes", "revisao_semanal"}
+    assert [a["papel"] for a in data["agentes"]] == ["diretor", "copywriter", "designer", "revisor"]
+    etag = first.headers["etag"]
+    cached = panel.get("/oficina/estado", {"If-None-Match": f'"outro", W/{etag}'})
+    assert cached.status_code == 304 and cached.content == b"" and cached.headers["etag"] == etag
+    seed = TeamSeed(panel.factory, panel.clock, panel.brand_id)
+    seed.seed_run("copywriter", "running")
+    changed = panel.get("/oficina/estado", {"If-None-Match": etag})
+    assert changed.status_code == 200 and changed.headers["etag"] != etag
+    assert (
+        next(a for a in changed.json()["agentes"] if a["papel"] == "copywriter")["estado"]
+        == "a_trabalhar"
+    )
+
+
+def test_estado_no_store_and_security_headers_on_200_and_304(office_panel):
+    panel = office_panel
+    first = panel.get("/oficina/estado")
+    assert first.status_code == 200
+    second = panel.get("/oficina/estado", {"If-None-Match": first.headers["etag"]})
+    for response in (first, second):
+        assert response.headers["cache-control"] == "no-store"
+        assert response.headers["x-content-type-options"] == "nosniff"
+        assert response.headers["referrer-policy"] == "same-origin"
+        assert (
+            response.headers["content-security-policy"]
+            == "default-src 'self'; script-src 'self'; object-src 'none'; frame-ancestors 'none'"
+        )
+
+
+def test_estado_has_no_full_text_or_personal_data(office_panel):
+    from team_seed import TeamSeed
+
+    panel = office_panel
+    seed = TeamSeed(panel.factory, panel.clock, panel.brand_id)
+    post = seed.seed_post("drafting", tema="TEMA " * 50, last_error="ERROR-PRIVATE")
+    seed.seed_revision(post.id, caption="CAPTION-PRIVATE")
+    seed.seed_job("dead", post.id)
+    response = panel.get("/oficina/estado")
+    assert response.status_code == 200
+    assert all(
+        marker not in response.text
+        for marker in ("ERROR-PRIVATE", "CAPTION-PRIVATE", "NOTES-PRIVATE", "OWNER-PRIVATE")
+    )
+    titles = [d["titulo"] for a in response.json()["agentes"] for d in a["entregas"]]
+    assert all(len(t) <= 60 for t in titles)
+
+
+def test_estado_reads_do_not_write(office_panel):
+    import json
+
+    from sqlalchemy import text
+
+    from marketing_agent.db.base import Base
+
+    panel = office_panel
+
+    def snapshot():
+        with panel.factory() as session:
+            return {
+                name: sorted(
+                    json.dumps(row, sort_keys=True)
+                    for row in session.scalars(text(f'SELECT to_jsonb(t) FROM "{name}" t'))
+                )
+                for name in Base.metadata.tables
+            }
+
+    before = snapshot()
+    for _ in range(10):
+        assert panel.get("/oficina/estado").status_code == 200
+    assert snapshot() == before and panel.llm.requests == []
+
+
+def test_oficina_routes_are_get_only(office_panel):
+    from fastapi.routing import iter_route_contexts
+
+    routes = [
+        r
+        for r in iter_route_contexts(office_panel.app.routes)
+        if r.path and r.path.startswith("/oficina")
+    ]
+    assert routes and all(r.methods and r.methods <= {"GET", "HEAD"} for r in routes)
+    assert office_panel.post("/oficina/estado").status_code == 405
+
+
+def test_estado_uses_effective_role_duration(make_panel):
+    from team_seed import TeamSeed
+
+    from marketing_agent.startup import role_max_durations
+
+    panel = make_panel([], settings_overrides={"llm_time_multiplier": 5})
+    seed = TeamSeed(panel.factory, panel.clock, panel.brand_id)
+    nominal = role_max_durations()["copywriter"]
+    seed.seed_run("copywriter", "running", panel.clock.now() - timedelta(seconds=2 * nominal))
+    response = panel.get("/oficina/estado")
+    assert response.status_code == 200
+    writer = next(a for a in response.json()["agentes"] if a["papel"] == "copywriter")
+    assert writer["estado"] == "a_trabalhar"
+    panel.clock.advance(timedelta(seconds=4 * nominal))
+    writer = next(
+        a for a in panel.get("/oficina/estado").json()["agentes"] if a["papel"] == "copywriter"
+    )
+    assert writer["estado"] == "desatualizado"

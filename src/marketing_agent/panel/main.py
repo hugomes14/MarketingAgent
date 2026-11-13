@@ -28,6 +28,7 @@ from marketing_agent.interview.service import InterviewService
 from marketing_agent.llm.factory import build_llm_router
 from marketing_agent.llm.router import LlmRouter
 from marketing_agent.oficina.config import OficinaConfigError, load_oficina_config
+from marketing_agent.oficina.queries import TeamStateQueries
 from marketing_agent.panel.app import create_app
 from marketing_agent.panel.assembly import build_content_services, build_media_services
 from marketing_agent.panel.context import EvalServices, PanelContext
@@ -36,6 +37,7 @@ from marketing_agent.secrets import SecretFileError, read_secret_file
 from marketing_agent.startup import (
     StartupError,
     build_budget_controller,
+    content_job_lease,
     database_error_message,
     load_settings,
     log_time_settings,
@@ -78,10 +80,12 @@ def _assemble(
 ) -> FastAPI:
     """Liga o motor aos servicos reais e monta o painel (`create_app` valida a seguranca)."""
     try:
-        load_oficina_config(settings.oficina_config_file)
+        oficina = load_oficina_config(settings.oficina_config_file)
     except OficinaConfigError as exc:
         raise StartupError(f"OFICINA_CONFIG_FILE: {exc}") from None
-    role_max_durations()
+    durations = {
+        p: seconds * settings.llm_time_multiplier for p, seconds in role_max_durations().items()
+    }
     clock = SystemClock()
     budget = build_budget_controller(settings, session_factory, clock)
     store = ArtifactStore(session_factory, clock)
@@ -103,6 +107,14 @@ def _assemble(
                 settings, session_factory, engine, store, strategy, clock
             ),
             media=build_media_services(settings, session_factory, clock),
+            oficina=oficina,
+            team=TeamStateQueries(
+                session_factory,
+                clock,
+                durations,
+                oficina,
+                job_lease=content_job_lease(time_multiplier=settings.llm_time_multiplier),
+            ),
             evals=EvalServices(
                 build_eval_runs(
                     settings,
