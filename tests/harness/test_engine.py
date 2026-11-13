@@ -5,7 +5,9 @@ import re
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-from typing import Protocol
+from pathlib import Path
+from typing import Protocol, cast
+from unittest.mock import Mock
 
 import pytest
 from pydantic import BaseModel
@@ -711,3 +713,48 @@ def test_local_time_multiplier_still_blocks_after_scaled_limit(make_rig: RigFact
     result = rig.run(SlowLoop(rig.clock, 301), make_spec(max_duration_s=60))
     assert result.status is RunStatus.BLOCKED_LIMIT
     assert rig.llm.requests == []
+
+
+def test_repeated_compatible_provider_ids_settle_two_distinct_calls(
+    make_rig: RigFactory,
+    tmp_path: Path,
+) -> None:
+    """Duas chamadas legitimas do Ollama nao colidem na UNIQUE dos custos."""
+    import openai
+    from openai.types.chat import ChatCompletion
+
+    from marketing_agent.llm.openai_adapter import OpenAiClient
+
+    raw = {
+        "id": "chatcmpl-944",
+        "object": "chat.completion",
+        "created": 0,
+        "model": "fake-1",
+        "choices": [
+            {
+                "index": 0,
+                "finish_reason": "stop",
+                "message": {
+                    "role": "assistant",
+                    "content": GOOD,
+                },
+            }
+        ],
+        "usage": {"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150},
+    }
+    sdk = Mock(spec=openai.OpenAI)
+    sdk.chat.completions.create.return_value = ChatCompletion.model_validate(raw)
+    key = tmp_path / "local-key"
+    key.write_text("local")
+    client = OpenAiClient(
+        key,
+        frozenset({"text", "json_schema"}),
+        base_url="http://127.0.0.1:11434/v1",
+        sdk_client=cast(openai.OpenAI, sdk),
+    )
+    request = LlmRequest("fake-1", "sistema", [], 100)
+    rig = make_rig([client.complete(request), client.complete(request)])
+    assert rig.run(TwoCallLoop()).status is RunStatus.SUCCEEDED
+    assert len(rig.entries()) == 2
+    assert len({entry.provider_request_id for entry in rig.entries()}) == 2
+    assert all(reservation.status == "settled" for reservation in rig.reservations())

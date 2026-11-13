@@ -70,6 +70,7 @@ class LlmResponse:
 
     text: str
     usage: Usage
+    # Id do fornecedor; servidores compativeis sem unicidade global usam namespace local.
     provider_request_id: str | None
     resolved_model: str
     stop_reason: StopReason

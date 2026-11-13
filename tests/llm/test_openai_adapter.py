@@ -422,3 +422,33 @@ def test_live_call() -> None:
     assert "BANANA" in response.text.upper()
     assert response.usage.output_tokens > 0
     assert response.stop_reason is StopReason.end
+
+
+def test_compatible_server_repeated_ids_do_not_identify_distinct_calls(tmp_path: Path) -> None:
+    fake = _FakeSdk(_raw("single_text"))
+    client = OpenAiClient(
+        _key_file(tmp_path),
+        _CAPS,
+        base_url="http://127.0.0.1:11434/v1",
+        sdk_client=fake,  # type: ignore[arg-type]
+    )
+    first = client.complete(_request())
+    second = client.complete(_request())
+    assert first.provider_request_id != second.provider_request_id
+    assert first.provider_request_id.endswith(":chatcmpl-Single")
+    assert second.provider_request_id.endswith(":chatcmpl-Single")
+    assert first.text == second.text and first.usage == second.usage
+
+
+@pytest.mark.parametrize(
+    "base_url", [None, "https://api.openai.com/v1", "https://eu.api.openai.com/v1"]
+)
+def test_official_provider_ids_remain_unchanged(tmp_path: Path, base_url: str | None) -> None:
+    fake = _FakeSdk(_raw("single_text"))
+    client = OpenAiClient(
+        _key_file(tmp_path),
+        _CAPS,
+        base_url=base_url,
+        sdk_client=fake,  # type: ignore[arg-type]
+    )
+    assert client.complete(_request()).provider_request_id == "chatcmpl-Single"

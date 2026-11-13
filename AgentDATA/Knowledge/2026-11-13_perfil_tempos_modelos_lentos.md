@@ -54,3 +54,7 @@ seis respostas completed em 726,0 s; perfil aprovado pelo percurso em 276,2 s. O
 aos 120 s foi ultrapassado. Resultado final do restante percurso a registar apos a execucao.
 
 Fonte do contrato de variantes: https://docs.ollama.com/api/create (consulta em 2026-11-13).
+
+Resultado posterior: diagnostico e estrategia passaram, assim como o plano de tres posts e
+um pacote completo. O fumo foi interrompido apos uma colisao de ids do Ollama no acerto de
+custos; detalhes e correcao em 2026-11-13_ollama_ids_repetidos.md. Nao e um fumo aprovado.
