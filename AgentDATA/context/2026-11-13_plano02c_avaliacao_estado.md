@@ -5,7 +5,7 @@
 - Trabalho herdado: Claude ate `8b1c9b7` e quatro ficheiros de Task 5 ainda nao commitados
   (`handler.py`, `progress.py`, `test_handler.py`, `eval_rig.py`), copiados e validados.
   A worktree original `/home/marketing-agent/MarketingAgent-2c` permanece intacta.
-- Estado: Tasks 1–9 implementadas; codigo da Task 10 validado. Fumo Ollama em curso e
+- Estado: Tasks 1–9 implementadas; codigo da Task 10 validado. Fumo Ollama aprovado;
   avaliacao/decisoes humanas pendentes.
 
 ## Entrega
@@ -26,9 +26,11 @@ intervalos de edicao e decisoes humanas auditadas.
 - Chromium: `test_eval_browser.py`, 1 passed in 3.30s, imagens 1080 px, formularios, revelacao,
   decisao e ausencia de erros JS; conteudo sintetico. Correcao de largura das imagens
   validada RED→GREEN (1 passed in 2.76s).
-- Fumo Ollama em curso: `/tmp/marketing-agent-2c-ollama-smoke.log`; `--eval-only`, multiplicador
+- Fumo Ollama aprovado (saida 0, dois pacotes succeeded com imagem e especializado verificado): `/tmp/marketing-agent-2c-ollama-smoke.log`; `--eval-only`, multiplicador
   5, marketing-qwen2.5-14b:8k e marketing-qwen2.5vl-7b:8k no Windows 172.28.112.1:11434.
-  Base descartavel propria no servidor 5543. Sem APIs pagas. Nao iniciar outro fumo concorrente.
+  Base descartavel propria no servidor 5543, apagada no fim. Sem APIs pagas.
+  Total 42 min 35 s, zero saidas invalidas, posts/revisoes 0/0. Evidencia versionada:
+  `AgentDATA/docs/2026-11-13_fumo_ollama_plano02c.md`.
 - Regressoes posteriores: 609 testes de conteudo/avaliacao aprovados (incluindo teto congelado e Markdown).
 - Suite final apos revisao: 2961 passed, 4 deselected in 173.76s;
   `/tmp/marketing-agent-2c-full-suite-reviewed.log`.
@@ -63,8 +65,8 @@ intervalos de edicao e decisoes humanas auditadas.
    por julgamentos automaticos nem publicar um relatorio sintetico como evidencia real.
 4. Se a decisao for simplificar/retirar um papel, implementar e validar essa opcao num commit
    separado. Sem decisao humana, o pipeline habitual conserva o comportamento atual.
-5. Concluir o fumo real do par. Revisao tecnica e verificacoes automaticas aprovadas;
-   M5 continua aberto por falta da corrida e decisoes humanas.
+Validacao tecnica concluida: fumo real do par, revisao e verificacoes automaticas aprovados.
+M5 continua aberto por falta da corrida e decisoes humanas.
 
 ## Ambiente de desenvolvimento observado
 
@@ -72,4 +74,4 @@ A base configurada estava parada. Foi arrancado apenas o servico de `compose.dev
 com o volume existente preservado. Consulta de leitura: migracao 0001, marca `Minha marca`,
 sem estrategia ativa. Nenhuma migracao ou alteracao de dados foi aplicada ao desenvolvimento.
 Antes da corrida humana e preciso migrar a base e concluir perfil/estrategia/kit reais; depois
-adaptar e rever os oito briefs. O fumo em curso usa outra base descartavel e dados sinteticos.
+adaptar e rever os oito briefs. O fumo aprovado usou outra base descartavel e dados sinteticos.

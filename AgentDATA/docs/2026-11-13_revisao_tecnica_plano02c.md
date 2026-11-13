@@ -73,3 +73,8 @@ segunda revisao, conforme a skill de execucao. Os menores continuam explicitamen
 Rever os oito briefs com estrategia e base reais disponiveis, gerar 16 pacotes, avaliar os
 pares e corrigir um, revelar, exportar o relatorio real e registar a decisao de cada papel.
 Se for decidido simplificar/retirar, implementar a opcao num commit separado com validacao.
+
+
+Fumo Ollama posterior concluido: saida 0, dois pacotes com imagem, especializado verificado,
+zero saidas invalidas e nenhum post semanal. Total 42 min 35 s; evidencia em
+`2026-11-13_fumo_ollama_plano02c.md`. Isto nao substitui o julgamento humano de M5.
