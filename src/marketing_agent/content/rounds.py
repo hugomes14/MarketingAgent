@@ -10,7 +10,7 @@ from dataclasses import dataclass, replace
 from typing import Literal, NoReturn
 
 from marketing_agent.content.design import DesignerLoop, DesignPayload, DesignResult
-from marketing_agent.content.image_failure import describe_image_stop
+from marketing_agent.content.image_failure import describe_image_stop, is_image_limit
 from marketing_agent.content.loops import (
     CopyPayload,
     CopywriterLoop,
@@ -43,6 +43,13 @@ from marketing_agent.jobs.errors import describe_error
 MAX_REVIEW_ROUNDS = 2  # voltas do pacote: no maximo 3 passagens por geracao
 # Nota fixa acrescentada ao parecer quando as voltas param por falta de quota de imagens.
 IMAGE_LIMIT_NOTE = "limite de 2 imagens geradas atingido"
+# Nota fixa quando uma passagem posterior nao chega ao fim e segue o ultimo pacote completo.
+FINAL_REVIEW_UNAVAILABLE_NOTE = "revisao final indisponivel: "
+# Frase do codigo (nunca do modelo) para o Designer quando a quota esta a zero.
+NO_IMAGE_QUOTA_NOTE = (
+    "Ja nao ha imagens geradas disponiveis neste pedido: mantem o tema de fundo atual "
+    "ou escolhe uma foto da biblioteca."
+)
 
 
 class AgentRunFailed(Exception):
@@ -123,9 +130,21 @@ class ImageFailure:
 
 @dataclass(frozen=True)
 class _NoImage:
-    """Interna: o Designer nao produziu imagem."""
+    """Interna: o Designer nao produziu imagem; `is_limit` se foi a quota de imagens."""
 
     reason: str
+    is_limit: bool = False
+
+
+@dataclass(frozen=True)
+class _Complete:
+    """Interna: uma passagem completa (texto, imagem e parecer), pronta a seguir para revisao."""
+
+    draft: RascunhoTexto
+    copy_run_id: str
+    design: DesignResult
+    review: Revisao
+    rounds: int
 
 
 type PackageOutcome = GeneratedPackage | ImageFailure | RunResult
@@ -139,7 +158,7 @@ def _designer_output(result: RunResult) -> DesignResult | _NoImage:
         return result.output
     if result.status is RunStatus.FAILED:
         _raise_if_configuration(result, "designer")
-    return _NoImage(describe_image_stop(result))
+    return _NoImage(describe_image_stop(result), is_image_limit(result))
 
 
 class PackageRounds:
@@ -176,7 +195,11 @@ class PackageRounds:
           (`force_new_background`); se o fundo e gerado e a quota de imagens esta esgotada,
           as voltas param e o pacote segue para o responsavel com as notas e `IMAGE_LIMIT_NOTE`
           (nao se reutiliza um fundo que o Revisor acabou de recusar).
-        `rejeitar` para as voltas, como no 2A. Uma falha do Designer devolve `ImageFailure`.
+        `rejeitar` para as voltas, como no 2A. Uma falha do Designer na 1.a passagem devolve
+        `ImageFailure`. Depois de uma passagem completa, uma falha do Designer (limite de
+        imagens incluido) ou uma paragem do Revisor nao descartam o pacote ja revisto e
+        faturado: segue a ultima passagem completa (texto e imagem dessa passagem) com uma nota
+        fixa (`IMAGE_LIMIT_NOTE` ou `FINAL_REVIEW_UNAVAILABLE_NOTE`).
         """
         run = _PackageRun(self, job_id, brand_id, payload, owner_comment, allowance)
         return run.execute()
@@ -203,8 +226,10 @@ class _PackageRun:
         self._inputs: DesignInputs | None = None
         self._draft: RascunhoTexto | None = None
         self._copy_run_id = ""
+        self._last: _Complete | None = None
 
     def execute(self) -> PackageOutcome:
+        """Corre as passagens e devolve o pacote final, a falha de imagem ou a paragem."""
         notes: str | None = None
         design: DesignResult | None = None
         is_copy_needed, is_new_background = True, False
@@ -215,25 +240,40 @@ class _PackageRun:
                     return copied
             designed = self._design(notes, design, is_new_background)
             if isinstance(designed, _NoImage):
-                return ImageFailure(self._text(rounds, None), designed.reason)
+                return self._without_image(rounds, designed)
             design = designed
             review = self._review(design)
             if isinstance(review, RunResult):
-                return review
-            verdict = _effective(review)
-            if verdict != "rever" or rounds == MAX_REVIEW_ROUNDS:
-                return self._package(rounds, design, review, None)
+                return self._without_review(review)
+            self._last = _Complete(self._require_draft(), self._copy_run_id, design, review, rounds)
+            if _effective(review) != "rever" or rounds == MAX_REVIEW_ROUNDS:
+                return self._ship(self._last, None)
             violations = set(review.violacoes)
             is_new_background = bool(BACKGROUND_VIOLATIONS & violations)
-            if (
-                is_new_background
-                and design.generated is not None
-                and self._allowance.remaining == 0
-            ):
-                return self._package(rounds, design, review, IMAGE_LIMIT_NOTE)
+            if is_new_background and design.generated is not None and self._no_quota():
+                return self._ship(self._last, IMAGE_LIMIT_NOTE)
             is_copy_needed = not (violations and violations <= VISUAL_VIOLATIONS)
             notes = _reviewer_notes(review)
         raise AssertionError("inalcancavel: a ultima volta devolve sempre")
+
+    def _no_quota(self) -> bool:
+        return self._allowance.remaining == 0
+
+    def _without_image(self, rounds: int, no_image: _NoImage) -> PackageOutcome:
+        """Designer sem imagem: 1.a passagem => texto sozinho; depois, o ultimo pacote completo."""
+        last = self._last
+        if last is None:
+            return ImageFailure(self._text_only(rounds), no_image.reason)
+        # Decide-se pela classe do limite (`RunResult.limit`), nunca pelo texto da mensagem.
+        note = IMAGE_LIMIT_NOTE if no_image.is_limit else _unavailable_note(no_image.reason)
+        return self._ship(last, note)
+
+    def _without_review(self, result: RunResult) -> PackageOutcome:
+        """Revisor parado (ajuda humana ou limite): 1.a passagem => a paragem; depois, o ultimo."""
+        last = self._last
+        if last is None:
+            return result
+        return self._ship(last, _unavailable_note(_review_stop_reason(result)))
 
     def _copy(self, notes: str | None) -> RunResult | None:
         payload = replace(self._payload, reviewer_notes=notes, owner_comment=self._owner_comment)
@@ -266,7 +306,7 @@ class _PackageRun:
             photos=inputs.photos,
             photo_bytes=inputs.photo_bytes,
             image_quality=self._r.image_quality,
-            reviewer_notes=notes,
+            reviewer_notes=self._designer_notes(notes),
             previous_background=_previous_background(previous),
             force_new_background=is_new_background,
         )
@@ -284,6 +324,12 @@ class _PackageRun:
         if self._inputs is None:
             self._inputs = self._r.media.load(self._brand_id)
         return self._inputs
+
+    def _designer_notes(self, notes: str | None) -> str | None:
+        """Notas do Revisor para o Designer; sem quota acrescenta a frase fixa do codigo."""
+        if not self._no_quota():
+            return notes
+        return NO_IMAGE_QUOTA_NOTE if not notes else f"{notes}\n{NO_IMAGE_QUOTA_NOTE}"
 
     def _review(self, design: DesignResult) -> Revisao | RunResult:
         payload = ReviewPayload(
@@ -308,19 +354,35 @@ class _PackageRun:
             raise AssertionError("pacote sem rascunho de texto")
         return self._draft
 
-    def _text(self, rounds: int, review: Revisao | None, note: str | None = None) -> GeneratedText:
-        draft = self._require_draft()
-        if review is None:
-            return GeneratedText(draft, None, [], None, rounds, self._copy_run_id)
-        notes = review.notas if not note else f"{review.notas}\n{note}"
-        return GeneratedText(
-            draft, _effective(review), list(review.violacoes), notes, rounds, self._copy_run_id
-        )
+    def _text_only(self, rounds: int) -> GeneratedText:
+        """Texto do rascunho vigente sem parecer (so para a falha de imagem da 1.a passagem)."""
+        return GeneratedText(self._require_draft(), None, [], None, rounds, self._copy_run_id)
 
-    def _package(
-        self, rounds: int, design: DesignResult, review: Revisao, note: str | None
-    ) -> GeneratedPackage:
-        return GeneratedPackage(self._text(rounds, review, note), design, review.imagem_verificada)
+    def _ship(self, complete: _Complete, note: str | None) -> GeneratedPackage:
+        """Pacote de uma passagem completa: o seu texto, a sua imagem e o seu parecer."""
+        review = complete.review
+        notes = review.notas if not note else f"{review.notas}\n{note}"
+        text = GeneratedText(
+            complete.draft,
+            _effective(review),
+            list(review.violacoes),
+            notes,
+            complete.rounds,
+            complete.copy_run_id,
+        )
+        return GeneratedPackage(text, complete.design, review.imagem_verificada)
+
+
+def _unavailable_note(reason: str) -> str:
+    """Nota fixa de que a revisao final nao chegou a existir, com a razao fixa."""
+    return f"{FINAL_REVIEW_UNAVAILABLE_NOTE}{reason}"
+
+
+def _review_stop_reason(result: RunResult) -> str:
+    """Razao fixa de uma paragem do Revisor (nunca o texto do motor)."""
+    if result.status is RunStatus.BLOCKED_LIMIT:
+        return "limite do revisor atingido"
+    return "o revisor pediu ajuda humana"
 
 
 def _previous_background(design: DesignResult | None) -> GeneratedImage | None:

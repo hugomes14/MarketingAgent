@@ -57,8 +57,17 @@ def describe_image_stop(result: RunResult) -> str:
     return DESIGNER_FAILED_REASON
 
 
+def is_image_limit(result: RunResult) -> bool:
+    """A execucao parou por falta de quota de imagens (decide-se pela classe, nao pelo texto)."""
+    return (
+        result.status is RunStatus.BLOCKED_LIMIT
+        and result.limit is not None
+        and issubclass(result.limit, ImageLimitExceeded)
+    )
+
+
 def _limit_reason(result: RunResult) -> str:
-    if result.limit is not None and issubclass(result.limit, ImageLimitExceeded):
+    if is_image_limit(result):
         return "limite de imagens geradas atingido"
     if result.limit is not None and issubclass(result.limit, RunCostLimitExceeded):
         return "limite de custo do designer atingido"

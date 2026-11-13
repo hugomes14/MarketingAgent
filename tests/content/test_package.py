@@ -19,10 +19,15 @@ from marketing_agent.config import Capability
 from marketing_agent.content.package_costs import remaining_images, run_trigger
 from marketing_agent.content.package_media import PHOTO_UNAVAILABLE_MESSAGE, DesignMedia
 from marketing_agent.content.revision_store import canonical_revision_hash
-from marketing_agent.content.rounds import IMAGE_LIMIT_NOTE
+from marketing_agent.content.rounds import IMAGE_LIMIT_NOTE, NO_IMAGE_QUOTA_NOTE
 from marketing_agent.db.models import AuditLog, CostReservation, Job, MediaAsset, Post
 from marketing_agent.harness.run_errors import RunConfigurationFailed
-from marketing_agent.images.generation import ImageProviderError
+from marketing_agent.images.generation import (
+    FakeImageGenerator,
+    ImageProviderError,
+    ImageRequest,
+    ImageResult,
+)
 from marketing_agent.jobs.errors import describe_error
 from marketing_agent.llm import fake_scenarios
 from marketing_agent.llm.types import ImagePart, LlmUnknownOutcome
@@ -188,6 +193,128 @@ def test_background_violation_without_quota_ships_the_package_with_a_limit_note(
     assert revision.review_notes == f"Ainda mal.\n{IMAGE_LIMIT_NOTE}"
     assert IMAGE_LIMIT_NOTE == "limite de 2 imagens geradas atingido"
     assert rig.post(post_id).lifecycle == "in_review"
+
+
+class FailsOnSecondCall(FakeImageGenerator):
+    """Gerador que gera a 1.a imagem e levanta `error` a partir da 2.a."""
+
+    def __init__(self, error: Exception) -> None:
+        super().__init__()
+        self._error = error
+
+    def generate(self, request: ImageRequest) -> ImageResult:
+        if self.requests:
+            self.requests.append(request)
+            raise self._error
+        return super().generate(request)
+
+
+def test_visual_violations_with_exhausted_quota_ship_the_previous_reviewed_package(
+    make_rig: MakeRig,
+) -> None:
+    """Passagem 2 pediria uma 3.a imagem: segue o pacote revisto da passagem 1, com a nota."""
+    script = [
+        *package_pass("rever", ["texto_ilegivel"], "Ilegivel."),
+        *fake_scenarios.visual_draft(tema_fundo="noite de inverno", alt_text="Alt da passagem 1"),
+        *review("rever", ("marca_incoerente",), "Marca fraca."),
+        *fake_scenarios.visual_draft(tema_fundo="manha de primavera", alt_text="Alt da passagem 2"),
+    ]
+    rig = make_rig(script, image_price=PRICE)
+    outcome, post_id = generation(rig)
+
+    assert outcome == "in_review"
+    assert request_kinds(rig) == ["copy", "design", "review", "design", "review", "design"]
+    assert rig.generated_requests() == 2 and len(rig.image_entries()) == 2  # nunca uma 3.a
+    [revision] = rig.revisions(post_id)
+    assert (revision.review_verdict, revision.review_violations) == ("rever", ["marca_incoerente"])
+    assert revision.review_notes == f"Marca fraca.\n{IMAGE_LIMIT_NOTE}"
+    assert revision.alt_text == "Alt da passagem 1" and revision.review_image_checked is True
+    assert (revision.image_cost_usd, revision.package_cost_usd) == (Decimal("0.08"),) * 2
+    [final], [background] = rig.assets("final"), rig.assets("componente_gerado")
+    assert revision.final_asset_id == final.id
+    generated = next(c for c in revision.components if c["tipo"] == "gerada")
+    assert generated["asset_id"] == background.id
+    assert (rig.post(post_id).lifecycle, rig.post(post_id).last_error) == ("in_review", None)
+    assert rig.job(job_id_of(rig)).status == "succeeded"
+    # O Designer soube que ja nao ha imagens: so a passagem 2 leva a frase fixa do codigo.
+    assert NO_IMAGE_QUOTA_NOTE in rig.llm.request_text(6)
+    assert NO_IMAGE_QUOTA_NOTE not in rig.llm.request_text(4)
+
+
+def test_exhausted_quota_never_pairs_rewritten_text_with_the_previous_image(
+    make_rig: MakeRig,
+) -> None:
+    script = [
+        *package_pass("rever", ["texto_ilegivel"], "Ilegivel.", legenda="Primeira versao"),
+        *fake_scenarios.visual_draft(tema_fundo="noite de inverno", alt_text="Alt da passagem 1"),
+        *review("rever", ("limite_canal",), "Texto longo."),
+        *fake_scenarios.caption_draft("Terceira versao"),
+        *fake_scenarios.visual_draft(tema_fundo="manha de primavera", alt_text="Alt da passagem 2"),
+    ]
+    rig = make_rig(script, image_price=PRICE)
+    outcome, post_id = generation(rig)
+
+    assert outcome == "in_review"
+    assert request_kinds(rig) == ["copy", "design", "review", "design", "review", "copy", "design"]
+    [revision] = rig.revisions(post_id)
+    # Texto revisto com a imagem revista: nunca o texto novo (nao revisto) com a imagem velha.
+    assert revision.caption == "Primeira versao" and revision.alt_text == "Alt da passagem 1"
+    assert revision.review_notes == f"Texto longo.\n{IMAGE_LIMIT_NOTE}"
+    [final] = rig.assets("final")
+    assert revision.final_asset_id == final.id
+    assert revision.revision_hash == canonical_revision_hash(
+        caption=revision.caption,
+        hashtags=revision.hashtags,
+        call_to_action=revision.call_to_action,
+        alt_text=revision.alt_text,
+        claims=revision.claims,
+        channels=["instagram"],
+        final_image_sha256=final.sha256,
+    )
+    assert "Terceira versao" not in json.dumps([r.caption for r in rig.revisions(post_id)])
+
+
+def test_designer_failure_after_a_reviewed_package_ships_it_with_a_fixed_note(
+    make_rig: MakeRig,
+) -> None:
+    generator = FailsOnSecondCall(ImageProviderError(HOSTILE, 400))
+    script = [
+        *package_pass("rever", ["texto_ilegivel"], "Ilegivel."),
+        *fake_scenarios.visual_draft(tema_fundo="noite de inverno"),
+    ]
+    rig = make_rig(script, generator=generator, image_price=PRICE)
+    outcome, post_id = generation(rig)
+
+    assert outcome == "in_review"
+    [revision] = rig.revisions(post_id)
+    assert revision.review_verdict == "rever" and revision.final_asset_id is not None
+    assert revision.review_notes == (
+        "Ilegivel.\nrevisao final indisponivel: a geração ficou com desfecho desconhecido"
+    )
+    assert HOSTILE not in str(revision.review_notes)
+    assert rig.post(post_id).last_error is None and rig.job(job_id_of(rig)).status == "succeeded"
+
+
+def test_reviewer_stop_after_a_reviewed_package_ships_it_with_a_fixed_note(
+    make_rig: MakeRig,
+) -> None:
+    # A 2.a passagem reaproveita o fundo; o Revisor nao confirma a imagem 3 vezes: needs_human.
+    script = [
+        *package_pass("rever", ["texto_ilegivel"], "Ilegivel."),
+        *fake_scenarios.visual_draft(),
+        *fake_scenarios.review("aprovar") * 3,
+    ]
+    rig = make_rig(script, image_price=PRICE)
+    outcome, post_id = generation(rig)
+
+    assert outcome == "in_review"
+    [revision] = rig.revisions(post_id)
+    assert revision.review_verdict == "rever" and revision.final_asset_id is not None
+    assert (
+        revision.review_notes
+        == "Ilegivel.\nrevisao final indisponivel: o revisor pediu ajuda humana"
+    )
+    assert (revision.image_cost_usd, revision.package_cost_usd) == (Decimal(PRICE),) * 2
 
 
 def test_visual_only_violation_redoes_only_the_designer_and_reuses_the_background(
