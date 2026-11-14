@@ -22,8 +22,11 @@
 4. Rota autenticada /oficina/estado integrada com ETag/304/no-store e multiplicador real de
    duracoes/lease. Testes HTTP de autenticacao, Host, privacidade e imutabilidade de todas as
    tabelas. Contexto do painel exige team/oficina; todos os montadores existentes atualizados.
-5. A seguir: vista2D, browser, JS, Three/cena, ligacao ao estado, desempenho e oficina por
-   omissao (Tasks5–12). M1 manual com morte de worker em ambiente real continua pendente;
+5. Vista2D implementada em c052fd5 e validada em2026-11-14: suite3059 passed/4 deselected,
+   typecheck/lint/format e build aprovados. Quatro avatares, painel por papel, entregas e
+   revisao semanal; sem acoes novas ou chamadas LLM.
+6. A seguir: browser (T6), JS, Three/cena, ligacao ao estado, desempenho e oficina por
+   omissao (Tasks6–12). M1 manual com morte de worker em ambiente real continua pendente;
    nao interromper o worker em uso ou afirmar fecho de marco antes da validacao humana.
 
 ## Ambiente de testes
@@ -69,3 +72,19 @@ voltas. Esta decisao e de leitura e nao altera posts/revisoes.
 - Rascunhos preparatorios T6 guardados apenas em var/oficina-pausa-2026-11-13/ (ignorado),
   para nao perder os ficheiros temporarios. Ler o brief T6 e observar RED antes de integrar.
 - Nao ha migracao, chamadas LLM ou alteracoes aos servicos8000/8001/5434 nesta pausa.
+
+
+## Tarefa 5 concluida — 2026-11-14
+
+- A pausa anterior e historica. Retoma autorizada para concluir T5; T6 por iniciar.
+- Suite global:3059 passed/4 deselected414.12s; mypy161, ruff e format OK. Build offline
+  sdist/wheel OK; quatro templates, rota e CSS presentes no wheel.
+- Base de teste2D ausente no arranque: criada novamente no contentor existente5543;
+  nenhuma alteracao aos servicos de desenvolvimento.
+- Preview pedido pelo utilizador: marca de demonstracao na base separada
+  marketing_agent_2d_preview_20261114; proxy local com portas efemeras. URL atual em
+  var/oficina-preview-2026-11-14/url.txt; scripts e capturas no mesmo diretorio ignorado.
+  Captura desktop e mobile390px verificadas no Chromium, troca do painel por HTMX OK,
+  zero erros JS/CSP e nenhum overflow horizontal no mobile. Preview mantido aberto.
+- A cena3D e as caras geradas das personagens continuam nas tarefas seguintes.
+  M2 e restantes marcos humanos ainda nao fechados.
