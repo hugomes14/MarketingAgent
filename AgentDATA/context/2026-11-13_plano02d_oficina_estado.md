@@ -29,8 +29,10 @@
    desmarcados. Formularios/HTMX/pageshow/idempotencia/CSRF e oficina2D cobertos.
 7. T7 concluida: teclado, sondagem5s/ETag, pausa, backoff e estados por confirmar.
    21 testes Chromium aprovados; suite3059 passou/25 desmarcados.
-8. A seguir: Three local (T8), cena, ligacao ao estado, desempenho e oficina por
-   omissao (Tasks8–12). M1 manual com morte de worker em ambiente real continua pendente;
+8. T8 concluida: Three0.186.1 local verificado, CLI e hashes/licenca; suite3073 passou,
+   Chromium21 passou, build e verificacoes de qualidade OK.
+9. A seguir: cena (T9), ligacao ao estado, desempenho e oficina por
+   omissao (Tasks9–12). M1 manual com morte de worker em ambiente real continua pendente;
    nao interromper o worker em uso ou afirmar fecho de marco antes da validacao humana.
 
 ## Ambiente de testes
@@ -121,3 +123,17 @@ T7: a repeticao de fecho detetou um timeout intermitente no teste de backoff.
 Playwright clock.install continua a avancar com o tempo real; acrescentado pause_at antes
 da navegacao para medir intervalos exatos deterministicamente. Sem alteracoes ao codigo
 funcional; os21 testes Chromium passaram novamente em16.17s.
+
+
+## Tarefa 8 concluida — 2026-11-14
+
+- Three.js0.186.1:18 ficheiros +README com hashes e MIT. SHA512 npm fixado verificado;
+  comparacao independente de origem/local comprova apenas11 imports alterados.
+- scripts/vendor_three.py so stdlib: --help, --version fixada e --dest vazio/novo; paths,
+  links, duplicados, ficheiros em falta e integridade invalida recusados. Tool registrada.
+- Regressoes target relativo na mesma pasta e export const com texto from three observadas
+  RED e corrigidas. Excecao estrita em .gitignore para servir/versionar vendor/three/build.
+- Suite3073 passed/25 deselected480.47s; Chromium21 passed27.29s; ruff/format411/mypy162 OK.
+  Build wheel/sdist OK, todos19 recursos copiados conferidos no wheel.
+- Whitespace original do fornecedor mantido e autenticado pelos hashes; codigo proprio
+  revisto com diff --check. M3 ainda depende da cena T9, por iniciar. UI2D mantida.

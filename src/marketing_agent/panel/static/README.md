@@ -56,3 +56,11 @@ pagina da oficina, com a mesma CSP do painel:
 Os dados entram no DOM por textContent. Nao ha POST, chamadas ao LLM ou Three.js nesta fase.
 Verificar com `pytest tests/browser -m e2e_browser`; os testes usam relogio simulado,
 falhas de rede e dados hostis. Continuam a existir os links normais para uso sem JavaScript.
+
+## vendor/three/
+
+Three.js0.186.1 local, MIT, com subconjunto de addons e sem Node/build.
+[Proveniencia, hashes e atualizacao](vendor/three/README.md).
+A ferramenta scripts/vendor_three.py verifica o SHA512 npm antes de ler o arquivo e altera
+apenas imports nus para caminhos relativos. O painel2D ainda nao carrega estes ficheiros;
+a integracao da cena pertence a tarefa9.
