@@ -17,6 +17,9 @@ Nao se copiam React, Firebase, paginas, regras ou ativos binarios. Texturas proc
   Nenhuma atividade escolhida pela cena: so setCharacters. Opcao reducedMotion impede rotas.
   Tarefa10: novo tipo de lugar `point` (coordenadas fixas, usado no ponto de entrega da pasta
   junto a secretaria do Revisor) e a chave de lugar passa a incluir x/z/rot desse ponto.
+  Tarefa11: `onFrame` recebe a duracao real do frame em ms (null no primeiro frame depois de
+  retomar) para o controlo de qualidade; com `reducedMotion` o OrbitControls deixa de usar
+  inercia (`enableDamping` desligado), alem de nao haver rotas nem foco animado da camara.
 - minifig.js: cabecalho MIT/origem e import relativo; geometria/personagem preservada.
 - navgrid.js: apenas cabecalho MIT/origem; algoritmo de navegacao preservado.
 - textures.js: cabecalho MIT/origem e import relativo; texturas procedimentais preservadas.
@@ -33,6 +36,14 @@ Copywriter levar a pasta ao Revisor (com movimento reduzido so muda a pose). A p
 nao repete transicoes. A selecao e sincronizada nos dois sentidos sem eco. capturas.js gera
 a cara de cada avatar num render target 96x96 (sem toDataURL/data:, por causa da CSP) e guarda
 os bytes RGBA em sessionStorage pela chave da aparencia. Nao se inventam atividades.
+Tarefa11: main.js decide a vista (vista.js: WebGL, escolha em localStorage["oficina.vista"],
+movimento reduzido) e monta/desmonta a cena pelo interruptor `#vista-alternar`; sem WebGL a
+vista 2D e permanente e o interruptor fica desativado. A vista 2D nunca importa oficina3d.js
+nem o Three. qualidade.js (ControloQualidade) decide alta/baixa/insuficiente pela mediana de
+janelas de 90 frames (>33 ms desce, <25 ms sobe, um degrau por janela); `insuficiente` mostra
+o aviso com "Mudar para 2D". medidas.js so e importado com `?medir=1` e escreve com textContent
+FPS (media 5 s), memoria (performance.memory ou "indisponivel"), primeiro frame e qualidade.
+Separador oculto pausa o render (scene.pause) e a sondagem (estado.js); pagehide desmonta.
 Apenas estado.js faz fetch; os restantes modulos nao contactam servicos.
 CSSOM de posicionamento dos renderers Three usa propriedades de estilo, como o upstream;
 HTML servido nao tem style/on*, scripts inline ou importmap. A CSP mantem-se integralmente.

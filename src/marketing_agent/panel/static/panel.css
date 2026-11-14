@@ -179,6 +179,14 @@ main:has(#oficina) { max-width: 100rem; }
 .avatar { display: block; text-align: center; padding: 0.75rem; background: var(--cartao); border: 1px solid var(--linha); border-radius: 0.75rem; text-decoration: none; color: var(--texto); }
 .avatar[aria-current="true"] { border: 2px solid var(--acento); padding: calc(0.75rem - 1px); }
 a:focus-visible, button:focus-visible, canvas:focus-visible { outline: 3px solid var(--acento); outline-offset: 4px; }
+.avatar:focus-visible { outline-offset: 2px; }
+.oficina-barra { display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem; margin-bottom: 0.75rem; }
+.oficina-barra [hidden] { display: none; }
+#vista-alternar[aria-pressed="true"] { border: 2px solid var(--acento); }
+#vista-alternar:disabled { cursor: not-allowed; }
+#oficina-lenta { margin: 0; padding: 0.4rem 0.75rem; border-radius: 0.5rem; }
+#oficina-medidas { margin-bottom: 0.75rem; padding: 0.5rem 0.75rem; border: 1px dashed var(--linha); border-radius: 0.5rem; font: 0.85rem/1.4 monospace; }
+#oficina-medidas p { margin: 0; }
 .avatar-cara { display: block; border-radius: 50%; background: #e0ecff; width: 4.5rem; height: 4.5rem; margin: 0 auto 0.5rem; }
 .avatar-nome, .avatar-papel, .avatar-pendencias { display: block; }
 .avatar-papel, .avatar-pendencias, .avatar .estado-texto { font-size: 0.85rem; }
@@ -204,8 +212,10 @@ a:focus-visible, button:focus-visible, canvas:focus-visible { outline: 3px solid
   .avatar-cara { width: 3.5rem; height: 3.5rem; }
   #painel-trabalho .cartao { padding: 0.75rem; }
 }
-.aviso-ligacao { border: 2px solid var(--aviso); color: var(--aviso); background: var(--aviso-fundo); }
+.aviso-ligacao, #oficina-lenta { border: 2px solid var(--aviso); color: var(--aviso); background: var(--aviso-fundo); }
 .oficina-etiquetas { position: absolute; top: 0; left: 0; pointer-events: none; }
 .office-label { padding: 0.15rem 0.4rem; border-radius: 0.3rem; background: white; color: #1d2330; font-size: 0.75rem; }
 .office-dot { display: inline-block; width: 0.5rem; height: 0.5rem; border-radius: 50%; background: #64748b; margin-right: 0.3rem; }
 #oficina-cena > canvas { display: block; }
+/* O contorno normal seria cortado pelo overflow do contentor. */
+#oficina-cena > canvas:focus-visible { outline-offset: -4px; }

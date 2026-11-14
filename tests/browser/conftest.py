@@ -9,23 +9,28 @@ from tests.browser.live_server import LiveServer, run_live_server
 
 
 @pytest.fixture(scope="session")
-def browser():
+def playwright_driver():
+    # A API sincrona so admite um driver por processo: os dois browsers partilham-no.
     with sync_playwright() as playwright:
-        instance = playwright.chromium.launch(
-            headless=True, args=["--use-angle=swiftshader", "--enable-unsafe-swiftshader"]
-        )
-        yield instance
-        instance.close()
+        yield playwright
 
 
 @pytest.fixture(scope="session")
-def browser_no_webgl():
-    with sync_playwright() as playwright:
-        instance = playwright.chromium.launch(
-            headless=True, args=["--disable-webgl", "--disable-3d-apis"]
-        )
-        yield instance
-        instance.close()
+def browser(playwright_driver):
+    instance = playwright_driver.chromium.launch(
+        headless=True, args=["--use-angle=swiftshader", "--enable-unsafe-swiftshader"]
+    )
+    yield instance
+    instance.close()
+
+
+@pytest.fixture(scope="session")
+def browser_no_webgl(playwright_driver):
+    instance = playwright_driver.chromium.launch(
+        headless=True, args=["--disable-webgl", "--disable-3d-apis"]
+    )
+    yield instance
+    instance.close()
 
 
 @pytest.fixture

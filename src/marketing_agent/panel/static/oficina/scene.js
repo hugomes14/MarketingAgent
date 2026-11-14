@@ -478,7 +478,7 @@ export class OfficeScene {
 
     this.controls = new OrbitControls(this.camera, this.renderer.domElement)
     this.controls.enableRotate = false
-    this.controls.enableDamping = true
+    this.controls.enableDamping = !reducedMotion // inercia da camara e animacao
     this.controls.dampingFactor = 0.12
     this.controls.screenSpacePanning = false
     this.controls.zoomToCursor = true
@@ -861,7 +861,9 @@ export class OfficeScene {
   animate(timestamp) {
     if (!this.running) return
     this.raf = null
-    const dt = this.lastFrame === null ? 0 : Math.min((timestamp - this.lastFrame) / 1000, 0.05)
+    // Duracao real do frame para o controlo de qualidade; null no primeiro frame apos retomar.
+    const frameMs = this.lastFrame === null ? null : timestamp - this.lastFrame
+    const dt = frameMs === null ? 0 : Math.min(frameMs / 1000, 0.05)
     this.lastFrame = timestamp
     this.elapsed += dt
     const t = this.reducedMotion ? 0 : this.elapsed
@@ -891,7 +893,7 @@ export class OfficeScene {
     else this.renderer.render(this.scene, this.camera)
     this.labels.render(this.scene, this.camera)
     this.frames++
-    this.onFrame?.()
+    this.onFrame?.(frameMs)
     if (this.running) this.raf = requestAnimationFrame(this.animate)
   }
 

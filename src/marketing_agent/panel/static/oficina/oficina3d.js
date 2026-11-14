@@ -1,4 +1,5 @@
 import {OfficeScene} from './scene.js';
+import {ControloQualidade} from './qualidade.js';
 import {Vector3} from '../vendor/three/build/three.module.js';
 
 const ESTADOS = new Set(['a_trabalhar', 'erro', 'desatualizado', 'em_espera', 'inativo']);
@@ -11,15 +12,20 @@ let instanciaAtual = null;
 
 /** Instancia visual; nenhuma atividade ou decisao de negocio e criada aqui. */
 export class Oficina3D {
-  constructor(contentor, {personagens = [], aoSelecionar, reduzirMovimento = false} = {}) {
+  constructor(contentor, {personagens = [], aoSelecionar, aoQualidade, reduzirMovimento = false} = {}) {
     this.contentor = contentor;
     this.personagens = personagens;
     this.reduzirMovimento = reduzirMovimento;
     this.fila = []; this.entrega = null; this.estado = null;
+    this.controlo = new ControloQualidade();
+    this.nivelQualidade = 'alta'; this.aoQualidade = aoQualidade; this.primeiroQuadroMs = null;
     this.cena = new OfficeScene(contentor, {
       onSelect: papel => {this.selecionar(papel); aoSelecionar?.(papel);},
       reducedMotion: reduzirMovimento,
-      onFrame: () => {contentor.dataset.pronto = '1'; this.avancarEntrega();}
+      onFrame: ms => {
+        this.primeiroQuadroMs ??= performance.now();
+        contentor.dataset.pronto = '1'; this.avancarEntrega(); this.medirQuadro(ms);
+      }
     });
     const canvas = this.cena.renderer.domElement;
     canvas.tabIndex = 0;
@@ -29,6 +35,16 @@ export class Oficina3D {
     document.addEventListener('visibilitychange', this.visibilidade);
     this.visibilidade();
     instanciaAtual = this;
+  }
+  /** Frames lentos sustentados baixam a qualidade; `insuficiente` deixa a decisao ao utilizador. */
+  medirQuadro(ms) {
+    if (ms === null || this.memoriaFinal) return;
+    const nivel = this.controlo.registar(ms);
+    if (nivel === this.nivelQualidade) return;
+    this.nivelQualidade = nivel;
+    const qualidadeCena = nivel === 'alta' ? 'alta' : 'baixa';
+    if (this.cena.quality !== qualidadeCena) this.cena.setQuality(qualidadeCena);
+    this.aoQualidade?.(nivel);
   }
   /** Usa exclusivamente o snapshot recebido; primeira carga nao cria entregas. */
   aplicarEstado(estadoEquipa, transicoes = []) {
@@ -109,7 +125,8 @@ export class Oficina3D {
   }
   /** Contadores reais para inspecao e testes, nunca controla o dominio. */
   estatisticas() {
-    return {ativo: this.cena.running, quadros: this.cena.frames, qualidade: this.cena.quality,
+    return {ativo: this.cena.running, quadros: this.cena.frames, qualidade: this.nivelQualidade,
+      primeiroQuadroMs: this.primeiroQuadroMs,
       pixelRatio: this.cena.renderer.getPixelRatio(), camara: this.cena.camera.position.toArray(),
       memoria: this.memoriaFinal || {...this.cena.renderer.info.memory}};
   }

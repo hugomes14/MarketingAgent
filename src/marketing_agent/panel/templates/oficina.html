@@ -4,6 +4,13 @@
 <section id="oficina" data-selecionado="{{ selecionado }}">
   <h1>Oficina da equipa</h1>
   <p class="nota">Escolha um agente para consultar o trabalho e abrir as suas entregas.</p>
+  <div class="oficina-barra">
+    <button type="button" id="vista-alternar" aria-pressed="false" hidden>Vista 3D</button>
+    <div id="oficina-lenta" role="status" hidden>
+      A oficina está lenta neste dispositivo.
+      <button type="button" id="oficina-lenta-2d">Mudar para 2D</button>
+    </div>
+  </div>
   <div class="oficina-grelha">
     {% include "_oficina_coluna.html" %}
     <div id="oficina-cena" hidden aria-label="Oficina 3D da equipa"></div>
