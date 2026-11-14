@@ -27,8 +27,10 @@
    revisao semanal; sem acoes novas ou chamadas LLM.
 6. Browser (T6) concluido: sete percursos Chromium aprovados; suite3059 passou,11
    desmarcados. Formularios/HTMX/pageshow/idempotencia/CSRF e oficina2D cobertos.
-7. A seguir: JS (T7), Three/cena, ligacao ao estado, desempenho e oficina por
-   omissao (Tasks7–12). M1 manual com morte de worker em ambiente real continua pendente;
+7. T7 concluida: teclado, sondagem5s/ETag, pausa, backoff e estados por confirmar.
+   21 testes Chromium aprovados; suite3059 passou/25 desmarcados.
+8. A seguir: Three local (T8), cena, ligacao ao estado, desempenho e oficina por
+   omissao (Tasks8–12). M1 manual com morte de worker em ambiente real continua pendente;
    nao interromper o worker em uso ou afirmar fecho de marco antes da validacao humana.
 
 ## Ambiente de testes
@@ -102,3 +104,15 @@ voltas. Esta decisao e de leitura e nao altera posts/revisoes.
   padrao confirma ausencia dos testes de browser. Playwright e lock existentes preservados.
 - Nao houve alteracoes ao codigo funcional, chamadas a modelos reais ou migracoes.
   T7 ainda por iniciar; M2/manual e restantes marcos continuam abertos.
+
+
+## Tarefa 7 concluida — 2026-11-14
+
+- Modulos ES da oficina implementados: teclado, selecao aria-current, GET5s sequencial,
+  ETag/304, pausa em separador oculto e retoma imediata, espera10/20/40/60s em erros.
+- Estados por confirmar apos tres falhas ou30s sem sucesso, inclusive pedido bloqueado;
+  recuperacao304 restaura tambem o painel. Sessao401/403 para a sondagem.
+- GREEN21 testes Chromium15.37s; suite3059 passed/25 deselected409.43s; ruff/format406,
+  mypy161 e build offline OK. Wheel inclui main/estado/coluna.js.
+- Preview38705 atualizado; desktop/mobile390px verificados sem erros JS/CSP ou overflow.
+  M2 manual continua aberto, distinto da verificacao automatizada por teclado. T8 por iniciar.

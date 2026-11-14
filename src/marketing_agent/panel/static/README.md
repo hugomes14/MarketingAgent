@@ -38,3 +38,21 @@ formularios simples (nao-HTMX): o segundo `submit` e cancelado e os botoes ficam
 Repoe o estado em `pageshow` quando a pagina vem da cache de retrocesso do browser.
 Tambem salta a substituicao periodica do lote (`#lote`, evento `htmx:beforeSwap`) quando ha um
 painel de edicao aberto ou um campo alterado, para nao apagar o que o responsavel escreve.
+
+## oficina/
+
+Modulos ES proprios, sem build, importmap ou dependencias externas. Carregados apenas na
+pagina da oficina, com a mesma CSP do painel:
+
+- `estado.js`: GET sequencial a cada5s, If-None-Match, pausa quando oculto e espera10/20/40/60s
+  em falhas; 401/403 termina a sondagem. Exporta detetarTransicoes e urlInterna; dados ficam
+  na mesma origem (URLs com barras invertidas/controlos tambem sao recusadas).
+- `coluna.js`: foco itinerante com setas/Home/End e ativacao por Enter; seleciona o agente,
+  acompanha estados e pendencias e abre o parcial HTMX existente. Recargas serializadas
+  para impedir que respostas antigas substituam a selecao mais recente.
+- `main.js`: liga os modulos e deixa de afirmar estados apos tres falhas ou30s sem sucesso,
+  incluindo pedidos bloqueados. Recuperacao 304 restaura tambem o painel escolhido.
+
+Os dados entram no DOM por textContent. Nao ha POST, chamadas ao LLM ou Three.js nesta fase.
+Verificar com `pytest tests/browser -m e2e_browser`; os testes usam relogio simulado,
+falhas de rede e dados hostis. Continuam a existir os links normais para uso sem JavaScript.

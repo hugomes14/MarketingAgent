@@ -204,3 +204,4 @@ a:focus-visible, button:focus-visible, canvas:focus-visible { outline: 3px solid
   .avatar-cara { width: 3.5rem; height: 3.5rem; }
   #painel-trabalho .cartao { padding: 0.75rem; }
 }
+.aviso-ligacao { border: 2px solid var(--aviso); color: var(--aviso); background: var(--aviso-fundo); }
