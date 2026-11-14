@@ -3,7 +3,8 @@ const ESTADOS = new Set(['a_trabalhar', 'erro', 'desatualizado', 'em_espera', 'i
 
 /** Coluna HTML acessivel; a cena futura apenas acompanha esta selecao. */
 export class Coluna {
-  constructor(raiz, {aoSelecionar = () => {}} = {}) {
+  constructor(raiz, {aoSelecionar = () => {}, aoSemLigacao = () => {}} = {}) {
+    this.aoSemLigacao = aoSemLigacao;
     this.raiz = raiz; this.aoSelecionar = aoSelecionar;
     this.avatares = [...raiz.querySelectorAll('.avatar')];
     this.papel = raiz.dataset.selecionado;
@@ -73,6 +74,7 @@ export class Coluna {
   }
   marcarSemLigacao(desde) {
     this.semLigacao = true; this.desde = desde;
+    this.aoSemLigacao();
     let aviso = this.raiz.querySelector('.aviso-ligacao');
     if (!aviso) {
       aviso = document.createElement('p'); aviso.className = 'aviso aviso-ligacao';

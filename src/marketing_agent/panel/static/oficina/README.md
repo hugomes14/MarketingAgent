@@ -15,6 +15,8 @@ Nao se copiam React, Firebase, paginas, regras ou ativos binarios. Texturas proc
   controls, etiquetas, listeners e renderer/contexto. A DFG_LUT partilhada da versao0.186.1
   e recolhida nos uniforms antes do descarte dos materiais (o renderer nao a liberta). Devolve memoria final e e idempotente.
   Nenhuma atividade escolhida pela cena: so setCharacters. Opcao reducedMotion impede rotas.
+  Tarefa10: novo tipo de lugar `point` (coordenadas fixas, usado no ponto de entrega da pasta
+  junto a secretaria do Revisor) e a chave de lugar passa a incluir x/z/rot desse ponto.
 - minifig.js: cabecalho MIT/origem e import relativo; geometria/personagem preservada.
 - navgrid.js: apenas cabecalho MIT/origem; algoritmo de navegacao preservado.
 - textures.js: cabecalho MIT/origem e import relativo; texturas procedimentais preservadas.
@@ -23,8 +25,14 @@ Nao se copiam React, Firebase, paginas, regras ou ativos binarios. Texturas proc
 
 oficina3d.js encapsula montagem, pausa oculta, desmontagem e estatisticas. main.js carrega-o
 por import dinamico apenas com WebGL2 e sem movimento reduzido. Falha conserva a vista2D.
-Nesta tarefa9 a cena e montada sem escolher trabalho/personagens; ligacao ao estado e
-configuracao dos quatro papeis pertencem a tarefa10. Nao se inventam atividades.
+Tarefa10: oficina3d.js recebe as quatro personagens dos `data-*` da coluna e so aplica o
+estado vindo de `/oficina/estado`: `a_trabalhar` -> secretaria a escrever; `em_espera`,
+`erro`, `desatualizado` -> secretaria em pausa com marcador; `inativo` -> descanso no jardim.
+Sem estado confirmado, as quatro ficam visiveis no jardim. A transicao `entrega_pasta` faz o
+Copywriter levar a pasta ao Revisor (com movimento reduzido so muda a pose). A primeira carga
+nao repete transicoes. A selecao e sincronizada nos dois sentidos sem eco. capturas.js gera
+a cara de cada avatar num render target 96x96 (sem toDataURL/data:, por causa da CSP) e guarda
+os bytes RGBA em sessionStorage pela chave da aparencia. Nao se inventam atividades.
 Apenas estado.js faz fetch; os restantes modulos nao contactam servicos.
 CSSOM de posicionamento dos renderers Three usa propriedades de estilo, como o upstream;
 HTML servido nao tem style/on*, scripts inline ou importmap. A CSP mantem-se integralmente.

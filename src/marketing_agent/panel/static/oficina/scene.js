@@ -603,6 +603,8 @@ export class OfficeScene {
   seatFor(place) {
     const pick = (arr) => arr.length ? arr[((place.index || 0) % arr.length + arr.length) % arr.length] : { x: 0, z: 8, rot: 0, seat: false }
     switch (place.type) {
+      // Ponto de entrega fixo, independente da localizacao atual do Revisor.
+      case 'point': return {x: place.x, z: place.z, rot: place.rot, seat: false}
       case 'desk': return pick(place.zone === 'lab' ? this.seats.lab : this.seats.team)
       case 'office': return pick(this.seats.office)
       case 'kitchen': return pick(this.seats.kitchen)
@@ -666,7 +668,7 @@ export class OfficeScene {
       const lookKey = JSON.stringify(c.look)
       if (ch && ch.lookKey !== lookKey) { this.removeChar(c.id); ch = null }
       const spot = this.seatFor(c.place)
-      const placeKey = `${c.place.type}:${c.place.zone || ''}:${c.place.index}:${c.place.targetId || ''}`
+      const placeKey = `${c.place.type}:${c.place.zone || ''}:${c.place.index}:${c.place.targetId || ''}:${c.place.x}:${c.place.z}:${c.place.rot}`
 
       if (!ch) {
         const root = createMinifig(c.look)
