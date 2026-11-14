@@ -50,3 +50,21 @@ com servicos/fixtures: nao substitui a entrevista completa no browser nem o fumo
 
 Saida 0: passou; outra saida: consultar o relatorio pytest. Usa disco para browsers/cache e
 base efemera para dados. Nao chama fornecedores pagos. Validacao nesta sessao: 1 teste passou.
+
+
+## Percursos HTTP do painel (Plano 2D, tarefa 6)
+
+Desde 2026-11-14, `tests/browser/` inclui sete percursos automatizados: pagina inicial,
+duplo envio simples e HTMX, recuperacao via pageshow, turno com idempotencia/CSRF,
+erro dirigido a #estado e oficina2D com selecao do Revisor. Usa servidores loopback em
+portas efemeras, guioes falsos verificados no fim e recolha de erros JS/CSP.
+
+```bash
+LD_LIBRARY_PATH="$PWD/var/browser-deps/usr/lib/x86_64-linux-gnu" \
+  uv run pytest tests/browser -m e2e_browser -v
+```
+
+Omitir LD_LIBRARY_PATH quando as bibliotecas ja estao instaladas no sistema. Os marcadores
+`browser` e `e2e_browser` ficam ambos excluidos por omissao, a par de `live`. Nao correr
+em paralelo com outro pytest na mesma base. Playwright e Chromium ja estavam instalados;
+esta tarefa nao exige novas dependencias ou alteracao de uv.lock.

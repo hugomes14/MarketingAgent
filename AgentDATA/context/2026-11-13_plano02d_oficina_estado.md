@@ -25,8 +25,10 @@
 5. Vista2D implementada em c052fd5 e validada em2026-11-14: suite3059 passed/4 deselected,
    typecheck/lint/format e build aprovados. Quatro avatares, painel por papel, entregas e
    revisao semanal; sem acoes novas ou chamadas LLM.
-6. A seguir: browser (T6), JS, Three/cena, ligacao ao estado, desempenho e oficina por
-   omissao (Tasks6–12). M1 manual com morte de worker em ambiente real continua pendente;
+6. Browser (T6) concluido: sete percursos Chromium aprovados; suite3059 passou,11
+   desmarcados. Formularios/HTMX/pageshow/idempotencia/CSRF e oficina2D cobertos.
+7. A seguir: JS (T7), Three/cena, ligacao ao estado, desempenho e oficina por
+   omissao (Tasks7–12). M1 manual com morte de worker em ambiente real continua pendente;
    nao interromper o worker em uso ou afirmar fecho de marco antes da validacao humana.
 
 ## Ambiente de testes
@@ -88,3 +90,15 @@ voltas. Esta decisao e de leitura e nao altera posts/revisoes.
   zero erros JS/CSP e nenhum overflow horizontal no mobile. Preview mantido aberto.
 - A cena3D e as caras geradas das personagens continuam nas tarefas seguintes.
   M2 e restantes marcos humanos ainda nao fechados.
+
+
+## Tarefa 6 concluida — 2026-11-14
+
+- Sete testes Chromium em tests/browser, com servidor real loopback e guioes falsos
+  verificados. Cobre a passagem automatizada dos formularios e turnos do Plano1, incluindo
+  duplo envio, pageshow, idempotencia/CSRF e erros HTMX; oficina2D abre sem erros JS/CSP.
+- GREEN7/7 em5.39s; suite3059 passed/11 deselected404.93s; mypy161/ruff/format405 OK.
+- Marcador e2e_browser registado, mantendo exclusoes browser/live anteriores; colecao
+  padrao confirma ausencia dos testes de browser. Playwright e lock existentes preservados.
+- Nao houve alteracoes ao codigo funcional, chamadas a modelos reais ou migracoes.
+  T7 ainda por iniciar; M2/manual e restantes marcos continuam abertos.
