@@ -31,8 +31,10 @@
    21 testes Chromium aprovados; suite3059 passou/25 desmarcados.
 8. T8 concluida: Three0.186.1 local verificado, CLI e hashes/licenca; suite3073 passou,
    Chromium21 passou, build e verificacoes de qualidade OK.
-9. A seguir: cena (T9), ligacao ao estado, desempenho e oficina por
-   omissao (Tasks9–12). M1 manual com morte de worker em ambiente real continua pendente;
+9. T9 concluida: cena portada MIT e wrapper, qualidade/pause/dispose e testes3D.
+   Suite3080 passou/30 desmarcados; 26 percursos Chromium e13 estaticos passaram.
+10. A seguir: ligacao ao estado/personagens (T10), desempenho e oficina por
+   omissao (Tasks10–12). M1 manual com morte de worker em ambiente real continua pendente;
    nao interromper o worker em uso ou afirmar fecho de marco antes da validacao humana.
 
 ## Ambiente de testes
@@ -137,3 +139,18 @@ funcional; os21 testes Chromium passaram novamente em16.17s.
   Build wheel/sdist OK, todos19 recursos copiados conferidos no wheel.
 - Whitespace original do fornecedor mantido e autenticado pelos hashes; codigo proprio
   revisto com diff --check. M3 ainda depende da cena T9, por iniciar. UI2D mantida.
+
+
+## Tarefa 9 concluida — 2026-11-14
+
+- Cena MIT Ederland portada com imports locais, DOM/textContent, teclado no canvas,
+  alta/baixa injetadas, RAF pausavel, dispose GPU e estatisticas reais. DFG_LUT interna
+  descoberta e libertada explicitamente; conhecimento registado sem alterar Three.
+- GREEN39 testes browser+staticos90.83s; suite3080 passed/30 deselected213.16s.
+  Mypy162/ruff/format414 OK; build wheel/sdist aprovado com sete recursos novos conferidos.
+- Preview38705 mostra cena3D, captura oficina-3d-desktop.png no diretorio preview ignorado.
+  Inspecao visual e console sem erros JS/CSP no Chromium por software.
+- T10 por iniciar: personagens/configuracao, selecao sincronizada, capturas e animacoes
+  por estado real. NestaT9 a cena nao escolhe atividades ou cria dados.
+- M3 manual/PR continuam abertos. Os testes2D usam reduced_motion=reduce e testes3D
+  sobrepoem no-preference; falta de WebGL continua no fallback2D.

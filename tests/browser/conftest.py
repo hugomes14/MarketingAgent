@@ -70,7 +70,9 @@ def collect_errors(page, errors):
 @pytest.fixture
 def page(browser, live_panel, page_errors):
     context = browser.new_context(
-        extra_http_headers={"Tailscale-User-Login": LOGIN}, viewport={"width": 1280, "height": 900}
+        reduced_motion="reduce",
+        extra_http_headers={"Tailscale-User-Login": LOGIN},
+        viewport={"width": 1280, "height": 900},
     )
     page = context.new_page()
     collect_errors(page, page_errors)

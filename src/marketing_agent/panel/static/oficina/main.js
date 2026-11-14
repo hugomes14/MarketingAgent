@@ -35,3 +35,24 @@ if (cliente) {
   window.addEventListener('pagehide', () => {cliente.parar(); clearTimeout(avisoTimer);});
   window.addEventListener('pageshow', event => {if (event.persisted) cliente.iniciar();});
 }
+
+export let oficina = null;
+/** A vista 2D permanece completa se WebGL ou o carregamento da cena falhar. */
+async function iniciarCena() {
+  if (!raiz || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  const teste = document.createElement('canvas');
+  const gl = teste.getContext('webgl2');
+  if (!gl) return;
+  gl.getExtension('WEBGL_lose_context')?.loseContext();
+  const contentor = raiz.querySelector('#oficina-cena');
+  try {
+    const {montar} = await import('./oficina3d.js');
+    contentor.hidden = false;
+    oficina = await montar(contentor, {personagens: [], aoSelecionar: () => {}, reduzirMovimento: false});
+  } catch (erro) {
+    oficina?.desmontar(); oficina = null; contentor.hidden = true;
+    document.querySelector('#estado').textContent = 'Não foi possível abrir a vista 3D. A vista 2D continua disponível.';
+  }
+}
+iniciarCena();
+window.addEventListener('pagehide', () => oficina?.desmontar());

@@ -78,3 +78,67 @@ def test_js_served_with_javascript_mime_and_csp(make_panel):
         response.headers["content-security-policy"]
         == "default-src 'self'; script-src 'self'; object-src 'none'; frame-ancestors 'none'"
     )
+
+
+PORTED = ("scene.js", "minifig.js", "navgrid.js", "textures.js")
+COMMIT = "073cbc2fdd9c52428e67935e35e0e616c892a258"
+
+
+def test_ported_files_have_license_header_with_commit():
+    for name in PORTED:
+        header = (STATIC / "oficina" / name).read_text()[:600]
+        assert "Copyright (c) 2026 Ederland Studio" in header and "MIT" in header
+        assert COMMIT in header and "alterado: ver static/oficina/README.md" in header
+
+
+def test_ederland_license_file():
+    text = (STATIC / "oficina/LICENSE-ederland.txt").read_text()
+    assert "Copyright (c) 2026 Ederland Studio" in text and "MIT License" in text
+
+
+def test_readme_lists_changes_for_each_ported_file():
+    text = (STATIC / "oficina/README.md").read_text()
+    assert all(name in text for name in PORTED)
+
+
+def test_no_forbidden_patterns_in_own_and_ported_js():
+    patterns = (
+        *JS_FORBIDDEN,
+        r'(?:setTimeout|setInterval)\s*\(\s*[\'"]',
+        r'setAttribute\s*\(\s*[\'"](?:style|on\w+)[\'"]',
+        r"https?://",
+    )
+    for file in iter_static_js(STATIC / "oficina"):
+        source = strip_comments(file.read_text())
+        assert all(not re.search(p, source) for p in patterns), file
+        if file.name != "estado.js":
+            assert not re.search(
+                r"\b(?:fetch|XMLHttpRequest|WebSocket|EventSource|sendBeacon)\b", source
+            ), file
+
+
+def test_all_static_imports_relative_and_resolve():
+    for file in iter_static_js(STATIC):
+        if file.name == "htmx.min.js":
+            continue
+        source = strip_comments(file.read_text())
+        for spec in re.findall(r'(?:\bfrom\s*|\bimport\s*\()\s*[\'"]([^\'"]+)', source):
+            assert spec.startswith(("./", "../")), (file, spec)
+            assert (file.parent / spec).is_file(), (file, spec)
+
+
+def test_oficina_page_has_no_inline_script_or_importmap(make_panel):
+    html = make_panel([]).get("/oficina").text
+    scripts = re.findall(r"<script\b([^>]*)>", html)
+    assert scripts and all('src="/static/' in s for s in scripts)
+    assert "importmap" not in html
+    assert not re.search(r"<[^>]*\s(?:style|on\w+)\s*=", html)
+
+
+def test_csp_unchanged():
+    from marketing_agent.panel.security import CONTENT_SECURITY_POLICY
+
+    assert (
+        CONTENT_SECURITY_POLICY
+        == "default-src 'self'; script-src 'self'; object-src 'none'; frame-ancestors 'none'"
+    )

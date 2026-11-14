@@ -53,7 +53,7 @@ pagina da oficina, com a mesma CSP do painel:
 - `main.js`: liga os modulos e deixa de afirmar estados apos tres falhas ou30s sem sucesso,
   incluindo pedidos bloqueados. Recuperacao 304 restaura tambem o painel escolhido.
 
-Os dados entram no DOM por textContent. Nao ha POST, chamadas ao LLM ou Three.js nesta fase.
+Os dados entram no DOM por textContent. Nao ha POST nem chamadas ao LLM.
 Verificar com `pytest tests/browser -m e2e_browser`; os testes usam relogio simulado,
 falhas de rede e dados hostis. Continuam a existir os links normais para uso sem JavaScript.
 
@@ -62,5 +62,10 @@ falhas de rede e dados hostis. Continuam a existir os links normais para uso sem
 Three.js0.186.1 local, MIT, com subconjunto de addons e sem Node/build.
 [Proveniencia, hashes e atualizacao](vendor/three/README.md).
 A ferramenta scripts/vendor_three.py verifica o SHA512 npm antes de ler o arquivo e altera
-apenas imports nus para caminhos relativos. O painel2D ainda nao carrega estes ficheiros;
-a integracao da cena pertence a tarefa9.
+apenas imports nus para caminhos relativos. A vista2D nao carrega estes ficheiros;
+a vista3D importa-os dinamicamente desde a tarefa9.
+
+
+A tarefa9 acrescenta a cena MIT da referencia e o wrapper oficina3d.js em oficina/.
+[Origem, licenca e alteracoes por ficheiro](oficina/README.md). Com WebGL e sem movimento
+reduzido, main.js importa a cena dinamicamente; os links2D permanecem disponiveis.
