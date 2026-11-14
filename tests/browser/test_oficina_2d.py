@@ -11,7 +11,9 @@ pytestmark = pytest.mark.e2e_browser
 
 def open_office(live_panel, page):
     live = live_panel([])
-    page.clock.install()
+    # install() mantem o tempo real a correr; congelar antes dos intervalos exatos.
+    page.clock.install(time="2026-11-14T12:00:00Z")
+    page.clock.pause_at("2026-11-14T12:00:01Z")
     page.goto(live.base_url + "/oficina")
     return live
 
@@ -118,7 +120,9 @@ def test_polling_failures_mark_column_stale(live_panel, page):
         route.fulfill(status=500)
 
     page.route("**/oficina/estado", fail)
-    page.clock.install()
+    # install() mantem o tempo real a correr; congelar antes dos intervalos exatos.
+    page.clock.install(time="2026-11-14T12:00:00Z")
+    page.clock.pause_at("2026-11-14T12:00:01Z")
     page.goto(live.base_url + "/oficina")
     for count, delay in ((1, 10000), (2, 20000)):
         page.wait_for_function(

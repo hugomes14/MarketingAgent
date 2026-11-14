@@ -116,3 +116,8 @@ voltas. Esta decisao e de leitura e nao altera posts/revisoes.
   mypy161 e build offline OK. Wheel inclui main/estado/coluna.js.
 - Preview38705 atualizado; desktop/mobile390px verificados sem erros JS/CSP ou overflow.
   M2 manual continua aberto, distinto da verificacao automatizada por teclado. T8 por iniciar.
+
+T7: a repeticao de fecho detetou um timeout intermitente no teste de backoff.
+Playwright clock.install continua a avancar com o tempo real; acrescentado pause_at antes
+da navegacao para medir intervalos exatos deterministicamente. Sem alteracoes ao codigo
+funcional; os21 testes Chromium passaram novamente em16.17s.
