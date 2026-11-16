@@ -1,5 +1,6 @@
 """Leitura readonly do trabalho real, incluindo recuperacao e isolamento por marca."""
 
+import json
 from dataclasses import replace
 from datetime import timedelta
 
@@ -373,6 +374,7 @@ def test_oficina_routes_are_get_only(office_panel):
 def test_estado_uses_effective_role_duration(make_panel):
     from team_seed import TeamSeed
 
+    from marketing_agent.harness.engine import run_overrun_bound_s
     from marketing_agent.startup import role_max_durations
 
     panel = make_panel([], settings_overrides={"llm_time_multiplier": 5})
@@ -383,8 +385,70 @@ def test_estado_uses_effective_role_duration(make_panel):
     assert response.status_code == 200
     writer = next(a for a in response.json()["agentes"] if a["papel"] == "copywriter")
     assert writer["estado"] == "a_trabalhar"
-    panel.clock.advance(timedelta(seconds=4 * nominal))
+    panel.clock.advance(timedelta(seconds=run_overrun_bound_s(nominal, 5)))
     writer = next(
         a for a in panel.get("/oficina/estado").json()["agentes"] if a["papel"] == "copywriter"
     )
     assert writer["estado"] == "desatualizado"
+
+
+@pytest.mark.parametrize("multiplier", [1, 5])
+def test_live_director_run_is_stale_only_past_the_engine_overrun_bound(
+    team_seed, session_factory, clock, multiplier
+):
+    from pathlib import Path
+
+    from marketing_agent.harness.engine import run_overrun_bound_s
+    from marketing_agent.oficina.config import load_oficina_config
+    from marketing_agent.oficina.queries import TeamStateQueries
+    from marketing_agent.startup import role_max_durations, role_run_bounds_s
+
+    nominal = role_max_durations()["diretor"]
+    queries = TeamStateQueries(
+        session_factory,
+        clock,
+        role_run_bounds_s(time_multiplier=multiplier),
+        load_oficina_config(Path(__file__).resolve().parents[2] / "config/oficina.yaml"),
+    )
+    bound = run_overrun_bound_s(nominal, multiplier)
+    assert bound > nominal * multiplier
+    started = clock.now()
+    team_seed.seed_run("diretor", "running", started)
+    # Entre max*m e o limite real ainda cabe uma chamada em voo: continua a trabalhar.
+    clock.advance(timedelta(seconds=(nominal * multiplier + bound) / 2))
+    assert agents(queries, team_seed)["diretor"].estado == "a_trabalhar"
+    clock.advance(timedelta(seconds=bound))
+    assert agents(queries, team_seed)["diretor"].estado == "desatualizado"
+
+
+def _marker(queries, seed):
+    return agents(queries, seed)["revisor"].ultima_entrega
+
+
+def test_review_marker_is_monotonic_and_ignores_owner_edits(team_seed, team_queries):
+    seed = team_seed
+    assert _marker(team_queries, seed) is None
+    posts = [seed.seed_post() for _ in range(6)]
+    revisions = [seed.seed_revision(p.id) for p in posts]
+    first = _marker(team_queries, seed)
+    assert (first.id, first.post_id) == (revisions[-1].id, posts[-1].id)
+    # Edicao do responsavel: revisao sem veredicto empurra o 6.o post para dentro do top-5
+    # mas nao e uma revisao nova.
+    seed.seed_revision(posts[0].id, verdict=None)
+    assert _marker(team_queries, seed) == first
+    # Nova revisao de um post que ja estava no top-5 avanca o marcador.
+    fresh = seed.seed_revision(posts[3].id)
+    advanced = _marker(team_queries, seed)
+    assert (advanced.id, advanced.post_id) == (fresh.id, posts[3].id)
+    assert (advanced.em, advanced.id) > (first.em, first.id)
+
+
+def test_review_marker_json_is_ids_and_time_only(team_seed, team_queries):
+    post = team_seed.seed_post()
+    revision = team_seed.seed_revision(post.id)
+    data = json.loads(team_state_json(team_queries.team_state(team_seed.brand_id)))
+    by_role = {a["papel"]: a["ultima_entrega"] for a in data["agentes"]}
+    assert by_role["diretor"] is by_role["copywriter"] is by_role["designer"] is None
+    assert set(by_role["revisor"]) == {"id", "post_id", "em"}
+    assert by_role["revisor"]["id"] == revision.id and by_role["revisor"]["post_id"] == post.id
+    assert by_role["revisor"]["em"].endswith("Z")

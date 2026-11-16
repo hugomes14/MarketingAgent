@@ -12,13 +12,14 @@ from sqlalchemy.sql.elements import ColumnElement
 from sqlalchemy.sql.selectable import Subquery
 
 from marketing_agent.clock import Clock
-from marketing_agent.db.models import AgentRun, Artifact, AuditLog, Post
+from marketing_agent.db.models import AgentRun, Artifact, AuditLog, Post, PostRevision
 from marketing_agent.oficina.config import OficinaConfig
 from marketing_agent.oficina.estado import (
     ESTADO_TEXTO,
     Entrega,
     EstadoAgente,
     EstadoEquipa,
+    MarcadorEntrega,
     RevisaoSemanal,
     RoleSignals,
     TipoEntrega,
@@ -93,15 +94,15 @@ class TeamStateQueries:
         self,
         session_factory: sessionmaker[Session],
         clock: Clock,
-        max_durations: Mapping[Papel, int],
+        run_bounds_s: Mapping[Papel, float],
         config: OficinaConfig,
         *,
         job_lease: timedelta | None = None,
     ) -> None:
-        """Limites ja escalados pelo processo; lease injetada para respeitar o worker real."""
+        """Limite real de execucao viva por papel (`run_overrun_bound_s`); lease do worker real."""
         self._factory = session_factory
         self._clock = clock
-        self._max_s = dict(max_durations)
+        self._bound_s = dict(run_bounds_s)
         self._config = config
         self._lease = job_lease if job_lease is not None else content_job_lease(time_multiplier=1)
 
@@ -132,6 +133,7 @@ class TeamStateQueries:
                 },
             }
             review = self._review(session, brand_id, now.date())
+            marker = self._review_marker(session, brand_id)
             jobs = job_snapshot(brand_id, now, self._lease)
             job_signals = self._job_signals(session, jobs, now)
             failures = self._failures(session, jobs, now.date())
@@ -143,6 +145,7 @@ class TeamStateQueries:
                     runs.get(p),
                     job_signals.get(p, (False, False, False)),
                     now,
+                    marker if p == "revisor" else None,
                 )
                 for p in PAPEIS
             )
@@ -251,6 +254,18 @@ class TeamStateQueries:
         )
 
     @staticmethod
+    def _review_marker(session: Session, brand_id: str) -> MarcadorEntrega | None:
+        # Sobre TODAS as revisoes revistas (nao so a atual de cada post): uma edicao do
+        # responsavel ou a janela dos cinco a deslizar nunca fazem recuar nem avancar o marcador.
+        row = session.execute(
+            select(PostRevision.id, PostRevision.post_id, PostRevision.created_at)
+            .where(PostRevision.brand_id == brand_id, PostRevision.review_verdict.is_not(None))
+            .order_by(PostRevision.created_at.desc(), PostRevision.id.desc())
+            .limit(1)
+        ).first()
+        return MarcadorEntrega(row.id, row.post_id, row.created_at) if row else None
+
+    @staticmethod
     def _review(session: Session, brand_id: str, today: date) -> RevisaoSemanal:
         week = func.substr(Post.slot_key, 1, 8)
         row = session.execute(
@@ -328,14 +343,15 @@ class TeamStateQueries:
         run_data: tuple[AgentRun, datetime] | None,
         jobs: tuple[bool, bool, bool],
         now: datetime,
+        marker: MarcadorEntrega | None,
     ) -> EstadoAgente:
         run, activity = run_data if run_data else (None, None)
         running = run is not None and run.status == "running"
         age = (now - run.started_at).total_seconds() if run is not None else 0
         signals = RoleSignals(
-            (running and age < self._max_s[papel]) or jobs[0],
+            (running and age < self._bound_s[papel]) or jobs[0],
             (run is not None and run.status in ("failed", "needs_human")) or jobs[2],
-            (running and age >= self._max_s[papel]) or jobs[1],
+            (running and age >= self._bound_s[papel]) or jobs[1],
             pending,
         )
         state = derive_state(signals)
@@ -347,4 +363,5 @@ class TeamStateQueries:
             pending,
             activity,
             deliveries,
+            marker,
         )

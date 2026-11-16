@@ -41,7 +41,7 @@ from marketing_agent.startup import (
     database_error_message,
     load_settings,
     log_time_settings,
-    role_max_durations,
+    role_run_bounds_s,
     worker_stale_after,
 )
 from marketing_agent.strategy.service import StrategyService
@@ -83,9 +83,7 @@ def _assemble(
         oficina = load_oficina_config(settings.oficina_config_file)
     except OficinaConfigError as exc:
         raise StartupError(f"OFICINA_CONFIG_FILE: {exc}") from None
-    durations = {
-        p: seconds * settings.llm_time_multiplier for p, seconds in role_max_durations().items()
-    }
+    durations = role_run_bounds_s(time_multiplier=settings.llm_time_multiplier)
     clock = SystemClock()
     budget = build_budget_controller(settings, session_factory, clock)
     store = ArtifactStore(session_factory, clock)

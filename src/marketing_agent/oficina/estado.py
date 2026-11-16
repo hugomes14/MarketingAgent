@@ -73,6 +73,15 @@ class RevisaoSemanal:
 
 
 @dataclass(frozen=True)
+class MarcadorEntrega:
+    """Marcador monotono da revisao revista mais recente: so ids e instante, nunca texto."""
+
+    id: str
+    post_id: str
+    em: datetime
+
+
+@dataclass(frozen=True)
 class EstadoAgente:
     """Estado publico de um papel: texto legivel, contagem e ate cinco entregas."""
 
@@ -83,6 +92,7 @@ class EstadoAgente:
     pendencias: int
     ultima_atividade_em: datetime | None
     entregas: tuple[Entrega, ...]
+    ultima_entrega: MarcadorEntrega | None = None
 
 
 @dataclass(frozen=True)
@@ -109,6 +119,16 @@ def _utc_time(value: datetime | None) -> str | None:
     return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
 
 
+def _marker_json(marker: MarcadorEntrega | None) -> JsonObject | None:
+    if marker is None:
+        return None
+    if marker.em.tzinfo is None or marker.em.utcoffset() is None:
+        raise ValueError("marcador de entrega exige fuso horario")
+    # Microssegundos fixos: o cliente compara as cadeias como instantes.
+    instant = marker.em.astimezone(UTC).isoformat(timespec="microseconds")
+    return {"id": marker.id, "post_id": marker.post_id, "em": instant.replace("+00:00", "Z")}
+
+
 def _agent_json(agent: EstadoAgente) -> JsonObject:
     # Lista explicita: novos campos internos nunca passam para o JSON por acidente.
     return {
@@ -121,6 +141,7 @@ def _agent_json(agent: EstadoAgente) -> JsonObject:
         "entregas": [
             {"tipo": e.tipo, "id": e.id, "titulo": e.titulo, "url": e.url} for e in agent.entregas
         ],
+        "ultima_entrega": _marker_json(agent.ultima_entrega),
     }
 
 

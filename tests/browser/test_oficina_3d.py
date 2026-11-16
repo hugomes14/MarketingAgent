@@ -121,6 +121,37 @@ def test_folder_handover_on_new_reviewed_post(live_panel, page):
     expect(page.locator("#oficina-cena")).to_have_attribute("data-atividade-copywriter", "carry")
 
 
+def test_folder_handover_ignores_sliding_window_and_fires_once_per_new_review(live_panel, page):
+    from team_seed import TeamSeed
+
+    live = live_panel([])
+    seed = TeamSeed(live.rig.factory, live.rig.clock, live.rig.brand_id)
+    posts = [seed.seed_post() for _ in range(6)]
+    for post in posts:
+        seed.seed_revision(post.id)
+    page.emulate_media(reduced_motion="no-preference")
+    page.goto(live.base_url + "/")
+    scene = page.locator("#oficina-cena")
+    expect(scene).to_have_attribute("data-pronto", "1", timeout=60000)
+    page.evaluate(
+        """() => { window.__entregas = [];
+          new MutationObserver(() => window.__entregas.push(
+            document.querySelector('#oficina-cena').dataset.ultimaTransicao))
+            .observe(document.querySelector('#oficina-cena'),
+              {attributes: true, attributeFilter: ['data-ultima-transicao']}); }"""
+    )
+    # Edicao do responsavel: revisao sem veredicto desloca a janela dos cinco, sem nova revisao.
+    seed.seed_revision(posts[0].id, verdict=None)
+    page.wait_for_timeout(11000)
+    assert page.evaluate("window.__entregas") == []
+    seed.seed_revision(posts[3].id)
+    expect(scene).to_have_attribute(
+        "data-ultima-transicao", "entrega_pasta:" + posts[3].id, timeout=15000
+    )
+    page.wait_for_timeout(11000)
+    assert page.evaluate("window.__entregas") == ["entrega_pasta:" + posts[3].id]
+
+
 def test_first_load_does_not_replay_transitions(live_panel, page):
     from team_seed import TeamSeed
 
@@ -252,3 +283,18 @@ def test_idle_characters_rest_in_garden_and_remain_visible(scene_page):
     }""")
     assert len(people) == 4
     assert all(p["place"] == "garden" and p["activity"] == "relax" and p["visible"] for p in people)
+
+
+def test_3d_survives_missing_crypto_subtle_without_caching(live_panel, page):
+    live = live_panel([])
+    page.add_init_script("Object.defineProperty(crypto, 'subtle', {value: undefined})")
+    page.emulate_media(reduced_motion="no-preference")
+    page.goto(live.base_url + "/")
+    expect(page.locator("#oficina-cena")).to_have_attribute("data-pronto", "1", timeout=60000)
+    expect(page.locator("#oficina")).to_have_attribute("data-caras-prontas", "1", timeout=60000)
+    expect(page.locator("#oficina")).to_have_attribute("data-vista", "3d")
+    expect(page.locator("#oficina-cena canvas")).to_have_count(1)
+    assert "Não foi possível" not in page.locator("#estado").text_content()
+    assert (
+        page.evaluate("Object.keys(sessionStorage).filter(k => k.startsWith('oficina.cara'))") == []
+    )

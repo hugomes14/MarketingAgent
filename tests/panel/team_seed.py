@@ -22,7 +22,7 @@ from marketing_agent.db.models import (
 )
 from marketing_agent.oficina.config import load_oficina_config
 from marketing_agent.oficina.queries import TeamStateQueries
-from marketing_agent.startup import content_job_lease, role_max_durations
+from marketing_agent.startup import content_job_lease, role_run_bounds_s
 
 Factory = sessionmaker[Session]
 
@@ -230,7 +230,7 @@ def team_queries(session_factory, clock):
     return TeamStateQueries(
         session_factory,
         clock,
-        role_max_durations(),
+        role_run_bounds_s(time_multiplier=1),
         load_oficina_config(root / "config/oficina.yaml"),
         job_lease=content_job_lease(time_multiplier=1),
     )

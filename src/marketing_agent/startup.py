@@ -131,6 +131,17 @@ def role_max_durations() -> dict[Papel, int]:
     }
 
 
+def role_run_bounds_s(*, time_multiplier: int) -> dict[Papel, float]:
+    """Pior caso de uma execucao viva por papel, a formula do motor (inclui uma chamada em voo).
+
+    E o limiar a partir do qual a oficina deixa de dar uma execucao `running` como viva.
+    """
+    return {
+        p: run_overrun_bound_s(seconds, time_multiplier)
+        for p, seconds in role_max_durations().items()
+    }
+
+
 def _director_spec_duration_s() -> int:
     paths = sorted(DIRETOR_DIR.glob("spec_*.yaml"))
     if not paths:

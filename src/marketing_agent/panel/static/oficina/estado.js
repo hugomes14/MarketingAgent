@@ -3,12 +3,21 @@ export function urlInterna(valor) {
   return typeof valor === 'string' && /^\/(?!\/)/.test(valor) && !/[\\\u0000-\u0020\u007f]/.test(valor) ? valor : null;
 }
 
-/** Apenas pareceres novos entre snapshots representam uma entrega. */
+/** O marcador do servidor so avanca com uma revisao revista nova (nunca com a janela dos cinco). */
+function marcadorMaisRecente(antes, agora) {
+  if (!agora) return false;
+  if (!antes) return true;
+  // `em` tem formato fixo (microssegundos, UTC): a ordem das cadeias e a ordem dos instantes.
+  return agora.em > antes.em || (agora.em === antes.em && agora.id > antes.id);
+}
+
+/** Apenas um marcador de revisao mais novo entre snapshots representa uma entrega. */
 export function detetarTransicoes(anterior, atual) {
   if (!anterior) return [];
-  const pareceres = estado => (estado.agentes.find(a => a.papel === 'revisor')?.entregas || []).filter(e => e.tipo === 'parecer');
-  const ids = new Set(pareceres(anterior).map(e => e.id));
-  return pareceres(atual).filter(e => !ids.has(e.id)).map(e => ({tipo: 'entrega_pasta', de: 'copywriter', para: 'revisor', id: e.id}));
+  const marcador = estado => estado.agentes.find(a => a.papel === 'revisor')?.ultima_entrega || null;
+  const agora = marcador(atual);
+  if (!marcadorMaisRecente(marcador(anterior), agora)) return [];
+  return [{tipo: 'entrega_pasta', de: 'copywriter', para: 'revisor', id: agora.post_id}];
 }
 
 /** Sondagem sequencial: uma resposta termina antes de agendar o pedido seguinte. */

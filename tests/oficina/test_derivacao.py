@@ -100,6 +100,7 @@ def test_json_is_canonical_and_stable():
         "pendencias",
         "ultima_atividade_em",
         "entregas",
+        "ultima_entrega",
     }
     assert data["agentes"][0]["ultima_atividade_em"] == "2026-11-13T10:00:00Z"
     assert set(data["agentes"][0]["entregas"][0]) == {"tipo", "id", "titulo", "url"}
