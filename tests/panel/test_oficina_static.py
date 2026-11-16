@@ -128,7 +128,7 @@ def test_all_static_imports_relative_and_resolve():
 
 
 def test_oficina_page_has_no_inline_script_or_importmap(make_panel):
-    html = make_panel([]).get("/oficina").text
+    html = make_panel([]).get("/").text
     scripts = re.findall(r"<script\b([^>]*)>", html)
     assert scripts and all('src="/static/' in s for s in scripts)
     assert "importmap" not in html

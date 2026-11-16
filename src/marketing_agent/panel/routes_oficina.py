@@ -1,18 +1,19 @@
 """Leituras autenticadas da oficina; nenhuma rota executa trabalho ou altera dados."""
 
 from typing import Final
+from urllib.parse import urlencode
 
 from fastapi import APIRouter, HTTPException, Request, Response
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 
 from marketing_agent.oficina.config import ESTILO_REFERENCIA
 from marketing_agent.oficina.estado import etag_for, etag_matches, team_state_json
 from marketing_agent.oficina.papeis import PAPEIS, PAPEL_TEXTO, Papel
-from marketing_agent.panel.context import CurrentUser, Panel
+from marketing_agent.panel.context import CurrentUser, Panel, see_other
 from marketing_agent.panel.rendering import Context
 
 router = APIRouter()
-RESUMO_URL: Final = "/#entrevistas"
+RESUMO_URL: Final = "/resumo#entrevistas"
 
 
 def _papel(value: str) -> Papel:
@@ -29,9 +30,8 @@ def _agent_context(panel: Panel, papel: Papel) -> Context:
     }
 
 
-@router.get("/oficina")
-def oficina(user: CurrentUser, panel: Panel, papel: str = "diretor") -> HTMLResponse:
-    """Vista completa, utilizavel sem JavaScript, com um papel escolhido por ligacao."""
+def render_oficina(user: CurrentUser, panel: Panel, papel: str) -> HTMLResponse:
+    """Vista completa da oficina, utilizavel sem JavaScript, com um papel escolhido por ligacao."""
     selected = _papel(papel)
     context: Context = {
         **_agent_context(panel, selected),
@@ -41,6 +41,22 @@ def oficina(user: CurrentUser, panel: Panel, papel: str = "diretor") -> HTMLResp
         "selecionado": selected,
     }
     return panel.renderer.page("oficina.html", user, context)
+
+
+@router.get("/oficina")
+def oficina_alias(user: CurrentUser, papel: str = "", medir: str = "") -> RedirectResponse:
+    """Endereco antigo: leva para a pagina inicial e so conserva `papel` conhecido e `medir=1`.
+
+    `medir=1` (quadro de medicao do M5) continua a funcionar a partir dos enderecos ja anotados.
+    """
+    params = {
+        key: value for key, value in (("papel", papel), ("medir", medir)) if _kept(key, value)
+    }
+    return see_other(f"/?{urlencode(params)}" if params else "/")
+
+
+def _kept(key: str, value: str) -> bool:
+    return value in PAPEIS if key == "papel" else value == "1"
 
 
 @router.get("/oficina/agente/{papel}")

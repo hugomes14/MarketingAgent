@@ -28,11 +28,12 @@ MakePanel = Callable[..., PanelRig]
 def all_pages(rig: PanelRig) -> dict[str, str]:
     """Percorre o fluxo inteiro e devolve o HTML de cada pagina renderizavel."""
     profile_id = rig.confirm_profile()
-    session_id = re.search(r"/entrevista/([0-9a-f-]{36})", rig.get("/").text)
+    session_id = re.search(r"/entrevista/([0-9a-f-]{36})", rig.get("/resumo").text)
     assert session_id
     diagnosis_id = rig.post_id("/diagnostico")
     paths = {
-        "inicio": "/",
+        "oficina": "/",
+        "inicio": "/resumo",
         "entrevista": f"/entrevista/{session_id.group(1)}",
         "perfil": f"/perfil/{profile_id}",
         "diagnostico": f"/diagnostico/{diagnosis_id}",
@@ -43,7 +44,7 @@ def all_pages(rig: PanelRig) -> dict[str, str]:
     pages["estrategia"] = rig.get(f"/estrategia/{strategy_id}").text
     rig.post(f"/estrategia/{strategy_id}/aprovar", {"decisao_0": "aceitar", "decisao_1": "recusar"})
     pages["estrategia_decidida"] = rig.get(f"/estrategia/{strategy_id}").text
-    pages["inicio_final"] = rig.get("/").text
+    pages["inicio_final"] = rig.get("/resumo").text
     pages["erro"] = rig.get(f"/entrevista/{uuid.uuid4()}").text
     return pages
 
@@ -193,7 +194,7 @@ def test_unhandled_error_is_generic_and_keeps_headers(
 
     monkeypatch.setattr(BudgetController, "status", boom)
     client = TestClient(rig.app, client=("127.0.0.1", 5000), raise_server_exceptions=False)
-    response = client.get("/", headers=rig.headers())
+    response = client.get("/resumo", headers=rig.headers())
     assert response.status_code == 500
     assert "segredo interno" not in response.text
     assert response.headers["Content-Security-Policy"] == CSP

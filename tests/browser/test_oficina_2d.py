@@ -14,7 +14,7 @@ def open_office(live_panel, page):
     # install() mantem o tempo real a correr; congelar antes dos intervalos exatos.
     page.clock.install(time="2026-11-14T12:00:00Z")
     page.clock.pause_at("2026-11-14T12:00:01Z")
-    page.goto(live.base_url + "/oficina")
+    page.goto(live.base_url + "/")
     return live
 
 
@@ -123,7 +123,7 @@ def test_polling_failures_mark_column_stale(live_panel, page):
     # install() mantem o tempo real a correr; congelar antes dos intervalos exatos.
     page.clock.install(time="2026-11-14T12:00:00Z")
     page.clock.pause_at("2026-11-14T12:00:01Z")
-    page.goto(live.base_url + "/oficina")
+    page.goto(live.base_url + "/")
     for count, delay in ((1, 10000), (2, 20000)):
         page.wait_for_function(
             '(n)=>Number(document.querySelector("#oficina").dataset.falhas)===n', arg=count
@@ -157,7 +157,7 @@ def test_hostile_titles_render_as_text(live_panel, page):
     seed = TeamSeed(live.rig.factory, live.rig.clock, live.rig.brand_id)
     post = seed.seed_post(tema="<img src=x onerror=alert(1)>")
     seed.seed_revision(post.id)
-    page.goto(live.base_url + "/oficina?papel=copywriter")
+    page.goto(live.base_url + "/?papel=copywriter")
     expect(page.locator(".entregas")).to_contain_text("<img src=x onerror=alert(1)>")
     expect(page.locator("#oficina img")).to_have_count(0)
 
@@ -171,7 +171,7 @@ def test_json_urls_validated_before_use(live_panel, page, url):
         "**/oficina/estado",
         lambda route: route.fulfill(content_type="application/json", body=json.dumps(data)),
     )
-    page.goto(live.base_url + "/oficina")
+    page.goto(live.base_url + "/")
     page.wait_for_function("() => document.querySelector('#oficina').dataset.ligacao === 'ok'")
     assert page.locator(".revisao-semanal").get_attribute("href").startswith("/lote/")
 

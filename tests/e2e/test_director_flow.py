@@ -30,7 +30,7 @@ def test_interview_to_active_strategy(make_panel: MakePanel) -> None:
 
     active = rig.strategy.active_strategy(rig.brand_id)
     assert active is not None and len(active.propostas_aceites) == 1
-    assert "Cabaz semanal" in rig.get("/").text
+    assert "Cabaz semanal" in rig.get("/resumo").text
 
     with rig.factory() as session:
         runs = session.scalars(select(AgentRun).where(AgentRun.brand_id == rig.brand_id)).all()
@@ -58,10 +58,10 @@ def test_over_reference_next_month_resets(make_panel: MakePanel) -> None:
     session_id = rig.start_session()  # a referencia informa, nao bloqueia
     answered = rig.answer(session_id, "Resposta.", "k0")
     assert answered.status_code == 200
-    assert WARNING_TEXT in rig.get("/").text
+    assert WARNING_TEXT in rig.get("/resumo").text
     assert rig.budget.status(rig.brand_id).spent_usd >= Decimal("25")
 
     rig.clock.advance(datetime(2026, 12, 2, 12, tzinfo=UTC) - rig.clock.now())
     status = rig.budget.status(rig.brand_id)
     assert status.spent_usd == 0 and not status.over_reference
-    assert WARNING_TEXT not in rig.get("/").text
+    assert WARNING_TEXT not in rig.get("/resumo").text

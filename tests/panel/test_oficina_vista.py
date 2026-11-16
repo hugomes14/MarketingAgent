@@ -31,7 +31,7 @@ def office(make_panel):
 
 def test_oficina_page_lists_four_avatars_with_text_state_and_pending(office):
     panel, _ = office
-    response = panel.get("/oficina")
+    response = panel.get("/")
     assert response.status_code == 200
     html = response.text
     avatars = Elements(html).with_class("avatar")
@@ -47,7 +47,7 @@ def test_oficina_page_lists_four_avatars_with_text_state_and_pending(office):
 def test_avatar_links_work_without_js(office):
     panel, _ = office
     for role in PAPEIS:
-        response = panel.get(f"/oficina?papel={role}")
+        response = panel.get(f"/?papel={role}")
         assert response.status_code == 200
         assert f'id="agente-trabalho" data-papel="{role}"' in response.text
         selected = [
@@ -56,7 +56,7 @@ def test_avatar_links_work_without_js(office):
             if a.get("aria-current") == "true"
         ]
         assert selected == [role]
-    assert panel.get("/oficina?papel=gestor").status_code == 404
+    assert panel.get("/?papel=gestor").status_code == 404
 
 
 @pytest.mark.parametrize("role", PAPEIS)
@@ -80,7 +80,7 @@ def test_agent_partial_unknown_role_404(office):
 
 def test_no_new_actions(office):
     panel, _ = office
-    for path in ["/oficina", *(f"/oficina/agente/{p}" for p in PAPEIS)]:
+    for path in ["/", *(f"/oficina/agente/{p}" for p in PAPEIS)]:
         html = panel.get(path).text
         assert not re.search(r'<form\b|hx-post=|method="post"', html)
         assert panel.post(path).status_code == 405
@@ -102,7 +102,7 @@ def test_weekly_review_button_count_and_url(office):
     seed.seed_post(slot_key="2026-W45-1")
     seed.seed_post(slot_key="2026-W45-2")
     seed.seed_post(slot_key="2026-W46-1")
-    html = panel.get("/oficina").text
+    html = panel.get("/").text
     link = Elements(html).with_class("revisao-semanal")[0][1]
     assert link["href"] == "/lote/2026-W45"
     assert "Revisão semanal" in html and "<span>2</span>" in html
@@ -119,7 +119,7 @@ def test_model_text_escaped_in_partial(office):
 
 def test_state_has_text_and_icon_never_color_only(office):
     panel, _ = office
-    elements = Elements(panel.get("/oficina").text)
+    elements = Elements(panel.get("/").text)
     assert len(elements.with_class("estado-icone")) >= 4
     assert all(a.get("aria-hidden") == "true" for _, a in elements.with_class("estado-icone"))
     assert len(elements.with_class("estado-texto")) >= 4
@@ -128,8 +128,69 @@ def test_state_has_text_and_icon_never_color_only(office):
 def test_avatar_data_attributes_from_config(office):
     panel, _ = office
     config = panel.app.state.panel.oficina
-    for _, avatar in Elements(panel.get("/oficina").text).with_class("avatar"):
+    for _, avatar in Elements(panel.get("/").text).with_class("avatar"):
         person = config.personagens[avatar["data-papel"]]
         assert avatar["data-cabelo"] == person.cabelo
         assert avatar["data-roupa"] == person.roupa
         assert avatar["data-estilo"] == ESTILO_REFERENCIA[person.estilo]
+
+
+def test_root_is_oficina(office):
+    panel, _ = office
+    response = panel.get("/")
+    assert response.status_code == 200
+    html = response.text
+    assert "<h1>Oficina da equipa</h1>" in html and 'id="oficina"' in html
+    assert [a["data-papel"] for _, a in Elements(html).with_class("avatar")] == list(PAPEIS)
+    assert 'id="painel-trabalho"' in html and "Revisão semanal" in html
+    assert "Estado do mês" not in html  # o orcamento vive agora em /resumo
+    assert panel.get("/?papel=revisor").text.count('id="agente-trabalho" data-papel="revisor"') == 1
+    assert panel.get("/?papel=gestor").status_code == 404
+
+
+def test_resumo_has_previous_home_content(office):
+    panel, _ = office
+    response = panel.get("/resumo")
+    assert response.status_code == 200
+    html = response.text
+    for section in ("orcamento", "pendentes", "por-rever", "plano-semanal", "entrevistas"):
+        assert f'id="{section}"' in html, section
+    assert "Estado do mês" in html and "Aguarda a sua decisão" in html
+    assert 'action="/entrevista"' in html and "Nova entrevista" in html
+    assert 'id="oficina"' not in html
+
+
+@pytest.mark.parametrize(
+    ("query", "target"),
+    [
+        ("", "/"),
+        ("?papel=copywriter", "/?papel=copywriter"),
+        ("?papel=gestor", "/"),  # papel desconhecido nao e propagado
+        ("?papel=revisor&medir=1", "/?papel=revisor&medir=1"),
+        ("?medir=1", "/?medir=1"),
+        ("?medir=2&papel=%3Cx%3E", "/"),
+    ],
+)
+def test_oficina_alias_redirects_to_root(office, query, target):
+    panel, _ = office
+    response = panel.client.get("/oficina" + query, headers=panel.headers(), follow_redirects=False)
+    assert response.status_code == 303
+    assert response.headers["location"] == target
+    assert panel.client.get("/oficina", follow_redirects=False).status_code == 401
+
+
+def test_nav_links_oficina_and_resumo(office):
+    panel, _ = office
+    for path in ("/", "/resumo", "/lote/2026-W46"):
+        html = panel.get(path).text
+        nav = html[html.index('<nav aria-label="Principal">') : html.index("</nav>")]
+        assert '<a href="/">Oficina</a>' in nav and '<a href="/resumo">Resumo</a>' in nav
+        assert "Início" not in nav
+        for label in ("Lote semanal", "Base de conhecimento", "Biblioteca", "Kit de marca"):
+            assert label in nav
+
+
+def test_director_panel_links_interviews_on_request(office):
+    panel, _ = office
+    html = panel.get("/oficina/agente/diretor").text
+    assert '<a href="/resumo#entrevistas">Entrevistas (a pedido)</a>' in html

@@ -330,9 +330,9 @@ def test_bare_batch_redirects_to_review_week_then_current_week(make_panel: MakeP
 
 def test_home_links_to_the_review_week(make_panel: MakePanel) -> None:
     rig = make_panel([])
-    assert "Rever publicações" not in rig.get("/").text
+    assert "Rever publicações" not in rig.get("/resumo").text
     seed_post(rig, 1)
-    html = rig.get("/").text
+    html = rig.get("/resumo").text
     assert f'href="{lote()}"' in html and "Rever publicações" in html
     assert 'href="/lote"' in html and 'href="/feedback"' in html  # navegacao
 

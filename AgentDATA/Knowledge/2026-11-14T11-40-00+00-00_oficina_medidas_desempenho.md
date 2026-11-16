@@ -24,7 +24,7 @@ qualidade adaptativa; nenhum valor abaixo foi medido ainda.
 
 ## Metodo
 
-1. Abrir `/oficina?medir=1` com a sessao normal (no PC: pelo endereco Tailscale/loopback do
+1. Abrir `/?medir=1` com a sessao normal (no PC: pelo endereco Tailscale/loopback do
    painel; no telemovel: pelo endereco Tailscale do painel, no browser que o responsavel usa).
 2. Garantir a vista 3D (botao "Vista 3D" com `aria-pressed` ativo). Se estiver em 2D, carregar
    no botao; a escolha fica em `localStorage["oficina.vista"]`.
@@ -41,8 +41,8 @@ qualidade adaptativa; nenhum valor abaixo foi medido ainda.
 
 ```bash
 # Painel local para o PC (exemplo; usar o arranque habitual do projeto):
-#   abrir http://127.0.0.1:<porta>/oficina?medir=1
-# Telemovel: abrir https://<nome-tailscale-do-painel>/oficina?medir=1
+#   abrir http://127.0.0.1:<porta>/?medir=1
+# Telemovel: abrir https://<nome-tailscale-do-painel>/?medir=1
 ```
 
 ## Evidencia

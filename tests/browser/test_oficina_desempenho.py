@@ -14,7 +14,7 @@ THREE = "/static/vendor/three/"
 HEADERS = {"Tailscale-User-Login": LOGIN}
 
 
-def open_3d(live, page, path="/oficina"):
+def open_3d(live, page, path="/"):
     """Abre a oficina com movimento normal e espera pelo primeiro frame da cena."""
     page.emulate_media(reduced_motion="no-preference")
     page.goto(live.base_url + path)
@@ -85,7 +85,7 @@ def test_pixel_ratio_capped_at_two(browser, live_panel):
 
 def test_quality_controller_drops_on_sustained_slow_frames_only(live_panel, page):
     live = live_panel([])
-    page.goto(live.base_url + "/oficina")
+    page.goto(live.base_url + "/")
     result = page.evaluate("""async () => {
       const {ControloQualidade} = await import('/static/oficina/qualidade.js');
       const controlo = new ControloQualidade({limiteMs: 33, janela: 90});
@@ -178,7 +178,7 @@ def test_no_webgl_opens_2d_with_same_actions(browser_no_webgl, live_panel, page_
         collect_errors(page, page_errors)
         urls = []
         page.on("request", lambda r: urls.append(r.url))
-        page.goto(live.base_url + "/oficina")
+        page.goto(live.base_url + "/")
         toggle = page.locator("#vista-alternar")
         expect(toggle).to_be_visible()
         expect(toggle).to_be_disabled()
@@ -198,7 +198,7 @@ def test_no_webgl_opens_2d_with_same_actions(browser_no_webgl, live_panel, page_
 def test_reduced_motion_defaults_to_2d_and_3d_on_request_has_no_walking(live_panel, page):
     live = live_panel([])
     seed = TeamSeed(live.rig.factory, live.rig.clock, live.rig.brand_id)
-    page.goto(live.base_url + "/oficina")  # a fixture `page` ja pede reduced_motion="reduce"
+    page.goto(live.base_url + "/")  # a fixture `page` ja pede reduced_motion="reduce"
     toggle = page.locator("#vista-alternar")
     expect(toggle).to_have_attribute("aria-pressed", "false")
     expect(page.locator(CANVAS)).to_have_count(0)
@@ -242,7 +242,7 @@ def test_2d_view_never_downloads_three(live_panel, page):
     live = live_panel([])
     urls = []
     page.on("request", lambda r: urls.append(r.url))
-    page.goto(live.base_url + "/oficina")  # movimento reduzido: 2D por omissao
+    page.goto(live.base_url + "/")  # movimento reduzido: 2D por omissao
     page.wait_for_function("() => document.querySelector('#oficina').dataset.ligacao === 'ok'")
     page.add_init_script("localStorage.setItem('oficina.vista', '2d')")
     page.emulate_media(reduced_motion="no-preference")  # escolha guardada ganha ao 3D por omissao
@@ -278,7 +278,7 @@ def test_measurement_overlay_only_with_query(live_panel, page):
     live = live_panel([])
     open_3d(live, page)
     expect(page.locator("#oficina-medidas")).to_have_count(0)
-    open_3d(live, page, "/oficina?medir=1")
+    open_3d(live, page, "/?medir=1")
     panel = page.locator("#oficina-medidas")
     expect(panel).to_be_visible()
     expect(panel).to_contain_text("FPS")

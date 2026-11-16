@@ -13,7 +13,7 @@ pytestmark = pytest.mark.e2e_browser
 def scene_page(live_panel, page):
     live = live_panel([])
     page.emulate_media(reduced_motion="no-preference")
-    page.goto(live.base_url + "/oficina")
+    page.goto(live.base_url + "/")
     expect(page.locator("#oficina-cena")).to_have_attribute("data-pronto", "1", timeout=60000)
     return page
 
@@ -91,7 +91,7 @@ def test_typing_only_when_a_trabalhar(live_panel, page):
     live = live_panel([])
     seed = TeamSeed(live.rig.factory, live.rig.clock, live.rig.brand_id)
     page.emulate_media(reduced_motion="no-preference")
-    page.goto(live.base_url + "/oficina")
+    page.goto(live.base_url + "/")
     scene = page.locator("#oficina-cena")
     expect(scene).to_have_attribute("data-atividade-copywriter", "relax", timeout=60000)
     page.wait_for_timeout(5100)
@@ -110,7 +110,7 @@ def test_folder_handover_on_new_reviewed_post(live_panel, page):
 
     live = live_panel([])
     page.emulate_media(reduced_motion="no-preference")
-    page.goto(live.base_url + "/oficina")
+    page.goto(live.base_url + "/")
     expect(page.locator("#oficina-cena")).to_have_attribute("data-pronto", "1", timeout=60000)
     seed = TeamSeed(live.rig.factory, live.rig.clock, live.rig.brand_id)
     post = seed.seed_post()
@@ -128,7 +128,7 @@ def test_first_load_does_not_replay_transitions(live_panel, page):
     seed = TeamSeed(live.rig.factory, live.rig.clock, live.rig.brand_id)
     seed.seed_revision(seed.seed_post().id)
     page.emulate_media(reduced_motion="no-preference")
-    page.goto(live.base_url + "/oficina")
+    page.goto(live.base_url + "/")
     expect(page.locator("#oficina-cena")).to_have_attribute("data-pronto", "1", timeout=60000)
     assert page.locator("#oficina-cena").get_attribute("data-ultima-transicao") is None
 
@@ -180,7 +180,7 @@ def test_hostile_names_in_scene_labels_are_text(live_panel, page):
         update={"nome": "<b>Ana</b>"}
     )
     page.emulate_media(reduced_motion="no-preference")
-    page.goto(live.base_url + "/oficina")
+    page.goto(live.base_url + "/")
     expect(page.locator(".office-label").filter(has_text="<b>Ana</b>")).to_have_count(
         1, timeout=60000
     )
@@ -210,12 +210,15 @@ def test_oficina_only_issues_get_requests(live_panel, page):
     requests = []
     page.on("request", lambda request: requests.append(request))
     page.emulate_media(reduced_motion="no-preference")
-    page.goto(live.base_url + "/oficina")
+    page.goto(live.base_url + "/")
     expect(page.locator("#oficina")).to_have_attribute("data-caras-prontas", "1", timeout=60000)
     page.close()
     assert requests and all(
         r.method == "GET"
-        and r.url.startswith((live.base_url + "/oficina", live.base_url + "/static/"))
+        and (
+            r.url == live.base_url + "/"
+            or r.url.startswith((live.base_url + "/oficina/", live.base_url + "/static/"))
+        )
         for r in requests
     )
     assert snapshot() == before

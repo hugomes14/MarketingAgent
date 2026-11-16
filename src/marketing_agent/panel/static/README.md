@@ -42,7 +42,8 @@ painel de edicao aberto ou um campo alterado, para nao apagar o que o responsave
 ## oficina/
 
 Modulos ES proprios, sem build, importmap ou dependencias externas. Carregados apenas na
-pagina da oficina, com a mesma CSP do painel:
+pagina da oficina (a pagina inicial `/`; `/oficina` so redireciona para la), com a mesma CSP do
+painel:
 
 - `estado.js`: GET sequencial a cada5s, If-None-Match, pausa quando oculto e espera10/20/40/60s
   em falhas; 401/403 termina a sondagem. Exporta detetarTransicoes e urlInterna; dados ficam

@@ -14,14 +14,14 @@ pytestmark = pytest.mark.e2e_browser
 
 def test_home_loads_without_console_errors_or_csp_violations(live_panel, page, page_errors):
     live = live_panel([])
-    page.goto(live.base_url + "/")
-    expect(page.get_by_role("heading", name="Início", exact=True)).to_be_visible()
+    page.goto(live.base_url + "/resumo")
+    expect(page.get_by_role("heading", name="Resumo", exact=True)).to_be_visible()
     assert page_errors == []
 
 
 def test_plain_form_double_click_creates_one_session(live_panel, page, page_errors):
     live = live_panel([turn_json("Primeira pergunta?")])
-    page.goto(live.base_url + "/")
+    page.goto(live.base_url + "/resumo")
     with page.expect_navigation():
         page.get_by_role("button", name="Nova entrevista").evaluate(
             "(button) => {button.click(); button.click();}"
@@ -35,7 +35,7 @@ def test_plain_form_double_click_creates_one_session(live_panel, page, page_erro
 
 def test_back_navigation_reenables_plain_forms(live_panel, page, page_errors):
     live = live_panel([])
-    page.goto(live.base_url + "/")
+    page.goto(live.base_url + "/resumo")
     button = page.get_by_role("button", name="Nova entrevista")
     button.evaluate("""button => {
         button.form.dataset.submitted = '1'; button.disabled = true;
@@ -95,13 +95,16 @@ def test_oficina_2d_page_loads_clean(live_panel, page, page_errors):
     live = live_panel([])
     requests = []
     page.on("request", lambda request: requests.append(request))
-    page.goto(live.base_url + "/oficina")
+    page.goto(live.base_url + "/")
     expect(page.locator(".avatar")).to_have_count(4)
     page.locator('.avatar[data-papel="revisor"]').click()
     expect(page.locator("#agente-trabalho")).to_have_attribute("data-papel", "revisor")
     assert all(
         r.method == "GET"
-        and r.url.startswith((live.base_url + "/oficina", live.base_url + "/static/"))
+        and (
+            r.url == live.base_url + "/"
+            or r.url.startswith((live.base_url + "/oficina/", live.base_url + "/static/"))
+        )
         for r in requests
     )
     assert page_errors == []

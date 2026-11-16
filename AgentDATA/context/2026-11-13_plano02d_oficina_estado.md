@@ -154,3 +154,40 @@ funcional; os21 testes Chromium passaram novamente em16.17s.
   por estado real. NestaT9 a cena nao escolhe atividades ou cria dados.
 - M3 manual/PR continuam abertos. Os testes2D usam reduced_motion=reduce e testes3D
   sobrepoem no-preference; falta de WebGL continua no fallback2D.
+
+
+## Tarefas 10 e 11 — 2026-11-14
+
+- T10: oficina 3D ligada ao estado real (atividade por estado, entrega da pasta, selecao
+  sincronizada nos dois sentidos, capturas da cara dos avatares em sessionStorage).
+- T11: pausa, qualidade adaptativa (alta/baixa/insuficiente), movimento reduzido e interruptor
+  3D/2D (`localStorage["oficina.vista"]`); quadro de medicao apenas com `?medir=1`.
+
+## Tarefa 12 concluida — 2026-11-16 (estado atual)
+
+- **Tarefas 1 a 12 implementadas e validadas automaticamente.** Estao por fazer: a revisao
+  final do ramo e as verificacoes manuais M1 a M6.
+- `GET /` e a oficina (2D ou 3D pela regra da T11; `?papel=` escolhe o agente sem JavaScript;
+  papel desconhecido da 404). `GET /resumo` e a antiga pagina inicial (`home.html` movido com
+  `git mv` para `resumo.html`: orcamento, decisoes pendentes, versoes ativas, entrevistas e as
+  ligacoes 2A/2B/2C). `GET /oficina` responde 303 para `/` e conserva `papel` conhecido e
+  `medir=1`. Navegacao: "Oficina" e "Resumo". Diretor: "Entrevistas (a pedido)" abre
+  `/resumo#entrevistas`.
+- Nenhuma rota do servidor redirecionava para `/`; por isso nenhum redirect POST mudou. Os
+  testes que liam o conteudo de `/` passaram a ler `/resumo` com as mesmas verificacoes.
+- Browser: `test_weekly_review_from_oficina_to_approval` (semente `in_review`, oficina, avatar
+  do Revisor, pacote no lote, aprovar com a acao existente, volta a oficina, contadores desceram
+  na sondagem seguinte, sem LLM) e `test_view_choice_persists_across_navigation`.
+- Validacao: suite 3090 passed/53 deselected; `-m e2e_browser` 49 passed; ruff/format/mypy162 OK.
+- Documentacao: README (oficina, `/resumo`, `config/oficina.yaml`, interruptor 3D/2D,
+  `?medir=1`, Three.js local, Playwright com `-m e2e_browser` e `LD_LIBRARY_PATH`),
+  `panel/static/README.md` e o plano.
+- Verificacao manual do M5: abrir agora `/?medir=1` (o alias `/oficina?medir=1` tambem serve).
+
+## Pendente (responsavel)
+
+- M1 (worker morto em ambiente real), M2 (teclado), M3 (cena no browser do responsavel),
+  M4 (Ollama: ver Copywriter/Revisor trabalhar), M5 (medicao em PC e telemovel), M6 (uma semana
+  real feita a partir da oficina, do plano a aprovacao).
+- Revisao final do ramo (`superpowers:requesting-code-review`) sem achados Critical/Important.
+- O M5 humano do 2C continua aberto.

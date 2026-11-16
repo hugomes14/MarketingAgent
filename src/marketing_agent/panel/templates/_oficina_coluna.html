@@ -3,7 +3,7 @@
     {% for agente in equipa.agentes %}
     {% set personagem = config.personagens[agente.papel] %}
     <li>
-      <a class="avatar" href="/oficina?papel={{ agente.papel }}"
+      <a class="avatar" href="/?papel={{ agente.papel }}"
          hx-get="/oficina/agente/{{ agente.papel }}" hx-target="#painel-trabalho"
          data-papel="{{ agente.papel }}" data-cabelo="{{ personagem.cabelo }}"
          data-roupa="{{ personagem.roupa }}" data-estilo="{{ estilos[personagem.estilo] }}"

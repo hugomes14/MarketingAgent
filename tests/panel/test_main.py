@@ -96,7 +96,7 @@ def test_factory_wires_the_content_pages_to_real_services(
     headers = {"Tailscale-User-Login": LOGIN}
     assert client.get("/base", headers=headers).status_code == 200
     assert "Ainda não há itens" in client.get("/base", headers=headers).text
-    assert "Propor plano" in client.get("/", headers=headers).text
+    assert "Propor plano" in client.get("/resumo", headers=headers).text
 
 
 def test_untrusted_peer_is_denied_even_with_forged_forwarding(
