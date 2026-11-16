@@ -1,6 +1,6 @@
 import {EstadoCliente} from './estado.js';
 import {Coluna} from './coluna.js';
-import {chaveAparencia, guardar, restaurar, capturarCara} from './capturas.js';
+import {chaveAparencia, guardar, restaurar, capturarCara, desenharInicial} from './capturas.js';
 import {temWebGL, lerEscolha, guardarEscolha, prefereMovimentoReduzido, vistaInicial} from './vista.js';
 
 const raiz = document.querySelector('#oficina');
@@ -15,11 +15,17 @@ const personagens = raiz ? [...raiz.querySelectorAll('.avatar')].map(a => ({
   look: {hair: a.dataset.cabelo, torso: a.dataset.roupa, arms: a.dataset.roupa, style: a.dataset.estilo}
 })) : [];
 const caras = new Map();
+/** Sem `crypto.subtle` (contexto inseguro) a captura funciona na mesma, so nao fica em cache. */
+async function chaveOuNula(look) {
+  try { return await chaveAparencia(look); } catch { return null; }
+}
 async function restaurarCaras() {
   for (const pessoa of personagens) {
-    const chave = await chaveAparencia(pessoa.look);
+    const chave = await chaveOuNula(pessoa.look);
     const canvas = raiz.querySelector('.avatar[data-papel="' + pessoa.id + '"] .avatar-cara');
-    caras.set(pessoa.id, {chave, canvas, restaurada: restaurar(pessoa.id, chave, canvas)});
+    const restaurada = chave !== null && restaurar(pessoa.id, chave, canvas);
+    if (!restaurada) desenharInicial(canvas, pessoa.name.charAt(0).toUpperCase());
+    caras.set(pessoa.id, {chave, canvas, restaurada});
   }
 }
 const carasRestauradas = restaurarCaras();
@@ -69,15 +75,20 @@ function desmontar3D() {
   oficina?.desmontar(); oficina = null; contentor.hidden = true;
 }
 
+/** Falha numa cara (captura ou hash) nunca desmonta a cena: fica a inicial ou a cara anterior. */
+async function capturarUma(instancia, pessoa, cara) {
+  try {
+    const pixels = await capturarCara(instancia, pessoa.id, cara.canvas);
+    if (pixels && cara.chave !== null) guardar(pessoa.id, cara.chave, pixels);
+  } catch { /* a inicial desenhada permanece */ }
+}
+
 async function capturarCaras(instancia, ativa) {
   await carasRestauradas;
   for (const pessoa of personagens) {
     const cara = caras.get(pessoa.id);
     if (!ativa()) return;
-    if (!cara.restaurada) {
-      const pixels = await capturarCara(instancia, pessoa.id, cara.canvas);
-      if (pixels) guardar(pessoa.id, cara.chave, pixels);
-    }
+    if (!cara.restaurada) await capturarUma(instancia, pessoa, cara);
   }
   raiz.dataset.carasProntas = '1';
 }

@@ -7,6 +7,18 @@ export async function chaveAparencia(look) {
   return [...new Uint8Array(digest)].map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
+/** Alternativa sem WebGL nem captura: a inicial do papel desenhada no proprio canvas 2D. */
+export function desenharInicial(canvas, inicial) {
+  const contexto = canvas.getContext('2d');
+  contexto.fillStyle = '#e0ecff';
+  contexto.fillRect(0, 0, TAMANHO, TAMANHO);
+  contexto.fillStyle = '#1f2a44';
+  contexto.font = 'bold 56px sans-serif';
+  contexto.textAlign = 'center'; contexto.textBaseline = 'middle';
+  contexto.fillText(inicial, TAMANHO / 2, TAMANHO / 2);
+  canvas.dataset.origemCara = 'inicial';
+}
+
 /** Guarda apenas bytes RGBA, sem URLs ou imagens externas. Falha de quota e recuperavel. */
 export function guardar(papel, chave, imageData) {
   try {

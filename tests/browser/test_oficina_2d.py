@@ -208,16 +208,59 @@ def test_304_recovery_restores_selected_panel(live_panel, page):
     expect(page.locator("#agente-trabalho .estado-texto")).to_have_text("Sem trabalho")
 
 
-def test_transition_detector_ignores_initial_and_seen_reviews(live_panel, page):
+def test_transition_detector_fires_only_for_a_newer_review_marker(live_panel, page):
     open_office(live_panel, page)
     result = page.evaluate("""async () => {
       const {detetarTransicoes} = await import('/static/oficina/estado.js');
-      const state = ids => ({agentes:[{papel:'revisor',
-        entregas:ids.map(id=>({tipo:'parecer',id}))}]});
-      return [detetarTransicoes(null,state(['a'])),
-        detetarTransicoes(state(['a']),state(['a','b']))];
+      const state = (id, em) => ({agentes:[{papel:'revisor', entregas:[{tipo:'parecer',id:'x'}],
+        ultima_entrega: id && {id, post_id:'p'+id, em}}]});
+      const a = state('a', '2026-11-13T10:00:00.000001Z');
+      const b = state('b', '2026-11-13T10:00:01.000000Z');
+      // Mesma marca com entregas diferentes (janela a deslizar) nao dispara.
+      const slid = {agentes:[{papel:'revisor', entregas:[{tipo:'parecer',id:'y'}],
+        ultima_entrega:a.agentes[0].ultima_entrega}]};
+      return [detetarTransicoes(null,a), detetarTransicoes(a,slid), detetarTransicoes(a,b),
+        detetarTransicoes(b,a), detetarTransicoes(state(null), a)];
     }""")
     assert result == [
         [],
-        [{"tipo": "entrega_pasta", "de": "copywriter", "para": "revisor", "id": "b"}],
+        [],
+        [{"tipo": "entrega_pasta", "de": "copywriter", "para": "revisor", "id": "pb"}],
+        [],
+        [{"tipo": "entrega_pasta", "de": "copywriter", "para": "revisor", "id": "pa"}],
     ]
+
+
+def test_one_click_issues_one_panel_request_and_quick_switch_shows_last(live_panel, page):
+    live = live_panel([])
+    panel_requests = []
+    page.on(
+        "request", lambda r: panel_requests.append(r.url) if "/oficina/agente/" in r.url else None
+    )
+    page.goto(live.base_url + "/")
+    page.wait_for_function("() => document.querySelector('#oficina').dataset.ligacao === 'ok'")
+    panel_requests.clear()
+    page.locator('.avatar[data-papel="copywriter"]').click()
+    expect(page.locator("#agente-trabalho")).to_have_attribute("data-papel", "copywriter")
+    page.wait_for_timeout(500)
+    assert [u.rsplit("/", 1)[1] for u in panel_requests] == ["copywriter"]
+    panel_requests.clear()
+    page.locator('.avatar[data-papel="designer"]').click()
+    page.locator('.avatar[data-papel="revisor"]').click()
+    expect(page.locator("#agente-trabalho")).to_have_attribute("data-papel", "revisor")
+    page.wait_for_timeout(500)
+    expect(page.locator("#agente-trabalho")).to_have_attribute("data-papel", "revisor")
+    expect(page.locator('.avatar[aria-current="true"]')).to_have_attribute("data-papel", "revisor")
+
+
+def test_avatar_without_cached_capture_shows_the_role_initial_in_2d(live_panel, page):
+    live = live_panel([])
+    page.add_init_script("localStorage.setItem('oficina.vista', '2d')")
+    page.goto(live.base_url + "/")
+    canvas = page.locator('.avatar[data-papel="diretor"] .avatar-cara')
+    expect(canvas).to_have_attribute("data-origem-cara", "inicial")
+    pixels = canvas.evaluate(
+        'c => new Set(c.getContext("2d").getImageData(0,0,96,96).data.join()).size'
+    )
+    # Fundo liso teria uma so cor; a letra desenhada acrescenta tons de contorno.
+    assert pixels > 5

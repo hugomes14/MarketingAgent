@@ -194,3 +194,26 @@ def test_director_panel_links_interviews_on_request(office):
     panel, _ = office
     html = panel.get("/oficina/agente/diretor").text
     assert '<a href="/resumo#entrevistas">Entrevistas (a pedido)</a>' in html
+
+
+def test_last_activity_is_converted_to_utc_before_formatting(office, monkeypatch):
+    from dataclasses import replace
+    from datetime import datetime, timedelta, timezone
+
+    from marketing_agent.oficina.queries import TeamStateQueries
+
+    panel, _ = office
+    real = TeamStateQueries.agent_panel
+    brt = timezone(timedelta(hours=-3))
+
+    def shifted(self, brand_id, papel):
+        painel = real(self, brand_id, papel)
+        agente = replace(
+            painel.agente, ultima_atividade_em=datetime(2026, 11, 13, 23, 30, tzinfo=brt)
+        )
+        return replace(painel, agente=agente)
+
+    monkeypatch.setattr(TeamStateQueries, "agent_panel", shifted)
+    html = panel.get("/oficina/agente/diretor").text
+    assert "2026-11-14 02:30 UTC" in html
+    assert "23:30" not in html

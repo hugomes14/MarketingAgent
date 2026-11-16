@@ -1,5 +1,6 @@
 """Leituras autenticadas da oficina; nenhuma rota executa trabalho ou altera dados."""
 
+from datetime import UTC
 from typing import Final
 from urllib.parse import urlencode
 
@@ -27,6 +28,7 @@ def _agent_context(panel: Panel, papel: Papel) -> Context:
         "trabalho": panel.team.agent_panel(panel.brand_id, papel),
         "papeis_texto": PAPEL_TEXTO,
         "resumo_url": RESUMO_URL,
+        "utc_zone": UTC,
     }
 
 

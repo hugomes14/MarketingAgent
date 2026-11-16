@@ -5,7 +5,7 @@
      <span class="estado-texto">{{ agente.estado_texto }}</span></p>
   <p>Pendências: {{ agente.pendencias }}</p>
   <p class="ultima-atividade nota">Última atividade:
-    {% if agente.ultima_atividade_em %}<time datetime="{{ agente.ultima_atividade_em.isoformat() }}">{{ agente.ultima_atividade_em.strftime("%Y-%m-%d %H:%M UTC") }}</time>{% else %}sem registo{% endif %}
+    {% if agente.ultima_atividade_em %}{% set utc = agente.ultima_atividade_em.astimezone(utc_zone) %}<time datetime="{{ utc.isoformat() }}">{{ utc.strftime("%Y-%m-%d %H:%M UTC") }}</time>{% else %}sem registo{% endif %}
   </p>
   <h3>Entregas recentes</h3>
   {% if agente.entregas %}
