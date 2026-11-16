@@ -24,6 +24,8 @@ from marketing_agent.evals.runs import (
     RunInProgress,
 )
 from marketing_agent.evals.views import EvalNotFound
+from marketing_agent.media.library import AssetNotFound
+from marketing_agent.media.store import MediaStoreError
 from marketing_agent.panel.context import (
     MUTATION_GUARD,
     CurrentUser,
@@ -188,7 +190,11 @@ def pair_image(
         asset_id = services(panel).judging.pair_image(
             panel.brand_id, run_id, index, "a" if side == "a" else "b"
         )
-        asset = panel.media.library.read_asset(panel.brand_id, asset_id)
+        try:
+            asset = panel.media.library.read_asset(panel.brand_id, asset_id)
+        except (AssetNotFound, MediaStoreError):
+            # Mensagem fixa: nem o id do ativo nem a causa do armazenamento chegam ao par.
+            raise HTTPException(404, "Imagem inexistente.") from None
     if asset.mime != "image/jpeg":
         raise HTTPException(422, "Imagem de avaliação inválida.")
     return Response(asset.data, media_type="image/jpeg", headers={"Cache-Control": "no-store"})

@@ -2,14 +2,18 @@
 
 import re
 from datetime import timedelta
+from html.parser import HTMLParser
 
 import pytest
-from content_rig import package_pass
+from content_rig import build_rig, package_pass
 from eval_panel_fixtures import evaluation
+from eval_rig import build_eval_rig
 from sqlalchemy import select
 
-from marketing_agent.db.models import EvalJudgement
+from marketing_agent.db.models import Brand, EvalJudgement
 from marketing_agent.llm.fake_scenarios import simple_package
+from marketing_agent.media.library import AssetNotFound
+from marketing_agent.media.store import MediaStoreError
 from marketing_agent.panel.pair_timer import PairTimer
 
 __all__ = ["evaluation"]
@@ -145,3 +149,87 @@ def test_timer_rejects_future_and_wrong_pair_and_caps_duration(clock):
     ):
         with pytest.raises(ValueError):
             timer.seconds(token, run_id, index, now)
+
+
+class Skeleton(HTMLParser):
+    """Esqueleto de um lado: etiquetas, classes e nomes de atributos, sem valores livres."""
+
+    def __init__(self):
+        super().__init__()
+        self.shape = []
+
+    def handle_starttag(self, tag, attrs):
+        names = sorted(
+            "data-*" + name[5:] if name.startswith("data-") else name for name, _ in attrs
+        )
+        classes = sorted(dict(attrs).get("class", "").split())
+        self.shape.append((tag, tuple(names), tuple(classes)))
+
+    def handle_endtag(self, tag):
+        self.shape.append(("/" + tag,))
+
+
+def _sides(html):
+    parts = re.findall(r'<section class="lado-avaliacao">.*?</section>', html, re.DOTALL)
+    assert len(parts) == 2
+    return parts
+
+
+def _normalised_skeleton(section, side):
+    parser = Skeleton()
+    parser.feed(section)
+    ids = re.findall(r'(?:id|name|for|value|src)="([^"]*)"', section)
+    # Os valores que mencionam o lado (a/b) normalizam-se: o resto tem de ser igual.
+    uuid = r"[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}"
+    normalised = [
+        re.sub(rf"(?<![a-z]){side}(?![a-z])", "X", re.sub(uuid, "ID", value)) for value in ids
+    ]
+    return parser.shape, normalised
+
+
+def test_side_a_and_b_have_identical_tag_skeleton(evaluation):
+    panel, rig = evaluation
+    run_id = ready(panel, rig)
+    for n in (1, 2):
+        first, second = _sides(panel.get(f"/avaliacao/{run_id}/par/{n}").text)
+        shape_a, names_a = _normalised_skeleton(first, "a")
+        shape_b, names_b = _normalised_skeleton(second, "b")
+        assert shape_a == shape_b
+        assert names_a == names_b
+
+
+def test_pair_image_read_failures_are_a_fixed_404(evaluation, monkeypatch):
+    panel, rig = evaluation
+    run_id = ready(panel, rig)
+    library = panel.media.library
+    for failure in (AssetNotFound(), MediaStoreError("segredo-xyz")):
+
+        def broken(*_args, _failure=failure, **_kwargs):
+            raise _failure
+
+        monkeypatch.setattr(type(library), "read_asset", broken)
+        response = panel.get(f"/avaliacao/{run_id}/par/1/imagem/a")
+        assert response.status_code == 404
+        assert "segredo-xyz" not in response.text
+        assert response.json() == {"detail": "Imagem inexistente."}
+
+
+def test_other_brands_run_is_a_404_identical_to_an_unknown_run(evaluation, tmp_path):
+    panel, rig = evaluation
+    with rig.factory.begin() as session:
+        other = Brand(name="Outra marca")
+        session.add(other)
+        session.flush()
+        other_id = other.id
+    other_rig = build_eval_rig(
+        build_rig(rig.factory, rig.content.clock, other_id, [], media_dir=tmp_path / "media-b"),
+        tmp_path / "evals-b",
+    )
+    foreign = ready(panel, other_rig)
+    unknown = "00000000-0000-4000-8000-000000000000"
+    for suffix in ("", "/par/1", "/par/1/imagem/a", "/relatorio", "/par/2/imagem/b"):
+        expected = panel.get(f"/avaliacao/{unknown}{suffix}")
+        actual = panel.get(f"/avaliacao/{foreign}{suffix}")
+        assert expected.status_code == 404
+        assert (actual.status_code, actual.text) == (expected.status_code, expected.text)
+    assert panel.post(f"/avaliacao/{foreign}/revelar").status_code == 404
