@@ -306,7 +306,12 @@ class InterviewService:
         return run.output.id
 
     def _stale_before(self, now: datetime) -> datetime:
-        return now - timedelta(seconds=self._interview_spec.limits.max_duration_s)
+        return now - timedelta(
+            seconds=max(
+                self._engine.claim_duration_s(spec)
+                for spec in (self._interview_spec, self._profile_spec)
+            )
+        )
 
     def _is_claim_valid(self, row: InterviewSession, holder: str, now: datetime) -> bool:
         """A reclamacao e de `holder` e ainda nao passou `max_duration_s`."""

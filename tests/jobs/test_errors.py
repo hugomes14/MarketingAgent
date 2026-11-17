@@ -5,6 +5,7 @@ from pydantic import BaseModel, ValidationError
 
 from marketing_agent.budget.controller import RunCostLimitExceeded
 from marketing_agent.harness.engine import NeedsHuman, RunLimitExceeded
+from marketing_agent.harness.run_errors import RunConfigurationFailed
 from marketing_agent.jobs.errors import describe_error
 from marketing_agent.jobs.queue import MAX_ERROR_CHARS
 from marketing_agent.kb.service import KbError
@@ -54,3 +55,20 @@ def test_allow_listed_is_single_line_and_truncated() -> None:
 def test_subclass_of_allow_listed_type_is_class_name_only() -> None:
     # Tipo exato: uma subclasse futura nao herda o armazenamento da mensagem.
     assert describe_error(_SubclassedLimit("SEGREDO")) == "_SubclassedLimit"
+
+
+def test_run_configuration_failed_keeps_its_name_only_message() -> None:
+    error = RunConfigurationFailed(
+        "revisor: MissingCapability: papel 'revisor' exige ['image_input']"
+    )
+    assert describe_error(error) == (
+        "RunConfigurationFailed: revisor: MissingCapability: papel 'revisor' exige ['image_input']"
+    )
+    assert describe_error(RunConfigurationFailed("")) == "RunConfigurationFailed"
+
+
+def test_run_configuration_failed_subclass_is_class_name_only() -> None:
+    class _Sub(RunConfigurationFailed):
+        pass
+
+    assert describe_error(_Sub("SEGREDO")) == "_Sub"

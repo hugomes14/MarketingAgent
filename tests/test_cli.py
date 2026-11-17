@@ -1,6 +1,7 @@
 """CLI de operacao: marca, precos, reservas, migracoes, painel e worker."""
 
 import json
+import logging
 import os
 import selectors
 import signal
@@ -10,7 +11,7 @@ import sys
 import threading
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 
@@ -22,11 +23,15 @@ from sqlalchemy.orm import Session, sessionmaker
 from marketing_agent import cli
 from marketing_agent.brands import ensure_brand
 from marketing_agent.budget.controller import BudgetController
-from marketing_agent.budget.pricing import PriceBook
+from marketing_agent.budget.pricing import ModelPrice, PriceBook, PriceTier, sync_model_prices
 from marketing_agent.clock import Clock, SystemClock
 from marketing_agent.db.base import make_engine, make_session_factory
 from marketing_agent.db.models import AgentRun, Brand, CostReservation
+from marketing_agent.dev_proxy import DevProxyServer
+from marketing_agent.harness.engine import AgentEngine
+from marketing_agent.jobs.singleton import WorkerLock, WorkerLockLost, hold_worker_lock
 from marketing_agent.jobs.worker import Worker
+from marketing_agent.startup import load_settings
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 Factory = sessionmaker[Session]
@@ -122,11 +127,11 @@ def test_sync_prices_loads_repo_file(
 ) -> None:
     path = REPO_ROOT / "config" / "model_prices.yaml"
     code, out, _ = run(capsys, "sync-prices", "--file", str(path))
-    assert code == 0 and out.strip() == "5 precos sincronizados"
+    assert code == 0 and out.strip() == "6 precos sincronizados"
     price = PriceBook(session_factory).get("anthropic", "claude-haiku-5-5")
     assert price.price_version == "2026-11-05"
     code, out, _ = run(capsys, "sync-prices", "--file", str(path))  # repetir e no-op
-    assert code == 0 and out.strip() == "5 precos sincronizados"
+    assert code == 0 and out.strip() == "6 precos sincronizados"
 
 
 def test_sync_prices_default_path_comes_from_settings(
@@ -134,7 +139,7 @@ def test_sync_prices_default_path_comes_from_settings(
 ) -> None:
     monkeypatch.setenv("MODEL_PRICES_PATH", str(REPO_ROOT / "config" / "model_prices.yaml"))
     code, out, _ = run(capsys, "sync-prices")
-    assert code == 0 and "5 precos" in out
+    assert code == 0 and "6 precos" in out
 
 
 def test_sync_prices_several_files(
@@ -149,8 +154,11 @@ def test_sync_prices_several_files(
         "--file",
         str(config / "model_prices.local.yaml"),
     )
-    assert code == 0 and out.strip() == "7 precos sincronizados"
+    assert code == 0 and out.strip() == "10 precos sincronizados"
     assert PriceBook(session_factory).get("openai", "qwen2.5:14b").tiers[0].input_per_million == 0
+    vision = PriceBook(session_factory).get("openai", "qwen2.5vl:7b")
+    assert vision.price_version == "local-2026-11-09"
+    assert (vision.tiers[0].input_per_million, vision.tiers[0].output_per_million) == (0, 0)
 
 
 def test_sync_prices_missing_file_is_a_config_error(
@@ -214,6 +222,43 @@ def test_recover_reservations_marks_unknown(
         session_factory, PriceBook(session_factory), clock, Decimal(20), (50,)
     ).status(brand_id)
     assert status.unknown_usd == Decimal("0.5")
+
+
+@pytest.mark.parametrize(
+    ("multiplier", "minutes", "accepted"),
+    [("1", "7", False), ("1", "8", True), ("5", "34", False), ("5", "35", True)],
+)
+def test_recover_reservations_enforces_the_safe_minimum_age(
+    multiplier: str,
+    minutes: str,
+    accepted: bool,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # worker_stale_after: 480 s (8 min) com m=1 e 2100 s (35 min) com m=5.
+    monkeypatch.setenv("LLM_TIME_MULTIPLIER", multiplier)
+    code, _, err = run(capsys, "recover-reservations", "--older-than-minutes", minutes)
+    if accepted:
+        assert code == 0
+    else:
+        assert code == 2 and "abaixo do minimo seguro" in err and "Traceback" not in err
+
+
+def test_recover_reservations_defaults_to_the_safe_minimum_age(
+    session_factory: Factory,
+    brand_id: str,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("LLM_TIME_MULTIPLIER", "5")
+    clock = SystemClock()
+    old = seed_open_reservation(session_factory, brand_id, clock, timedelta(minutes=36))
+    live = seed_open_reservation(session_factory, brand_id, clock, timedelta(minutes=20))
+    code, out, _ = run(capsys, "recover-reservations")  # omitido: 35 min com m=5
+    assert code == 0 and out.strip() == "1 reserva(s) marcada(s) como unknown_outcome"
+    with session_factory() as session:
+        assert session.get_one(CostReservation, old).status == "unknown_outcome"
+        assert session.get_one(CostReservation, live).status == "open"
 
 
 @pytest.mark.parametrize("minutes", ["0", "-5", "abc"])
@@ -399,23 +444,52 @@ def test_dev_proxy_prints_banner_and_serves(
     assert "dono@local" in out + err and "DESENVOLVIMENTO" in (out + err)
 
 
+def test_dev_proxy_upstream_timeout_follows_the_settings_multiplier(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    timeouts: list[float] = []
+
+    def fake_serve(server: DevProxyServer) -> None:
+        timeouts.append(server.upstream_timeout)
+        server.server_close()
+
+    monkeypatch.setattr(cli, "serve_forever", fake_serve)
+    monkeypatch.setenv("LLM_TIME_MULTIPLIER", "5")
+    code, _, _ = run(
+        capsys, "dev-proxy", "--login", "dono@local", "--listen", f"127.0.0.1:{free_port()}"
+    )
+    assert code == 0 and timeouts == [1863.0]  # 240 x 5 + 600 + 63
+
+
 # --- worker ----------------------------------------------------------------------------------
 
 WORKER_ROUTES = {
-    role: {"provider": "openai", "model_id": "modelo", "capabilities": ["text", "json_schema"]}
-    for role in ("diretor", "copywriter", "revisor")
+    role: {
+        "provider": "openai",
+        "model_id": "modelo",
+        "capabilities": ["text", "json_schema", *(["image_input"] if role == "revisor" else [])],
+    }
+    for role in ("diretor", "copywriter", "designer", "revisor")
 }
 
 
 @pytest.fixture
-def worker_environment(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> dict[str, str]:
-    """Rotas e chave de API de pacotilha: o worker constroi o cliente mas nunca chama a rede."""
+def worker_environment(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, session_factory: Factory
+) -> dict[str, str]:
+    """Rotas, preco e chave de pacotilha: o worker constroi o cliente mas nunca chama a rede."""
+    free = PriceTier(0, Decimal(0), Decimal(0))
+    price = ModelPrice(
+        "openai", "modelo", "v1", (free,), valid_from=datetime(2026, 11, 1, tzinfo=UTC)
+    )
+    sync_model_prices(session_factory, [price])
     key_file = tmp_path / "openai.key"
     key_file.write_text("chave-de-teste")
     values = {
         "ROLE_ROUTES": json.dumps(WORKER_ROUTES),
         "OPENAI_API_KEY_FILE": str(key_file),
         "OPENAI_BASE_URL": "http://127.0.0.1:9/v1",
+        "MEDIA_DIR": str(tmp_path / "media"),
     }
     for name, value in values.items():
         monkeypatch.setenv(name, value)
@@ -452,6 +526,15 @@ def read_line_with_timeout(stream: object, timeout_s: float) -> str:
     return stream.readline()  # type: ignore[attr-defined]
 
 
+def read_until(stream: object, prefix_or_text: str, timeout_s: float) -> str:
+    """Le linhas ate uma conter o texto (o arranque tambem regista os tempos em INFO)."""
+    for _ in range(10):
+        line = read_line_with_timeout(stream, timeout_s)
+        if prefix_or_text in line:
+            return line
+    raise AssertionError(f"linha {prefix_or_text!r} nao apareceu")
+
+
 @pytest.mark.parametrize("sent", [signal.SIGINT, signal.SIGTERM])
 def test_worker_cli_stops_cleanly(
     sent: signal.Signals, session_factory: Factory, worker_environment: dict[str, str]
@@ -465,7 +548,9 @@ def test_worker_cli_stops_cleanly(
         text=True,
     )
     try:
-        assert read_line_with_timeout(process.stderr, 30).startswith("worker a escutar")
+        # O aviso dos fundos simulados e visivel no arranque (sem rota `designer_imagem`).
+        read_until(process.stderr, "fundos simulados: sem rota designer_imagem", 30)
+        assert read_until(process.stderr, "worker a escutar", 30).startswith("worker a escutar")
         process.send_signal(sent)
         process.wait(timeout=15)
         stderr = process.stderr.read() if process.stderr else ""
@@ -478,12 +563,69 @@ def test_worker_cli_stops_cleanly(
     assert process.stdout.read() == ""
 
 
-def test_worker_requires_copywriter_and_reviewer_routes(
+def test_worker_requires_copywriter_designer_and_reviewer_routes(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     monkeypatch.setenv("ROLE_ROUTES", "{}")
     code, _, err = run(capsys, "worker")
-    assert code == 2 and "copywriter" in err and "revisor" in err and "Traceback" not in err
+    assert code == 2 and "Traceback" not in err
+    assert err.strip() == "erro: ROLE_ROUTES: faltam as rotas de copywriter, designer, revisor"
+
+
+def test_worker_refuses_a_missing_designer_route(
+    worker_environment: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # O pacote corre sempre o Designer: sem rota o worker nao arranca (nada e faturado).
+    routes = {role: route for role, route in WORKER_ROUTES.items() if role != "designer"}
+    monkeypatch.setenv("ROLE_ROUTES", json.dumps(routes))
+    code, out, err = run(capsys, "worker")
+    assert code == 2 and out == "" and "Traceback" not in err
+    assert err.strip() == "erro: ROLE_ROUTES: faltam as rotas de designer"
+
+
+def test_worker_warns_about_simulated_backgrounds_without_an_image_route(
+    session_factory: Factory,
+    worker_environment: dict[str, str],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.WARNING, logger="marketing_agent.cli")
+    cli.build_worker(load_settings(), session_factory, lock=None)
+    assert "fundos simulados: sem rota designer_imagem" in caplog.text
+
+
+def test_worker_refuses_a_text_only_reviewer_route(
+    worker_environment: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    routes = {
+        **WORKER_ROUTES,
+        "revisor": {**WORKER_ROUTES["revisor"], "capabilities": ["text", "json_schema"]},
+    }
+    monkeypatch.setenv("ROLE_ROUTES", json.dumps(routes))
+    code, out, err = run(capsys, "worker")
+    assert code == 2 and out == "" and "Traceback" not in err
+    assert err.strip() == (
+        "erro: ROLE_ROUTES: a rota 'revisor' precisa das capacidades ['image_input']; "
+        "ver .env.local.example"
+    )
+
+
+def test_worker_refuses_a_route_without_price(
+    worker_environment: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    routes = {**WORKER_ROUTES, "revisor": {**WORKER_ROUTES["revisor"], "model_id": "sem-preco"}}
+    monkeypatch.setenv("ROLE_ROUTES", json.dumps(routes))
+    code, _, err = run(capsys, "worker")
+    assert code == 2 and "Traceback" not in err
+    assert err.strip() == (
+        "erro: ROLE_ROUTES: a rota 'revisor' (openai/sem-preco) nao tem preco; "
+        "correr 'marketing-agent sync-prices'"
+    )
 
 
 def test_worker_refuses_fake_provider(
@@ -491,7 +633,7 @@ def test_worker_refuses_fake_provider(
 ) -> None:
     routes = {
         role: {"provider": "fake", "model_id": "m", "capabilities": ["text", "json_schema"]}
-        for role in ("copywriter", "revisor")
+        for role in ("copywriter", "designer", "revisor")
     }
     monkeypatch.setenv("ROLE_ROUTES", json.dumps(routes))
     code, _, err = run(capsys, "worker")
@@ -523,3 +665,117 @@ def test_worker_second_sigint_interrupts_with_exit_130(
     monkeypatch.setattr(Worker, "run_forever", interrupted)
     code, _, err = run(capsys, "worker")
     assert code == 130 and "Traceback" not in err
+
+
+# --- worker unico por base de dados ----------------------------------------------------------
+
+ALREADY_RUNNING = "erro: ja existe um worker a correr nesta base de dados"
+
+
+def test_worker_refuses_to_start_while_another_holds_the_database_lock(
+    pg_url: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Locks consultivos sao por base de dados: o desta base de teste nao colide com o worker de
+    # um fumo (que corre noutra base descartavel do mesmo servidor).
+    with hold_worker_lock(pg_url):
+        code, out, err = run(capsys, "worker")
+    assert code == 2 and out == "" and "Traceback" not in err
+    assert err.strip() == ALREADY_RUNNING
+
+
+def test_worker_holds_the_lock_while_running_and_releases_it_on_exit(
+    pg_url: str,
+    session_factory: Factory,
+    worker_environment: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    during: list[bool] = []
+
+    def probe(self: Worker, stop: threading.Event) -> None:
+        other = WorkerLock(pg_url)
+        try:
+            during.append(other.acquire())
+        finally:
+            other.release()
+
+    monkeypatch.setattr(Worker, "run_forever", probe)
+    code, _, _ = run(capsys, "worker")
+    assert code == 0 and during == [False]
+    after = WorkerLock(pg_url)
+    try:
+        assert after.acquire() is True  # libertado ao sair
+    finally:
+        after.release()
+
+
+def test_worker_exits_nonzero_with_a_fixed_message_when_the_lock_is_lost(
+    session_factory: Factory,
+    worker_environment: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def lost(self: Worker, stop: threading.Event) -> None:
+        raise WorkerLockLost
+
+    monkeypatch.setattr(Worker, "run_forever", lost)
+    code, out, err = run(capsys, "worker")
+    assert code == 2 and out == "" and "Traceback" not in err
+    assert err.strip().splitlines()[-1] == (
+        "erro: a ligacao que guarda o lock do worker perdeu-se: "
+        "outro worker pode arrancar; a terminar"
+    )
+
+
+def test_build_worker_hands_the_lock_to_the_worker(
+    session_factory: Factory, worker_environment: dict[str, str]
+) -> None:
+    lock = WorkerLock("postgresql+psycopg://nunca-liga/x")
+    worker = cli.build_worker(load_settings(), session_factory, lock=lock)
+    assert worker._lock is lock  # noqa: SLF001
+
+
+# --- multiplicador de tempos no worker -------------------------------------------------------
+
+
+def test_build_worker_passes_the_multiplier_to_engine_lease_and_reservation_recovery(
+    session_factory: Factory,
+    worker_environment: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LLM_TIME_MULTIPLIER", "5")
+    seen: dict[str, object] = {}
+    real_engine = cli.AgentEngine
+
+    def spy_engine(*args: object, **kwargs: object) -> AgentEngine:
+        seen["engine"] = kwargs.get("time_multiplier")
+        return real_engine(*args, **kwargs)  # type: ignore[arg-type]
+
+    def spy_recover(self: BudgetController, older_than: timedelta) -> int:
+        seen["stale_after"] = older_than
+        return 0
+
+    monkeypatch.setattr(cli, "AgentEngine", spy_engine)
+    monkeypatch.setattr(BudgetController, "recover_stale", spy_recover)
+    worker = cli.build_worker(load_settings(), session_factory, lock=None)
+    worker.recover()
+    assert seen == {"engine": 5, "stale_after": timedelta(seconds=2100)}
+    assert worker._queue._lease == timedelta(seconds=18600)  # noqa: SLF001
+
+
+def test_worker_logs_the_multiplier_lease_and_reservation_threshold_at_startup(
+    session_factory: Factory,
+    worker_environment: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("LLM_TIME_MULTIPLIER", "5")
+    monkeypatch.setattr(Worker, "run_forever", lambda self, stop: None)
+    caplog.set_level(logging.INFO)
+    code, _, _ = run(capsys, "worker")
+    assert code == 0
+    assert (
+        "worker: LLM_TIME_MULTIPLIER=5, lease do job=18600 s, limiar das reservas=2100 s"
+        in caplog.text
+    )

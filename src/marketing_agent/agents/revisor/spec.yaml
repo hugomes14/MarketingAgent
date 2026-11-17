@@ -1,13 +1,14 @@
-# Spec do Revisor de texto: parecer independente sobre o rascunho; nunca o edita.
+# Spec do Revisor com visao: parecer independente sobre o rascunho e a imagem final; nunca edita.
 # Valores monetarios SEMPRE como texto entre aspas (o carregador recusa numeros).
 # `writes: []`: o parecer e um valor devolvido ao chamador, nunca muda estado de posts ou artefactos.
 role: revisor
 name: revisor
-version: 1
+version: 2
 loop_type: structured
 prompt_file: prompt.md
 output_schema: Revisao
-required_capabilities: [text, json_schema]
+# `image_input` e exigido ao papel todo, tambem nos pacotes so de texto (spec 2B, secao 7).
+required_capabilities: [text, json_schema, image_input]
 tools: []
 reads: [perfil_marca, kb]
 writes: []

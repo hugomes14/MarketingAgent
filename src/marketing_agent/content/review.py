@@ -11,9 +11,11 @@ Auditoria e erros levam atores, ids e contagens, nunca o comentario, a nota nem 
 from datetime import datetime
 from typing import get_args
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 from marketing_agent.clock import Clock
+from marketing_agent.content.manual_image import ManualImage, normalize_manual
 from marketing_agent.content.review_edit import CaptionEdit, build_edit_revision, check_edit
 from marketing_agent.content.review_errors import (
     InvalidComment,
@@ -23,18 +25,22 @@ from marketing_agent.content.review_errors import (
     ReviewError,
     StaleRevision,
 )
+from marketing_agent.content.review_image import recompose_photo
 from marketing_agent.content.review_records import (
     AuditDetail,
     Decision,
     audit_edit,
+    audit_post,
     record_decision,
 )
 from marketing_agent.content.review_retry import retry_generation_in
 from marketing_agent.content.revision_store import kb_ref_ids, latest_revision, lock_post
-from marketing_agent.db.models import Post, PostRevision
+from marketing_agent.db.models import MediaAsset, Post, PostRevision
 from marketing_agent.feedback.service import FeedbackChoice, FeedbackError, FeedbackService
-from marketing_agent.jobs.queue import GENERATE_POST_JOB, JobQueue
+from marketing_agent.jobs.queue import GENERATE_POST_JOB, REVIEW_POST_JOB, JobQueue
 from marketing_agent.kb.service import KbService
+from marketing_agent.media.brand_kit import BrandKitService
+from marketing_agent.media.library import MediaLibrary
 
 __all__ = [
     "CaptionEdit",
@@ -51,6 +57,17 @@ IN_REVIEW = "in_review"
 DRAFTING = "drafting"
 _EDITABLE = frozenset({IN_REVIEW, DRAFTING})
 _FEEDBACK_CHOICES = frozenset(get_args(FeedbackChoice))
+
+
+def _base_image_hash(session: Session, brand_id: str, base: PostRevision) -> str | None:
+    """SHA-256 da imagem final da revisao base (entra no hash da edicao); `None` sem imagem."""
+    if base.final_asset_id is None:
+        return None
+    return session.scalar(
+        select(MediaAsset.sha256).where(
+            MediaAsset.brand_id == brand_id, MediaAsset.id == base.final_asset_id
+        )
+    )
 
 
 def _check_choice(choice: str) -> None:
@@ -75,6 +92,8 @@ class ReviewService:
         clock: Clock,
         *,
         max_comment_chars: int,
+        library: MediaLibrary | None = None,
+        kits: BrandKitService | None = None,
     ) -> None:
         """`max_comment_chars` (`settings.max_message_chars`) limita o pedido de alteracoes."""
         self._session_factory = session_factory
@@ -83,6 +102,8 @@ class ReviewService:
         self._kb = kb
         self._clock = clock
         self._max_comment_chars = max_comment_chars
+        self._library = library
+        self._kits = kits
 
     def approve(self, brand_id: str, post_id: str, revision_id: str, actor: str) -> None:
         """Aprova a revisao (tem de ser a mais recente) e cancela trabalhos de geracao ativos.
@@ -179,31 +200,137 @@ class ReviewService:
             post, base = self._open(session, brand_id, post_id, base_revision_id, _EDITABLE)
             self._require_editable(session, post)
             valid_kb = self._kb.valid_refs(brand_id, kb_ref_ids(post.brief), post.scheduled_date)
-            check_edit(base, changes, post.channels, valid_kb)
+            image_hash = _base_image_hash(session, brand_id, base)
+            check_edit(base, changes, post.channels, valid_kb, image_hash)
             self._queue.cancel_for_post_in(session, post_id)
-            revision = build_edit_revision(post, base, changes, self._clock.now())
+            revision = build_edit_revision(post, base, changes, self._clock.now(), image_hash)
             session.add(revision)
             session.flush()
             post.lifecycle = IN_REVIEW
             post.last_error = None
-            self._record_feedback(
+            self._record_edit(session, base, revision, changes, feedback, note, expires_at, actor)
+            return revision.id
+
+    def _record_edit(
+        self,
+        session: Session,
+        base: PostRevision,
+        revision: PostRevision,
+        changes: CaptionEdit,
+        feedback: FeedbackChoice,
+        note: str | None,
+        expires_at: datetime | None,
+        actor: str,
+    ) -> None:
+        """Feedback e auditoria da edicao, na transacao do chamador."""
+        self._record_feedback(
+            session,
+            revision,
+            feedback,
+            before_text=base.caption,
+            after_text=changes.legenda,
+            note=note,
+            expires_at=expires_at,
+            actor=actor,
+        )
+        audit_edit(
+            session,
+            actor=actor,
+            base=base,
+            revision=revision,
+            feedback=feedback,
+            now=self._clock.now(),
+        )
+
+    def attach_manual_image(
+        self,
+        brand_id: str,
+        post_id: str,
+        base_revision_id: str,
+        data: bytes,
+        meta: ManualImage,
+        actor: str,
+    ) -> str:
+        """Guarda a imagem e enfileira uma revisao visual atomica; exige a base atual.
+
+        So `in_review`, ou `drafting` com `last_error` e sem trabalho ativo (como `edit`):
+        publicacoes aprovadas, rejeitadas ou canceladas nao se reabrem (`InvalidPostState`).
+        """
+        if self._library is None:
+            raise InvalidEdit("servicos de imagem indisponiveis", ())
+        image = normalize_manual(data)
+        with self._session_factory.begin() as session:
+            post, base = self._open(session, brand_id, post_id, base_revision_id, _EDITABLE)
+            self._require_editable(session, post)
+            if self._queue.has_active_for_post_in(session, post_id):
+                raise InvalidPostState("ha uma geracao em curso")
+            asset_id = self._library.store_asset_in(
                 session,
-                revision,
-                feedback,
-                before_text=base.caption,
-                after_text=changes.legenda,
-                note=note,
-                expires_at=expires_at,
+                brand_id,
+                image,
+                kind="final",
+                origem="gerada" if meta.gerada_por_ia else meta.origem,
                 actor=actor,
             )
-            audit_edit(
+            job_id = self._enqueue_manual_review(session, post_id, base, asset_id, meta)
+            post.lifecycle, post.last_error = DRAFTING, None
+            detail = {"base_revision_id": base.id, "asset_id": asset_id}
+            audit_post(session, actor, "post.manual_image", post_id, detail, self._clock.now())
+            return job_id
+
+    def _enqueue_manual_review(
+        self, session: Session, post_id: str, base: PostRevision, asset_id: str, meta: ManualImage
+    ) -> str:
+        """Enfileira o `review_post` do upload; `InvalidPostState` se ja ha um igual ativo."""
+        payload = {
+            "post_id": post_id,
+            "base_revision_id": base.id,
+            "asset_id": asset_id,
+            "meta": meta.model_dump(mode="json"),
+        }
+        dedupe_key = f"{REVIEW_POST_JOB}:{post_id}:{asset_id}"
+        job_id = self._queue.enqueue_in(session, REVIEW_POST_JOB, payload, dedupe_key)
+        if job_id is None:
+            raise InvalidPostState("revisao visual ja enfileirada")
+        return job_id
+
+    def swap_photo(
+        self,
+        brand_id: str,
+        post_id: str,
+        base_revision_id: str,
+        photo_id: str,
+        alt_text: str,
+        actor: str,
+    ) -> str:
+        """Troca a foto da revisao mais recente; sem LLM e com nova aprovacao obrigatoria.
+
+        Mesmas condicoes de `attach_manual_image`: so `in_review` ou `drafting` falhado sem
+        trabalho ativo. Trocar para a mesma foto com o mesmo texto e recusado (`InvalidEdit`).
+        """
+        if self._library is None or self._kits is None:
+            raise InvalidEdit("servicos de imagem indisponiveis", ())
+        with self._session_factory.begin() as session:
+            post, base = self._open(session, brand_id, post_id, base_revision_id, _EDITABLE)
+            self._require_editable(session, post)
+            revision = recompose_photo(
                 session,
-                actor=actor,
-                base=base,
-                revision=revision,
-                feedback=feedback,
-                now=self._clock.now(),
+                post,
+                base,
+                photo_id,
+                alt_text,
+                actor,
+                self._clock.now(),
+                self._library,
+                self._kits,
             )
+            self._queue.cancel_for_post_in(session, post_id)
+            session.add(revision)
+            session.flush()
+            post.lifecycle, post.last_error = IN_REVIEW, None
+            # Ids e nunca o texto alternativo: a auditoria nao leva texto do responsavel.
+            detail = {"revision_id": revision.id, "base_revision_id": base.id, "photo_id": photo_id}
+            audit_post(session, actor, "post.swap_photo", post_id, detail, self._clock.now())
             return revision.id
 
     def retry_generation(self, brand_id: str, post_id: str, actor: str) -> None:

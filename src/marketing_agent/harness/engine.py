@@ -28,10 +28,25 @@ from marketing_agent.budget.controller import (
 from marketing_agent.clock import Clock
 from marketing_agent.config import RoleRoute
 from marketing_agent.db.models import AgentRun, AgentStep, CostEntry
+from marketing_agent.harness.image_calls import (
+    GeneratedImage,
+    ImageAllowance,
+    ImageCaller,
+    ImageStepOps,
+)
+from marketing_agent.harness.run_errors import NeedsHuman as NeedsHuman
+from marketing_agent.harness.run_errors import RunLimitExceeded as RunLimitExceeded
+from marketing_agent.harness.run_errors import StepError
 from marketing_agent.harness.spec import AgentSpec, assert_can_write
 from marketing_agent.harness.validators import VALIDATORS
+from marketing_agent.images.factory import ImageBackend
+from marketing_agent.images.generation import ImageQuality, ImageSize
+from marketing_agent.images.prompts import PromptFixo
 from marketing_agent.llm.router import LlmRouter, MissingCapability, RouteNotConfigured
 from marketing_agent.llm.types import (
+    IMAGE_CALL_TIMEOUT_S,
+    LLM_CALL_TIMEOUT_S,
+    ImagePart,
     LlmClient,
     LlmNetworkError,
     LlmRequest,
@@ -46,13 +61,38 @@ logger = logging.getLogger(__name__)
 
 MAX_INVALID_ATTEMPTS = 3  # 1 tentativa + 2 repeticoes
 NETWORK_BACKOFF_S = (1.0, 2.0)  # uma repeticao por espera
+# Folga fixa dos marcadores e do proxy de desenvolvimento sobre a duracao maxima de uma execucao:
+# esperas de rede (backoff) e a gravacao final, como os 60 s da lease dos jobs.
+CLAIM_MARGIN_S = 60.0 + sum(NETWORK_BACKOFF_S)
 MAX_ERROR_SUMMARY_CHARS = 500
 CHARS_PER_TOKEN = 3  # estimativa conservadora de tokens de entrada
+# Custo fixo por imagem na entrada: os bytes nao contam como caracteres (um JPEG de centenas de
+# KB daria centenas de milhares de tokens) e os modelos de visao cobram por mosaicos, nao por
+# bytes. Um 1080x1350 custa ~1000-1500 tokens; 2000 e um teto prudente para a reserva.
+IMAGE_INPUT_TOKENS_ESTIMATE = 2000
 
 # Validador de contexto passado por quem chama: saida tipada -> violacoes (vazio = ok).
 type ExtraValidator[M: BaseModel] = Callable[[M], list[str]]
 
-StepError = Literal["invalid_output", "refusal", "truncated", "network", "limit", "unknown_outcome"]
+
+def in_flight_call_bound_s(time_multiplier: int) -> float:
+    """Duracao maxima de UMA chamada ao fornecedor: a de texto (escalada) ou a de imagem."""
+    return max(LLM_CALL_TIMEOUT_S * time_multiplier, IMAGE_CALL_TIMEOUT_S)
+
+
+def run_overrun_bound_s(max_duration_s: float, time_multiplier: int) -> float:
+    """Pior caso de uma execucao: `max_duration_s` escalado mais uma chamada em excesso.
+
+    O motor so verifica a duracao ANTES de cada passo, por isso a ultima chamada pode passar do
+    limite: a mais lenta e a de texto (escalada pelo multiplicador) ou a de imagem (que nao escala).
+    E a formula unica de onde derivam o limiar das reservas, os marcadores e o proxy.
+    """
+    return max_duration_s * time_multiplier + in_flight_call_bound_s(time_multiplier)
+
+
+def claim_bound_s(max_duration_s: float, time_multiplier: int) -> float:
+    """`run_overrun_bound_s` mais `CLAIM_MARGIN_S`: quanto dura, no maximo, quem fez o pedido."""
+    return run_overrun_bound_s(max_duration_s, time_multiplier) + CLAIM_MARGIN_S
 
 
 class RunStatus(StrEnum):
@@ -79,18 +119,6 @@ class RunResult:
     limit: type[Exception] | None = None
 
 
-class RunLimitExceeded(Exception):
-    """Um limite cumulativo da execucao (passos, tokens ou duracao) foi atingido."""
-
-
-class NeedsHuman(Exception):
-    """A execucao nao pode continuar sozinha e precisa de decisao humana."""
-
-    def __init__(self, reason: str) -> None:
-        super().__init__(reason)
-        self.reason = reason
-
-
 @dataclass(frozen=True)
 class _Services:
     """Colaboradores partilhados por uma execucao."""
@@ -102,6 +130,8 @@ class _Services:
     store: ArtifactStore
     clock: Clock
     sleep: Callable[[float], None]
+    images: ImageBackend | None = None
+    abort_check: Callable[[], None] | None = None
 
 
 @dataclass(frozen=True)
@@ -131,11 +161,16 @@ class _Verdict[M: BaseModel]:
 
 
 def _estimate_input_tokens(system: str, messages: list[Message]) -> int:
-    """Teto grosseiro: caracteres de `system` e de todas as partes de texto, por 3 por token."""
+    """Teto grosseiro: caracteres do texto por 3 por token, mais um custo fixo por imagem."""
     chars = len(system)
+    images = 0
     for message in messages:
-        chars += sum(len(part.text) for part in message.content if isinstance(part, TextPart))
-    return -(-chars // CHARS_PER_TOKEN)  # divisao com arredondamento para cima
+        for part in message.content:
+            if isinstance(part, TextPart):
+                chars += len(part.text)
+            elif isinstance(part, ImagePart):
+                images += 1
+    return -(-chars // CHARS_PER_TOKEN) + images * IMAGE_INPUT_TOKENS_ESTIMATE
 
 
 def _summarize_validation(exc: ValidationError) -> str:
@@ -167,12 +202,14 @@ class RunContext:
         spec: AgentSpec,
         started_at: datetime,
         services: _Services,
+        image_allowance: ImageAllowance | None = None,
     ) -> None:
         self.run_id = run_id
         self.brand_id = brand_id
         self.spec = spec
         self._started_at = started_at
         self._s = services
+        self._image_allowance = image_allowance
         self._steps_done = 0
         self._tokens_used = 0
 
@@ -209,6 +246,37 @@ class RunContext:
         assert_can_write(self.spec, type)
         return self._s.store.create(
             self.brand_id, type, payload, parent_id=parent_id, produced_by_run_id=self.run_id
+        )
+
+    def generate_image(
+        self, prompt_fixo: PromptFixo, size: ImageSize, quality: ImageQuality
+    ) -> GeneratedImage:
+        """Gera uma imagem com reserva e acerto por imagem (ver `harness.image_calls`).
+
+        `ImageLimitExceeded` sem gerador, sem quota ou com a quota esgotada; `NeedsHuman` em
+        recusa, desfecho desconhecido, rede esgotada ou imagem invalida (o custo fica lancado).
+        """
+        return self._image_caller().generate(prompt_fixo, size, quality)
+
+    def _image_caller(self) -> ImageCaller:
+        steps = ImageStepOps(
+            check_limits=self._check_limits,
+            open_step=self._open_step,
+            close_step=self._close_step,
+            close_step_quietly=self._close_step_quietly,
+            unknown_if_unsettled=self._unknown_if_unsettled,
+        )
+        return ImageCaller(
+            run_id=self.run_id,
+            brand_id=self.brand_id,
+            role=self.spec.role,
+            max_cost_usd=self.spec.limits.max_cost_usd,
+            backend=self._s.images,
+            allowance=self._image_allowance,
+            budget=self._s.budget,
+            steps=steps,
+            sleep=self._s.sleep,
+            backoff_s=NETWORK_BACKOFF_S,
         )
 
     def _attempt[M: BaseModel](
@@ -289,6 +357,10 @@ class RunContext:
         ]
 
     def _check_limits(self) -> None:
+        # Antes de qualquer chamada paga (texto ou imagem): o chamador pode abortar a execucao
+        # (ex.: o worker perdeu o lock de worker unico) sem nova chamada ao fornecedor.
+        if self._s.abort_check is not None:
+            self._s.abort_check()
         limits = self.spec.limits
         if self._steps_done >= limits.max_steps:
             raise RunLimitExceeded(f"limite de {limits.max_steps} passos atingido")
@@ -302,10 +374,10 @@ class RunContext:
                 f"limite de {limits.max_duration_s} s de duracao excedido ({elapsed})"
             )
 
-    def _open_step(self, input_summary: str) -> str:
+    def _open_step(self, input_summary: str, kind: str = "llm", name: str = "call_llm") -> str:
         seq = self._steps_done + 1
         step = AgentStep(
-            run_id=self.run_id, seq=seq, kind="llm", name="call_llm", input_summary=input_summary
+            run_id=self.run_id, seq=seq, kind=kind, name=name, input_summary=input_summary
         )
         with self._s.session_factory.begin() as session:
             session.add(step)
@@ -314,9 +386,13 @@ class RunContext:
         self._steps_done = seq
         return step_id
 
-    def _close_step(self, step_id: str, error_class: StepError | None) -> None:
+    def _close_step(
+        self, step_id: str, error_class: StepError | None, output_ref: str | None = None
+    ) -> None:
         with self._s.session_factory.begin() as session:
-            session.get_one(AgentStep, step_id).error_class = error_class
+            step = session.get_one(AgentStep, step_id)
+            step.error_class = error_class
+            step.output_ref = output_ref
 
     def _reserve(self, step_id: str, input_tokens_estimate: int) -> str:
         request = ReservationRequest(
@@ -417,35 +493,73 @@ class AgentEngine:
         store: ArtifactStore,
         clock: Clock,
         sleep: Callable[[float], None] = time.sleep,
+        images: ImageBackend | None = None,
+        time_multiplier: int = 1,
+        abort_check: Callable[[], None] | None = None,
     ) -> None:
+        """Monta o motor; time_multiplier amplia apenas duracoes, de 1 a 10 vezes.
+
+        `abort_check` (opcional) corre antes de cada chamada ao fornecedor, de texto ou de imagem:
+        se levantar, a execucao termina `FAILED` sem nova chamada paga (a que ja esta em voo
+        acaba). Sem ele o comportamento e o de sempre.
+        """
         self._session_factory = session_factory
         self._router = router
         self._budget = budget
         self._store = store
         self._clock = clock
         self._sleep = sleep
+        self._images = images
+        self._abort_check = abort_check
+        if (
+            not isinstance(time_multiplier, int)
+            or isinstance(time_multiplier, bool)
+            or not 1 <= time_multiplier <= 10
+        ):
+            raise ValueError("time_multiplier deve estar entre 1 e 10")
+        self._time_multiplier = time_multiplier
+
+    def claim_duration_s(self, spec: AgentSpec) -> float:
+        """Duracao maxima de um pedido sincrono com `spec` (marcadores; ver `claim_bound_s`)."""
+        return claim_bound_s(spec.limits.max_duration_s, self._time_multiplier)
 
     def run[TIn, TOut](
-        self, spec: AgentSpec, brand_id: str, trigger: str, loop: Loop[TIn, TOut], payload: TIn
+        self,
+        spec: AgentSpec,
+        brand_id: str,
+        trigger: str,
+        loop: Loop[TIn, TOut],
+        payload: TIn,
+        *,
+        image_allowance: ImageAllowance | None = None,
     ) -> RunResult:
-        """Corre o Loop e fecha sempre o `agent_run` com o estado final e o custo somado."""
+        """Corre o Loop e fecha sempre o `agent_run` com o estado final e o custo somado.
+
+        A duracao efetiva escala com `time_multiplier`, sem alterar o spec original nem os
+        limites de passos, tokens ou custo.
+        `image_allowance` e a quota de imagens do pedido, partilhada por quem corre varias
+        execucoes dele; sem ela (ou sem `images` no motor) `generate_image` recusa.
+        """
+        spec = spec.model_copy(
+            update={
+                "limits": spec.limits.model_copy(
+                    update={"max_duration_s": spec.limits.max_duration_s * self._time_multiplier}
+                )
+            }
+        )
         try:
             client, route = self._router.resolve(spec)
         except (RouteNotConfigured, MissingCapability) as exc:
             return RunResult(RunStatus.FAILED, "", None, f"{type(exc).__name__}: {exc}")
         started_at = self._clock.now()
         run_id = self._open_run(spec, brand_id, trigger, started_at)
-        services = _Services(
-            client,
-            route,
-            self._session_factory,
-            self._budget,
-            self._store,
-            self._clock,
-            self._sleep,
-        )
         ctx = RunContext(
-            run_id=run_id, brand_id=brand_id, spec=spec, started_at=started_at, services=services
+            run_id=run_id,
+            brand_id=brand_id,
+            spec=spec,
+            started_at=started_at,
+            services=self._services(client, route),
+            image_allowance=image_allowance,
         )
         status = RunStatus.FAILED  # vale se uma BaseException interromper o Loop
         try:
@@ -454,6 +568,19 @@ class AgentEngine:
             return result
         finally:
             self._close_run(run_id, status)
+
+    def _services(self, client: LlmClient, route: RoleRoute) -> _Services:
+        return _Services(
+            client,
+            route,
+            self._session_factory,
+            self._budget,
+            self._store,
+            self._clock,
+            self._sleep,
+            self._images,
+            self._abort_check,
+        )
 
     @staticmethod
     def _execute[TIn, TOut](loop: Loop[TIn, TOut], ctx: RunContext, payload: TIn) -> RunResult:

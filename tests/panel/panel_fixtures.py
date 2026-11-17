@@ -6,9 +6,11 @@ Vive num modulo proprio (e nao num conftest) para tambem servir os testes ponta 
 
 from collections.abc import Callable
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from llm_capabilities import VISION_CAPABILITIES
 from panel_rig import (
     PEER,
     SECRET,
@@ -22,45 +24,61 @@ from panel_rig import (
 
 from marketing_agent.artifacts.store import ArtifactStore
 from marketing_agent.budget.controller import BudgetController
-from marketing_agent.budget.pricing import ModelPrice, PriceBook, PriceTier, sync_model_prices
+from marketing_agent.budget.pricing import (
+    ImagePrice,
+    ModelPrice,
+    PriceBook,
+    PriceTier,
+    sync_model_prices,
+)
 from marketing_agent.clock import FixedClock
 from marketing_agent.config import RoleRoute
 from marketing_agent.harness.engine import AgentEngine
+from marketing_agent.images.factory import ImageBackend
+from marketing_agent.images.generation import FAKE_IMAGE_MODEL, FakeImageGenerator
 from marketing_agent.interview.service import InterviewService
 from marketing_agent.llm.fake import FakeLlmClient
 from marketing_agent.llm.router import LlmRouter
 from marketing_agent.panel.app import create_app
-from marketing_agent.panel.assembly import build_content_services
+from marketing_agent.panel.assembly import build_content_services, build_media_services
 from marketing_agent.panel.queries import PanelQueries
 from marketing_agent.strategy.service import StrategyService
 
 
 @pytest.fixture
 def make_panel(
-    session_factory: Factory, clock: FixedClock, brand_id: str
+    session_factory: Factory, clock: FixedClock, brand_id: str, tmp_path: Path
 ) -> Callable[[Script], PanelRig]:
     free = PriceTier(0, Decimal(0), Decimal(0))
+    per_image = tuple(ImagePrice(q, "1024x1536", Decimal(0)) for q in ("low", "medium", "high"))
     sync_model_prices(
-        session_factory, [ModelPrice("fake", "fake-1", "v1", (free,), valid_from=VALID_FROM)]
+        session_factory,
+        [
+            ModelPrice("fake", "fake-1", "v1", (free,), valid_from=VALID_FROM),
+            ModelPrice("fake", FAKE_IMAGE_MODEL, "v1", (free,), VALID_FROM, per_image),
+        ],
     )
 
     def make(script: Script, *, peer: str = PEER) -> PanelRig:
-        settings = build_settings()
-        llm = FakeLlmClient(scripted(script))
-        route = RoleRoute(
-            provider="fake", model_id="fake-1", capabilities=frozenset({"text", "json_schema"})
-        )
+        settings = build_settings(media_dir=tmp_path / "media")
+        media = build_media_services(settings, session_factory, clock)
+        llm = FakeLlmClient(scripted(script), VISION_CAPABILITIES)
+        route = RoleRoute(provider="fake", model_id="fake-1", capabilities=VISION_CAPABILITIES)
         budget = BudgetController(
             session_factory, PriceBook(session_factory), clock, Decimal(20), (50, 80, 100)
         )
         store = ArtifactStore(session_factory, clock)
         engine = AgentEngine(
             session_factory,
-            LlmRouter({"diretor": route, "copywriter": route, "revisor": route}, {"fake": llm}),
+            LlmRouter(
+                {"diretor": route, "copywriter": route, "designer": route, "revisor": route},
+                {"fake": llm},
+            ),
             budget,
             store,
             clock,
             sleep=lambda seconds: None,
+            images=ImageBackend(FakeImageGenerator(), "fake", FAKE_IMAGE_MODEL, "medium"),
         )
         interview = InterviewService(session_factory, engine, store, settings, clock)
         strategy = StrategyService(session_factory, engine, store, clock)
@@ -74,6 +92,7 @@ def make_panel(
             brand_id=brand_id,
             queries=PanelQueries(session_factory, store),
             content=content,
+            media=media,
         )
         client = TestClient(app, client=(peer, 5000))
         return PanelRig(
@@ -90,6 +109,7 @@ def make_panel(
             settings,
             content,
             engine,
+            media,
         )
 
     return make

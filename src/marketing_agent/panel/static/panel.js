@@ -67,3 +67,29 @@
     }
   });
 })();
+
+// Kit de marca: o seletor de cor e o campo hexadecimal acompanham-se. Sem JS o campo de texto
+// (o unico com `name`) continua a funcionar sozinho; o HTMX ouve o `change` do formulario.
+(function () {
+  "use strict";
+
+  const HEX_COLOR = /^#[0-9a-fA-F]{6}$/;
+
+  document.addEventListener("input", function (event) {
+    const field = event.target;
+    if (!(field instanceof HTMLInputElement)) {
+      return;
+    }
+    if (field.type === "color" && field.dataset.campo) {
+      const textField = document.getElementById(field.dataset.campo);
+      if (textField instanceof HTMLInputElement) {
+        textField.value = field.value.toUpperCase();
+      }
+    } else if (field.dataset.seletor && HEX_COLOR.test(field.value)) {
+      const picker = document.getElementById(field.dataset.seletor);
+      if (picker instanceof HTMLInputElement) {
+        picker.value = field.value.toLowerCase();
+      }
+    }
+  });
+})();

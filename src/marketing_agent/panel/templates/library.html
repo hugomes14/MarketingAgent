@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block title %}Biblioteca de fotos{% endblock %}
+{% block content %}
+<h1>Biblioteca de fotos</h1>
+<section class="cartao">
+  <h2>Adicionar fotografia</h2>
+  <p class="nota">JPEG, PNG ou WebP estático, até 15 MB e pelo menos 1080 píxeis em cada lado.</p>
+  <form method="post" action="/biblioteca" enctype="multipart/form-data">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label for="ficheiro">Fotografia</label>
+    <input id="ficheiro" name="ficheiro" type="file" accept="image/jpeg,image/png,image/webp" required>
+    <label for="mostra">O que mostra</label>
+    <select id="mostra" name="mostra" required>
+      <option value="">Escolha uma opção</option>
+      {% for value, label in subjects.items() %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
+    </select>
+    <label for="descricao">Descrição</label>
+    <input id="descricao" name="descricao" type="text" maxlength="300" required>
+    <label for="origem">Origem</label>
+    <select id="origem" name="origem" required>
+      <option value="">Escolha uma opção</option>
+      <option value="propria">Fotografia própria</option>
+      <option value="banco_licenciado">Banco de imagens licenciado</option>
+      <option value="cliente_autorizado">Cliente com autorização</option>
+    </select>
+    <label for="licenca_nota">Nota sobre a licença (opcional)</label>
+    <input id="licenca_nota" name="licenca_nota" type="text" maxlength="300">
+    <label for="tem_autorizacao_pessoas">
+      <input id="tem_autorizacao_pessoas" name="tem_autorizacao_pessoas" type="checkbox">
+      Tenho autorização das pessoas que aparecem na fotografia.
+    </label>
+    <button type="submit">Adicionar à biblioteca</button>
+  </form>
+</section>
+<nav class="filtros-fotos" aria-label="Filtrar fotografias">
+  <a href="/biblioteca"{% if selected is none %} aria-current="page"{% endif %}>Todas</a>
+  {% for value, label in subjects.items() %}
+  <a href="/biblioteca?mostra={{ value }}"{% if selected == value %} aria-current="page"{% endif %}>{{ label }}</a>
+  {% endfor %}
+</nav>
+<div class="grelha biblioteca-fotos">
+  {% for photo in photos %}
+  <article class="cartao">
+    <img loading="lazy" src="/media/{{ photo.id }}" alt="{{ photo.descricao }}" width="{{ photo.width }}" height="{{ photo.height }}">
+    <h2>{{ photo.descricao }}</h2>
+    <p class="nota">{{ subjects[photo.mostra] }} · {{ photo.width }} × {{ photo.height }} píxeis</p>
+    {% if photo.licenca_nota %}<p>{{ photo.licenca_nota }}</p>{% endif %}
+    <form method="post" action="/biblioteca/{{ photo.id }}/desativar">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button type="submit" class="perigo">Desativar</button>
+    </form>
+  </article>
+  {% else %}
+  <p class="nota">Ainda não há fotografias nesta seleção.</p>
+  {% endfor %}
+</div>
+{% endblock %}

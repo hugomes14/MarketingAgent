@@ -912,7 +912,7 @@ def test_pages_have_no_inline_script_forms_have_csrf(make_panel: MakePanel) -> N
         assert html.count("<script") == html.count('<script src="/static/')
         assert "<style" not in html and ' style="' not in html
     html = rig.get(lote()).text
-    assert html.count("<form") == html.count('name="csrf_token"') == 4
+    assert html.count("<form") == html.count('name="csrf_token"') == 5
     assert rig.token() in html
 
 

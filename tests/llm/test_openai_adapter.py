@@ -422,3 +422,57 @@ def test_live_call() -> None:
     assert "BANANA" in response.text.upper()
     assert response.usage.output_tokens > 0
     assert response.stop_reason is StopReason.end
+
+
+def test_compatible_server_repeated_ids_do_not_identify_distinct_calls(tmp_path: Path) -> None:
+    fake = _FakeSdk(_raw("single_text"))
+    client = OpenAiClient(
+        _key_file(tmp_path),
+        _CAPS,
+        base_url="http://127.0.0.1:11434/v1",
+        sdk_client=fake,  # type: ignore[arg-type]
+    )
+    first = client.complete(_request())
+    second = client.complete(_request())
+    assert first.provider_request_id != second.provider_request_id
+    assert first.provider_request_id.endswith(":chatcmpl-Single")
+    assert second.provider_request_id.endswith(":chatcmpl-Single")
+    assert first.text == second.text and first.usage == second.usage
+
+
+@pytest.mark.parametrize(
+    "base_url", [None, "https://api.openai.com/v1", "https://eu.api.openai.com/v1"]
+)
+def test_official_provider_ids_remain_unchanged(tmp_path: Path, base_url: str | None) -> None:
+    fake = _FakeSdk(_raw("single_text"))
+    client = OpenAiClient(
+        _key_file(tmp_path),
+        _CAPS,
+        base_url=base_url,
+        sdk_client=fake,  # type: ignore[arg-type]
+    )
+    assert client.complete(_request()).provider_request_id == "chatcmpl-Single"
+
+
+def test_openai_base_url_environment_variable_also_namespaces_ids(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Sem `base_url` explicito o SDK le OPENAI_BASE_URL: um servidor local por essa via continua
+    # a ser "compativel" (ids `compat:`), sem rede (o SDK real so e construido, nunca chamado).
+    monkeypatch.setenv("OPENAI_BASE_URL", "http://127.0.0.1:11434/v1")
+    client = OpenAiClient(_key_file(tmp_path), _CAPS)
+    assert str(client._sdk.base_url).startswith("http://127.0.0.1:11434")
+    client._sdk = _FakeSdk(_raw("single_text"))  # type: ignore[assignment]
+    first, second = client.complete(_request()), client.complete(_request())
+    assert first.provider_request_id.startswith("compat:")
+    assert first.provider_request_id != second.provider_request_id
+    assert first.provider_request_id.endswith(":chatcmpl-Single")
+
+
+def test_without_base_url_or_environment_ids_stay_official(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+    client = OpenAiClient(_key_file(tmp_path), _CAPS)
+    client._sdk = _FakeSdk(_raw("single_text"))  # type: ignore[assignment]
+    assert client.complete(_request()).provider_request_id == "chatcmpl-Single"

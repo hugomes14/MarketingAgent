@@ -4,13 +4,14 @@ Os limites daqui so protegem contra saidas absurdas; os limites por canal (que d
 contexto da chamada) verificam-se em `content.validation`.
 """
 
-from typing import Annotated, Literal
+from typing import Annotated, Final, Literal, get_args
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field
 
 from marketing_agent.planning.schemas import KbRef
 
-# Nove violacoes possiveis do parecer (spec 2A, secao 5); `instrucao_suspeita` so informa.
+# Violacoes possiveis do parecer: as nove do texto (spec 2A, secao 5; `instrucao_suspeita` so
+# informa) e as cinco visuais (spec 2B, secao 7), so validas num pacote com imagem.
 Violacao = Literal[
     "alegacao_sem_apoio",
     "preco_sem_validade",
@@ -21,7 +22,26 @@ Violacao = Literal[
     "dados_pessoais",
     "instrucao_suspeita",
     "outro",
+    "pessoa_ou_produto_gerado",
+    "texto_ilegivel",
+    "marca_incoerente",
+    "imagem_inadequada",
+    "alt_text_inadequado",
 ]
+VISUAL_VIOLATIONS: Final[frozenset[Violacao]] = frozenset(
+    {
+        "pessoa_ou_produto_gerado",
+        "texto_ilegivel",
+        "marca_incoerente",
+        "imagem_inadequada",
+        "alt_text_inadequado",
+    }
+)
+# As que o Revisor deve procurar com prioridade quando o fundo e gerado por IA (regras D30).
+BACKGROUND_VIOLATIONS: Final[frozenset[Violacao]] = frozenset(
+    {"pessoa_ou_produto_gerado", "imagem_inadequada"}
+)
+MAX_VIOLATIONS: Final = len(get_args(Violacao))
 Veredicto = Literal["aprovar", "rever", "rejeitar"]
 
 # Teto de seguranca do esquema, acima do maior limite de canal (Facebook, 5000).
@@ -64,10 +84,16 @@ class RascunhoTexto(BaseModel):
 
 
 class Revisao(BaseModel):
-    """Parecer do Revisor: veredicto, violacoes do enum e notas curtas para o Copywriter."""
+    """Parecer do Revisor: veredicto, violacoes do enum e notas curtas para o Copywriter.
+
+    `imagem_verificada` e a confirmacao do modelo de que olhou para a imagem. Tem omissao falsa
+    para os pareceres so de texto do 2A; a regra exata (verdadeiro sse ha imagem no pedido) e do
+    `extra_validator` do `ReviewerLoop`, porque depende do pedido e nao do parecer sozinho.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     veredicto: Veredicto
-    violacoes: list[Violacao] = Field(max_length=9)
+    violacoes: list[Violacao] = Field(max_length=MAX_VIOLATIONS)
     notas: str = Field(max_length=1500)
+    imagem_verificada: bool = False

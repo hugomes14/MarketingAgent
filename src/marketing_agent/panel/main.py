@@ -24,7 +24,7 @@ from marketing_agent.interview.service import InterviewService
 from marketing_agent.llm.factory import build_llm_router
 from marketing_agent.llm.router import LlmRouter
 from marketing_agent.panel.app import create_app
-from marketing_agent.panel.assembly import build_content_services
+from marketing_agent.panel.assembly import build_content_services, build_media_services
 from marketing_agent.panel.context import PanelContext
 from marketing_agent.panel.queries import PanelQueries
 from marketing_agent.secrets import SecretFileError, read_secret_file
@@ -33,6 +33,7 @@ from marketing_agent.startup import (
     build_budget_controller,
     database_error_message,
     load_settings,
+    log_time_settings,
     worker_stale_after,
 )
 from marketing_agent.strategy.service import StrategyService
@@ -51,13 +52,14 @@ def create_app_from_env() -> FastAPI:
             inacessivel ou sem migracoes, ou nao haver exatamente uma marca.
     """
     settings = load_settings()
+    log_time_settings(settings, "painel")
     csrf_secret = _read_csrf_secret(settings)
     router = _build_router(settings)
     session_factory = _open_session_factory(settings)
     brand_id = _single_brand(session_factory)
     app = _assemble(settings, csrf_secret, router, session_factory, brand_id)
     panel: PanelContext = app.state.panel
-    _recover_stale_reservations(panel.budget)
+    _recover_stale_reservations(panel.budget, time_multiplier=settings.llm_time_multiplier)
     return app
 
 
@@ -72,7 +74,9 @@ def _assemble(
     clock = SystemClock()
     budget = build_budget_controller(settings, session_factory, clock)
     store = ArtifactStore(session_factory, clock)
-    engine = AgentEngine(session_factory, router, budget, store, clock)
+    engine = AgentEngine(
+        session_factory, router, budget, store, clock, time_multiplier=settings.llm_time_multiplier
+    )
     interview = InterviewService(session_factory, engine, store, settings, clock)
     strategy = StrategyService(session_factory, engine, store, clock)
     try:
@@ -87,6 +91,7 @@ def _assemble(
             content=build_content_services(
                 settings, session_factory, engine, store, strategy, clock
             ),
+            media=build_media_services(settings, session_factory, clock),
         )
     except ValueError as exc:
         raise StartupError(str(exc)) from exc
@@ -132,11 +137,11 @@ def _single_brand(session_factory: sessionmaker[Session]) -> str:
         raise StartupError(database_error_message(exc)) from None
 
 
-def _recover_stale_reservations(budget: BudgetController) -> None:
+def _recover_stale_reservations(budget: BudgetController, *, time_multiplier: int) -> None:
     """Reservas abertas ha mais do que `worker_stale_after()` pertencem a um processo morto.
 
     O mesmo limiar do worker: o painel partilha a base com ele, e uma chamada viva pode passar
     do `max_duration_s` do spec (a duracao so se verifica entre passos).
     """
-    count = budget.recover_stale(worker_stale_after())
+    count = budget.recover_stale(worker_stale_after(time_multiplier=time_multiplier))
     logger.info("arranque: %d reserva(s) aberta(s) marcada(s) como unknown_outcome", count)

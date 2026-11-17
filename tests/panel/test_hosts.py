@@ -139,6 +139,7 @@ def test_create_app_refuses_wildcard_hosts(make_panel: MakePanel) -> None:
             brand_id=rig.brand_id,
             queries=rig.app.state.panel.queries,
             content=rig.content,
+            media=rig.media,
         )
 
 
@@ -163,6 +164,7 @@ def test_panel_serves_allowed_host_variants(make_panel: MakePanel) -> None:
         brand_id=rig.brand_id,
         queries=rig.app.state.panel.queries,
         content=rig.content,
+        media=rig.media,
     )
     for host in ("127.0.0.1", "127.0.0.1:8001", "LOCALHOST:8000", "localhost."):
         response = client_with_host(rig, host).get("/", headers=rig.headers())

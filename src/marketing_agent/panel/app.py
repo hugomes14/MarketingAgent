@@ -18,11 +18,13 @@ from marketing_agent.panel import (
     routes_home,
     routes_interview,
     routes_kb,
+    routes_kit,
+    routes_media,
     routes_plan,
     routes_strategy,
 )
 from marketing_agent.panel.auth import _parse_networks
-from marketing_agent.panel.context import ContentServices, PanelContext
+from marketing_agent.panel.context import ContentServices, MediaServices, PanelContext
 from marketing_agent.panel.csrf import MIN_SECRET_BYTES
 from marketing_agent.panel.errors import install_error_handlers
 from marketing_agent.panel.hosts import AllowedHostsMiddleware, normalize_allowed_hosts
@@ -42,6 +44,7 @@ def create_app(
     brand_id: str,
     queries: PanelQueries,
     content: ContentServices,
+    media: MediaServices,
 ) -> FastAPI:
     """Monta o painel; falha no arranque se a configuracao de seguranca for invalida.
 
@@ -66,6 +69,7 @@ def create_app(
         brand_id,
         settings.max_message_chars,
         content,
+        media,
     )
     # Ordem: o ultimo adicionado e o mais externo. Os cabecalhos de seguranca envolvem o filtro
     # de Host, para tambem cobrirem as suas respostas 400.
@@ -75,6 +79,8 @@ def create_app(
     for module in (
         routes_home,
         routes_interview,
+        routes_media,
+        routes_kit,
         routes_strategy,
         routes_kb,
         routes_plan,

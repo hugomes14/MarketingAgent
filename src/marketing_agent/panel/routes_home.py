@@ -1,4 +1,4 @@
-"""Pagina inicial: estado do mes, entrevistas, versoes ativas e decisoes pendentes."""
+"""Pagina inicial: estado do mes, entrevistas, versoes ativas, kit de marca e decisoes pendentes."""
 
 from fastapi import APIRouter
 from fastapi.responses import HTMLResponse
@@ -15,5 +15,7 @@ def home(user: CurrentUser, panel: Panel) -> HTMLResponse:
         "budget": panel.budget.status(panel.brand_id),
         "snapshot": panel.queries.home_snapshot(panel.brand_id),
         "strategy": panel.strategy.active_strategy(panel.brand_id),
+        # Uma so linha (a versao mais alta): consulta limitada e da marca do painel.
+        "kit": panel.media.kits.active(panel.brand_id),
     }
     return panel.renderer.page("home.html", user, context)

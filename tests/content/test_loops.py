@@ -9,6 +9,7 @@ from datetime import UTC, date, datetime
 from decimal import Decimal
 
 import pytest
+from llm_capabilities import VISION_CAPABILITIES
 from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, sessionmaker
@@ -351,10 +352,8 @@ def make_rig(session_factory: Factory, clock: FixedClock, brand_id: str) -> Call
     )
 
     def make(script: Script) -> Rig:
-        llm = FakeLlmClient(unique(script))
-        route = RoleRoute(
-            provider="fake", model_id="fake-1", capabilities=frozenset({"text", "json_schema"})
-        )
+        llm = FakeLlmClient(unique(script), VISION_CAPABILITIES)
+        route = RoleRoute(provider="fake", model_id="fake-1", capabilities=VISION_CAPABILITIES)
         budget = BudgetController(
             session_factory, PriceBook(session_factory), clock, Decimal(20), (50, 80, 100)
         )

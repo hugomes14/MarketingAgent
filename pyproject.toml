@@ -10,9 +10,11 @@ dependencies = [
     "fastapi>=0.162.0",
     "jinja2>=3.1.6",
     "openai>=3.46.0",
+    "pillow==13.0.0",
     "psycopg[binary]>=3.3.8",
     "pydantic>=2.14.3",
     "pydantic-settings>=2.16.2",
+    "python-multipart==0.0.33",
     "pyyaml>=6.0.3",
     "sqlalchemy>=2.1.8",
     "uvicorn>=0.54.0",
@@ -29,6 +31,7 @@ build-backend = "uv_build"
 dev = [
     "httpx>=0.28.1",
     "mypy>=2.4.1",
+    "playwright>=1.65.1",
     "pytest>=9.2.0",
     "ruff>=0.17.4",
     "types-pyyaml>=6.0.12.20261103",
@@ -51,9 +54,10 @@ plugins = ["pydantic.mypy"]
 testpaths = ["tests"]
 # panel_rig/panel_fixtures sao partilhados pelos testes do painel e pelos ponta a ponta;
 # content_rig, pelos testes do pipeline, do worker e dos ponta a ponta; planning_rig, pelos
-# testes do plano semanal.
-pythonpath = ["tests/panel", "tests/content", "tests/planning"]
-addopts = "-ra --import-mode=importlib --strict-markers -m 'not live'"
+# testes do plano semanal; image_factory vive em tests/support.
+pythonpath = ["tests/panel", "tests/content", "tests/planning", "tests/support"]
+addopts = "-ra --import-mode=importlib --strict-markers -m 'not live and not browser'"
 markers = [
     "live: testes que chamam provedores reais (fora da execucao padrao)",
+    "browser: testes Chromium/Playwright, executar separadamente com -m browser",
 ]

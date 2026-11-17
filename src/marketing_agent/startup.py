@@ -24,13 +24,28 @@ from marketing_agent.agents.diretor.schemas import (
     PerfilMarca,
 )
 from marketing_agent.budget.controller import BudgetController
-from marketing_agent.budget.pricing import PriceBook
+from marketing_agent.budget.pricing import (
+    ImageUsage,
+    ModelPrice,
+    PriceBook,
+    UnknownPrice,
+    compute_image_cost_usd,
+)
 from marketing_agent.clock import Clock
-from marketing_agent.config import Settings
+from marketing_agent.config import IMAGE_ROUTE, RoleRoute, Settings
+from marketing_agent.content.design import GENERATED_SIZE
 from marketing_agent.content.specs import ContentSpecs, load_content_specs
 from marketing_agent.db.base import make_engine, make_session_factory
-from marketing_agent.harness.spec import SpecLoadError, load_agent_spec
-from marketing_agent.llm.types import LLM_CALL_TIMEOUT_S
+from marketing_agent.harness.engine import (
+    CLAIM_MARGIN_S,
+    NETWORK_BACKOFF_S,
+    in_flight_call_bound_s,
+    run_overrun_bound_s,
+)
+from marketing_agent.harness.image_calls import MAX_IMAGES_PER_REQUEST
+from marketing_agent.harness.spec import AgentSpec, SpecLoadError, load_agent_spec
+from marketing_agent.images.factory import build_image_backend
+from marketing_agent.llm.types import IMAGE_CALL_TIMEOUT_S, LLM_CALL_TIMEOUT_S
 from marketing_agent.planning.schemas import PlanoSemanal
 
 logger = logging.getLogger(__name__)
@@ -114,42 +129,178 @@ def _content_specs() -> ContentSpecs:
     try:
         return load_content_specs()
     except SpecLoadError as exc:
-        raise StartupError(f"spec do Copywriter ou do Revisor invalido: {exc}") from exc
+        raise StartupError(
+            f"spec do Copywriter, do Revisor ou do Designer invalido: {exc}"
+        ) from exc
 
 
-def _call_timeout() -> timedelta:
-    return timedelta(seconds=LLM_CALL_TIMEOUT_S)
+_SYNC_PRICES = "correr 'marketing-agent sync-prices'"
 
 
-def content_job_lease() -> timedelta:
-    """Lease de um job `generate_post`: 3 x (Copywriter + Revisor + 2 chamadas) + 60 s.
+def check_content_routes(settings: Settings, prices: PriceBook) -> None:
+    """Recusa no arranque rotas que fariam o worker faturar e depois falhar.
 
-    Um job faz ate 3 passagens (1 + 2 voltas), cada uma com um Copywriter e um Revisor. O motor
-    so verifica `max_duration_s` ANTES de cada passo: uma execucao que inicia a chamada perto do
-    limite pode correr mais `LLM_CALL_TIMEOUT_S`. Por isso cada papel soma uma chamada em
-    excesso (2 por passagem); os 60 s finais cobrem as esperas de rede e a gravacao. Com uma
-    lease mais curta outro worker reclamaria um job ainda vivo.
+    Sem isto, uma rota do Revisor sem `image_input` (ou sem preco) so falha na execucao do
+    Revisor, DEPOIS de o Copywriter ter sido faturado, e o job repete-se (3 tentativas). Para
+    cada papel de conteudo COM rota, as capacidades do spec tem de estar na rota e o modelo
+    tem de ter preco; com rota `designer_imagem`, a chave tem de existir e ter preco por imagem
+    para a qualidade configurada e o tamanho gerado. As mensagens so levam nomes (papel,
+    fornecedor, modelo, capacidades, variavel), nunca valores de segredos.
+
+    Raises:
+        StartupError: na primeira rota que falha, com uma mensagem fixa.
     """
     specs = _content_specs()
-    run_limits = specs.copywriter.limits.max_duration_s + specs.reviewer.limits.max_duration_s
-    per_pass = timedelta(seconds=run_limits) + 2 * _call_timeout()
+    routed = [
+        (spec, route)
+        for spec in (specs.copywriter, specs.reviewer, specs.designer)
+        if (route := settings.role_routes.get(spec.role)) is not None
+    ]
+    for spec, route in routed:
+        _check_capabilities(spec, route)
+    for spec, route in routed:
+        _check_text_price(spec.role, route, prices)
+    _check_image_route(settings, prices)
+
+
+def _check_capabilities(spec: AgentSpec, route: RoleRoute) -> None:
+    missing = sorted(spec.required_capabilities - route.capabilities)
+    if missing:
+        raise StartupError(
+            f"ROLE_ROUTES: a rota '{spec.role}' precisa das capacidades {missing}; "
+            "ver .env.local.example"
+        )
+
+
+def _price_or_none(prices: PriceBook, route: RoleRoute) -> ModelPrice | None:
+    try:
+        return prices.get(route.provider, route.model_id)
+    except UnknownPrice:
+        return None
+
+
+def _check_text_price(role: str, route: RoleRoute, prices: PriceBook) -> None:
+    if _price_or_none(prices, route) is None:
+        raise StartupError(
+            f"ROLE_ROUTES: a rota '{role}' ({route.provider}/{route.model_id}) nao tem preco; "
+            f"{_SYNC_PRICES}"
+        )
+
+
+def _check_image_route(settings: Settings, prices: PriceBook) -> None:
+    route = settings.role_routes.get(IMAGE_ROUTE)
+    if route is None:
+        return  # sem rota usa-se o gerador falso, de custo zero
+    try:
+        backend = build_image_backend(settings)
+    except ValueError as exc:  # a mensagem nomeia a variavel, nunca o conteudo da chave
+        raise StartupError(str(exc)) from exc
+    price = _price_or_none(prices, route)
+    where = f"a rota '{IMAGE_ROUTE}' ({route.provider}/{route.model_id})"
+    if price is None:
+        raise StartupError(f"ROLE_ROUTES: {where} nao tem preco; {_SYNC_PRICES}")
+    if not _has_image_price(price, GENERATED_SIZE, backend.quality):
+        raise StartupError(
+            f"ROLE_ROUTES: {where} nao tem preco por imagem para quality={backend.quality}, "
+            f"size={GENERATED_SIZE}; {_SYNC_PRICES}"
+        )
+
+
+def _has_image_price(price: ModelPrice, size: str, quality: str) -> bool:
+    try:
+        compute_image_cost_usd(price, ImageUsage(1, size, quality))
+    except UnknownPrice:
+        return False
+    return True
+
+
+def _call_timeout(*, time_multiplier: int) -> timedelta:
+    return timedelta(seconds=LLM_CALL_TIMEOUT_S * time_multiplier)
+
+
+def _image_call_bound() -> timedelta:
+    """Pior caso das chamadas de imagem de uma passagem do pacote.
+
+    Cada geracao possivel (`MAX_IMAGES_PER_REQUEST`) pode ser tentada `1 + len(NETWORK_BACKOFF_S)`
+    vezes (uma repeticao por falha de rede) e cada tentativa pode durar `IMAGE_CALL_TIMEOUT_S`.
+    """
+    attempts = MAX_IMAGES_PER_REQUEST * (1 + len(NETWORK_BACKOFF_S))
+    return attempts * timedelta(seconds=IMAGE_CALL_TIMEOUT_S)
+
+
+def content_job_lease(*, time_multiplier: int) -> timedelta:
+    """Lease de um job `generate_post`: 3 x (Copywriter + Designer + Revisor + chamadas) + 60 s.
+
+    `time_multiplier` escala os limites dos specs e chamadas de texto; imagem nao escala.
+    Um job faz ate 3 passagens (1 + 2 voltas), cada uma com Copywriter, Designer e Revisor. O
+    motor so verifica `max_duration_s` ANTES de cada passo: uma execucao que inicia a chamada
+    perto do limite pode correr mais `LLM_CALL_TIMEOUT_S`, por isso cada um dos tres papeis soma
+    uma chamada em excesso. A isso soma-se, por passagem, o pior caso das chamadas de imagem
+    (`_image_call_bound`: `IMAGE_CALL_TIMEOUT_S` por tentativa, com as repeticoes de rede); e um
+    limite superior folgado de proposito, porque so custa tempo de recuperacao depois de um
+    worker morto. Os 60 s finais cobrem esperas de rede e a gravacao. Com uma lease mais curta
+    outro worker reclamaria um job ainda vivo.
+    """
+    specs = _content_specs()
+    run_limits = sum(
+        spec.limits.max_duration_s for spec in (specs.copywriter, specs.designer, specs.reviewer)
+    )
+    per_pass = (
+        timedelta(seconds=run_limits * time_multiplier)
+        + 3 * _call_timeout(time_multiplier=time_multiplier)
+        + _image_call_bound()
+    )
     return 3 * per_pass + timedelta(seconds=60)
 
 
-def worker_stale_after() -> timedelta:
-    """Idade a partir da qual uma reserva aberta e de um processo morto, vista pelo worker.
-
-    A execucao mais longa possivel de QUALQUER papel (o painel partilha a base com o worker):
-    o maior `max_duration_s` mais uma chamada em excesso (`LLM_CALL_TIMEOUT_S`). Uma reserva mais
-    nova que isto pode ser de uma execucao viva do outro processo.
-    """
+def max_spec_duration_s() -> int:
+    """Maior `max_duration_s` de TODOS os specs: Diretor, Copywriter, Designer e Revisor."""
     specs = _content_specs()
-    longest = max(
+    return max(
         director_max_duration_s(),
         specs.copywriter.limits.max_duration_s,
+        specs.designer.limits.max_duration_s,
         specs.reviewer.limits.max_duration_s,
     )
-    return timedelta(seconds=longest) + _call_timeout()
+
+
+def worker_stale_after(*, time_multiplier: int) -> timedelta:
+    """Idade a partir da qual uma reserva aberta e de um processo morto, vista pelo worker.
+
+    Os tempos de texto e dos specs usam o mesmo `time_multiplier` do motor e adaptadores.
+    A execucao mais longa possivel de QUALQUER papel (o painel partilha a base com o worker):
+    o maior `max_duration_s` mais uma chamada em excesso, a mais lenta de todas (a de imagem,
+    `IMAGE_CALL_TIMEOUT_S`). Uma reserva mais nova que isto pode ser de uma execucao viva do
+    outro processo; uma reserva de imagem em voo nunca e dada como orfa.
+    """
+    return timedelta(seconds=run_overrun_bound_s(max_spec_duration_s(), time_multiplier))
+
+
+def orphan_grace(*, time_multiplier: int) -> timedelta:
+    """Espera de um job orfao antes de poder ser reclamado: uma chamada em voo mais a margem.
+
+    O worker anterior pode estar vivo mas sem o lock (ligacao perdida): enquanto a chamada
+    paga que ja tinha em voo nao terminar, um worker novo nao pode comecar a pagar o mesmo
+    job. 243 s com `time_multiplier` 1 e 663 s com 5 (`max(120 x m, 180) + 60 + 3`).
+    """
+    return timedelta(seconds=in_flight_call_bound_s(time_multiplier) + CLAIM_MARGIN_S)
+
+
+def log_time_settings(settings: Settings, process: str) -> None:
+    """Regista (so nomes e numeros) o multiplicador e os tempos que dele derivam.
+
+    O painel e o worker tem de usar o mesmo `LLM_TIME_MULTIPLIER`: comparar estas linhas do
+    arranque de cada processo mostra uma deriva (o de multiplicador menor daria como orfa a
+    reserva viva do outro).
+    """
+    multiplier = settings.llm_time_multiplier
+    logger.info(
+        "%s: LLM_TIME_MULTIPLIER=%d, lease do job=%d s, limiar das reservas=%d s",
+        process,
+        multiplier,
+        content_job_lease(time_multiplier=multiplier).total_seconds(),
+        worker_stale_after(time_multiplier=multiplier).total_seconds(),
+    )
 
 
 def database_error_message(exc: SQLAlchemyError) -> str:

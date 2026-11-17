@@ -1,7 +1,7 @@
 """Tipos do contrato LLM: pedido, resposta, cliente e erros de transporte."""
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Literal, Protocol
 
@@ -12,6 +12,9 @@ from marketing_agent.config import Capability
 # de cada passo, por isso uma execucao pode ultrapassa-lo ate este valor: a lease dos jobs e o
 # limiar de reservas orfas somam-no (ver `startup`).
 LLM_CALL_TIMEOUT_S = 120.0
+# Timeout de UMA chamada de geracao de imagem (adaptador de imagens). Uma imagem e mais lenta do
+# que uma resposta de texto; a lease dos jobs e o limiar de reservas orfas somam-no (ver `startup`).
+IMAGE_CALL_TIMEOUT_S = 180.0
 
 
 @dataclass(frozen=True)
@@ -26,7 +29,8 @@ class ImagePart:
     """Imagem de entrada, em bytes, com o tipo MIME (ex.: image/png)."""
 
     media_type: str
-    data: bytes
+    # Fora do `repr`: um pedido registado por engano nao deve despejar a imagem.
+    data: bytes = field(repr=False)
 
 
 ContentPart = TextPart | ImagePart
@@ -66,6 +70,7 @@ class LlmResponse:
 
     text: str
     usage: Usage
+    # Id do fornecedor; servidores compativeis sem unicidade global usam namespace local.
     provider_request_id: str | None
     resolved_model: str
     stop_reason: StopReason

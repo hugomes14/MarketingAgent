@@ -81,7 +81,9 @@ def rig() -> Iterator[Rig]:
     state = Rig(proxy_port=0, upstream_port=upstream.server_address[1])
     UpstreamHandler.rig = state
     _serve(upstream)
-    proxy = build_dev_proxy(("127.0.0.1", 0), ("127.0.0.1", state.upstream_port), LOGIN, "Dono")
+    proxy = build_dev_proxy(
+        ("127.0.0.1", 0), ("127.0.0.1", state.upstream_port), LOGIN, "Dono", time_multiplier=1
+    )
     state.proxy_port = proxy.server_address[1]
     _serve(proxy)
     yield state
@@ -186,7 +188,9 @@ def test_unreachable_upstream_is_502_with_short_message() -> None:
     probe = ThreadingHTTPServer(("127.0.0.1", 0), UpstreamHandler)
     dead_port = probe.server_address[1]
     probe.server_close()
-    proxy = build_dev_proxy(("127.0.0.1", 0), ("127.0.0.1", dead_port), LOGIN, None)
+    proxy = build_dev_proxy(
+        ("127.0.0.1", 0), ("127.0.0.1", dead_port), LOGIN, None, time_multiplier=1
+    )
     _serve(proxy)
     try:
         response, body = request(proxy.server_address[1])
@@ -205,12 +209,12 @@ def test_oversized_request_body_is_413(rig: Rig) -> None:
 
 def test_build_refuses_non_loopback_listen() -> None:
     with pytest.raises(ValueError, match="loopback"):
-        build_dev_proxy(("0.0.0.0", 0), ("127.0.0.1", 8000), LOGIN, None)
+        build_dev_proxy(("0.0.0.0", 0), ("127.0.0.1", 8000), LOGIN, None, time_multiplier=1)
 
 
 def test_build_refuses_non_loopback_upstream() -> None:
     with pytest.raises(ValueError, match="loopback"):
-        build_dev_proxy(("127.0.0.1", 0), ("192.168.1.5", 8000), LOGIN, None)
+        build_dev_proxy(("127.0.0.1", 0), ("192.168.1.5", 8000), LOGIN, None, time_multiplier=1)
 
 
 @pytest.mark.parametrize("login", ["", "a\nb@x", "a\x00@x", "x" * 255, "joão@x", "a\tb"])
@@ -321,9 +325,23 @@ def test_ambiguous_framing_is_400(rig: Rig, extra: bytes) -> None:
 
 
 def test_timeouts_come_from_configuration() -> None:
-    proxy = build_dev_proxy(("127.0.0.1", 0), ("127.0.0.1", 9), LOGIN, None)
+    proxy = build_dev_proxy(("127.0.0.1", 0), ("127.0.0.1", 9), LOGIN, None, time_multiplier=1)
     try:
-        assert proxy.upstream_timeout == director_max_duration_s() + 30
         assert proxy.RequestHandlerClass.timeout == 30  # type: ignore[attr-defined]
+    finally:
+        proxy.server_close()
+
+
+@pytest.mark.parametrize(("multiplier", "expected_s"), [(1, 483.0), (5, 1863.0)])
+def test_upstream_timeout_scales_with_the_time_multiplier(
+    multiplier: int, expected_s: float
+) -> None:
+    # Diretor 240 s: 240 x m + max(120 x m, 180) + 60 + (1 + 2) de margem fixa.
+    assert director_max_duration_s() == 240
+    proxy = build_dev_proxy(
+        ("127.0.0.1", 0), ("127.0.0.1", 9), LOGIN, None, time_multiplier=multiplier
+    )
+    try:
+        assert proxy.upstream_timeout == expected_s
     finally:
         proxy.server_close()

@@ -1,9 +1,8 @@
-"""Pedidos de proposta ao Diretor: marcador de pedido em curso e recusa de proposta pendente.
+"""Pedidos de proposta ao Diretor com marcador de exclusao por marca e tipo.
 
-Partilhado pelos servicos de estrategia e de plano. O marcador vive em `system_flag` e impede
-duas geracoes simultaneas da mesma proposta; caduca ao fim de `max_duration_s` do spec, para
-que um processo que morreu a meio nao bloqueie a marca para sempre. A chamada ao motor (e ao
-fornecedor) corre sempre fora de qualquer transacao.
+O marcador em system_flag dura a execucao efetiva mais a ultima chamada em excesso.
+Impede propostas simultaneas e permite recuperar depois de um processo morrer.
+Chamadas ao motor e ao fornecedor correm fora de qualquer transacao.
 """
 
 import logging
@@ -106,7 +105,7 @@ class ProposalRunner:
         `only_pending_where` restringe a recusa de proposta pendente (ex.: a mesma semana).
         """
         key = marker_key(brand_id, type, scope)
-        token = self._claim(key, spec.limits.max_duration_s)
+        token = self._claim(key, self._engine.claim_duration_s(spec))
         try:
             # Depois de reclamar: so uma execucao de cada vez ve se ja ha proposta submetida.
             self._refuse_if_pending(brand_id, type, only_pending_where)
@@ -143,7 +142,7 @@ class ProposalRunner:
         if pending is not None:
             raise PendingProposal(f"ja existe um {type.value} submetido a aguardar decisao")
 
-    def _claim(self, key: str, max_duration_s: int) -> str:
+    def _claim(self, key: str, max_duration_s: float) -> str:
         """Reclama `key` se livre ou caducada; senao recusa."""
         now = self._clock.now()
         token = new_id()

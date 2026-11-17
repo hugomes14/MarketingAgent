@@ -158,6 +158,7 @@ def build_with(
             brand_id=rig.brand_id,
             queries=PanelQueries(factory, store),
             content=rig.content,
+            media=rig.media,
         )
 
     return build

@@ -7,8 +7,11 @@ de transporte e partilhada (`transport_errors`). O SDK e criado sem repeticoes a
 
 import base64
 from collections.abc import Mapping
+from dataclasses import replace
 from pathlib import Path
 from typing import Literal
+from urllib.parse import urlsplit
+from uuid import uuid4
 
 import openai
 from openai.types.chat import (
@@ -202,6 +205,11 @@ class OpenAiClient:
         self._system_role = system_role
         key = read_secret_file(api_key_file)
         self._sdk = sdk_client or _build_sdk(key, timeout_s, base_url)
+        effective_url = base_url or str(getattr(self._sdk, "base_url", "https://api.openai.com/v1"))
+        host = urlsplit(effective_url).hostname
+        self._namespace_response_ids = host is not None and not (
+            host == "api.openai.com" or host.endswith(".api.openai.com")
+        )
 
     def complete(self, request: LlmRequest) -> LlmResponse:
         """Envia o pedido; falhas classificaveis viram `LlmNetworkError`/`LlmUnknownOutcome`.
@@ -229,7 +237,15 @@ class OpenAiClient:
                 raise
             # So o nome da classe: a mensagem do SDK pode ecoar partes do pedido.
             raise error_type(f"falha de transporte OpenAI: {type(exc).__name__}") from exc
-        return to_llm_response(completion.to_dict())
+        response = to_llm_response(completion.to_dict())
+        if self._namespace_response_ids:
+            # Ollama pode repetir ids curtos entre chamadas/modelos. A reserva continua a
+            # garantir idempotencia; o id local distingue chamadas realmente distintas e
+            # preserva o id original como sufixo para correlacao, sem relaxar a UNIQUE da base.
+            response = replace(
+                response, provider_request_id=f"compat:{uuid4().hex}:{response.provider_request_id}"
+            )
+        return response
 
 
 def _build_sdk(api_key: str, timeout_s: float, base_url: str | None) -> openai.OpenAI:

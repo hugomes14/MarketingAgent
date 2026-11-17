@@ -23,6 +23,8 @@ from marketing_agent.content.review_errors import (
     StaleRevision,
 )
 from marketing_agent.feedback.service import FeedbackError
+from marketing_agent.images.codec import ImageRejected
+from marketing_agent.images.layouts import LayoutError
 from marketing_agent.interview.service import (
     InterviewStartFailed,
     InvalidAnswer,
@@ -33,6 +35,8 @@ from marketing_agent.interview.service import (
     SubmissionConflict,
 )
 from marketing_agent.kb.service import KbError
+from marketing_agent.media.brand_kit import KitError
+from marketing_agent.media.library import AssetNotFound, MediaError
 from marketing_agent.panel.rendering import Renderer
 from marketing_agent.panel.security import apply_security_headers
 from marketing_agent.planning.errors import ConfirmationRequired
@@ -101,12 +105,19 @@ _RESPONSES: Final[dict[type[Exception], tuple[int, str]]] = {
     ),
     InvalidPostState: (409, f"Esta publicação já não aceita esta ação. {RELOAD_HINT}"),
     InvalidComment: (422, "O comentário está vazio ou é demasiado longo."),
+    # Cobre tambem `InvalidLayoutInput`, `TitleTooLong` e `TitleDoesNotFit` (subclasses).
+    LayoutError: (
+        422,
+        "Não foi possível compor a imagem: o título não cabe no layout ou a imagem não é válida.",
+    ),
     FeedbackError: (
         422,
         "Não foi possível guardar o feedback: confira o tipo, a data de validade e a nota.",
     ),
     SessionNotFound: (404, NOT_FOUND_MESSAGE),
     ArtifactNotFound: (404, NOT_FOUND_MESSAGE),
+    AssetNotFound: (404, NOT_FOUND_MESSAGE),
+    MediaError: (422, "Dados de media inválidos."),
     ProfileRequestFailed: (502, UPSTREAM_MESSAGE),
     InterviewStartFailed: (502, UPSTREAM_MESSAGE),
     UpstreamFailure: (502, UPSTREAM_MESSAGE),
@@ -138,7 +149,7 @@ class _ErrorHandlers:
         return self.respond(request, status_code, message)
 
     async def invalid_form(self, request: Request, exc: Exception) -> Response:
-        """Formulario invalido: a mensagem de `InvalidForm` e fixa e segura."""
+        """Formulario, imagem ou kit invalidos: mensagem fixa e segura do dominio."""
         logger.info("painel: formulario invalido %s", request.url.path)
         return self.respond(request, 422, str(exc))
 
@@ -171,6 +182,9 @@ def install_error_handlers(app: FastAPI, renderer: Renderer) -> None:
     for exception_type in _RESPONSES:
         app.add_exception_handler(exception_type, handlers.domain_error)
     app.add_exception_handler(InvalidForm, handlers.invalid_form)
+    app.add_exception_handler(ImageRejected, handlers.invalid_form)
+    # As mensagens do `KitError` sao fixas ou so citam a razao calculada (nunca texto submetido).
+    app.add_exception_handler(KitError, handlers.invalid_form)
     app.add_exception_handler(InvalidEdit, handlers.invalid_edit)
     app.add_exception_handler(RequestValidationError, handlers.validation)
     app.add_exception_handler(HTTPException, handlers.http)

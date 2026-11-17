@@ -1,9 +1,9 @@
 """Fila de trabalhos em Postgres: reclamacao exclusiva, lease, tentativas e cancelamento.
 
-A fila nao conhece o conteudo dos payloads (exceto o `post_id` de `generate_post`, em
-`cancel_for_post_in`). Cada operacao e uma transacao curta; nenhum lock e mantido enquanto o
-worker trabalha. A posse de um job prova-se pelo `lease_token`: quem o perde (lease expirada,
-job cancelado) nao consegue concluir nem falhar o job.
+A fila nao conhece o conteudo dos payloads (exceto o `post_id` dos jobs de um post, em
+`has_active_for_post_in` e `cancel_for_post_in`). Cada operacao e uma transacao curta; nenhum
+lock e mantido enquanto o worker trabalha. A posse de um job prova-se pelo `lease_token`: quem
+o perde (lease expirada, job cancelado) nao consegue concluir nem falhar o job.
 """
 
 from collections.abc import Mapping
@@ -20,9 +20,13 @@ from marketing_agent.db.base import new_id
 from marketing_agent.db.models import ACTIVE_JOB_PREDICATE_SQL, ACTIVE_JOB_STATUSES, Job, Post
 
 GENERATE_POST_JOB = "generate_post"
+REVIEW_POST_JOB = "review_post"
+# Jobs que escrevem uma revisao de um post: ambos bloqueiam e sao cancelados pelas acoes do dono.
+POST_JOB_TYPES = (GENERATE_POST_JOB, REVIEW_POST_JOB)
 RETRY_BACKOFF = timedelta(seconds=30)  # espera = RETRY_BACKOFF x tentativas ja feitas
 MAX_ERROR_CHARS = 200
 _LEASE_EXPIRED_ERROR = "LeaseExpired: lease expirada sem conclusao"
+_ORPHANED_ERROR = "WorkerLost: o worker anterior terminou sem concluir o job"
 _ACTIVE_FILTER = text(ACTIVE_JOB_PREDICATE_SQL)
 # Campos limpos sempre que o job deixa de estar em posse de um worker.
 _RELEASED_LOCK = {"locked_by": None, "locked_until": None, "lease_token": None}
@@ -44,10 +48,10 @@ def truncate_error(message: str) -> str:
     return " ".join(message.split())[:MAX_ERROR_CHARS]
 
 
-def _active_generate_post(post_id: str) -> tuple[ColumnElement[bool], ...]:
-    """Condicoes dos `generate_post` ativos de `post_id` (`post_id` segue como parametro)."""
+def _active_post_jobs(post_id: str) -> tuple[ColumnElement[bool], ...]:
+    """Condicoes dos jobs ativos de `post_id` (`POST_JOB_TYPES`: geracao e revisao visual)."""
     return (
-        Job.type == GENERATE_POST_JOB,
+        Job.type.in_(POST_JOB_TYPES),
         Job.status.in_(ACTIVE_JOB_STATUSES),
         Job.payload["post_id"].astext == post_id,
     )
@@ -178,27 +182,57 @@ class JobQueue:
         Os posts dos que ficam `dead` e ainda estao `drafting` recebem `last_error` fixo (senao
         ficavam em geracao para sempre). Ordem dos locks: posts primeiro, depois os jobs.
         """
+        return self._requeue_running(expired_only=True, error=_LEASE_EXPIRED_ERROR, grace=None)
+
+    def requeue_orphans(self, *, grace: timedelta) -> int:
+        """Devolve a `queued` (ou `dead`) TODOS os jobs de post `running`, mesmo com lease viva.
+
+        So e correto com o lock do worker unico tomado (`jobs.singleton`): o painel nunca
+        reclama jobs, por isso um `running` e de um worker que morreu. Mantem `attempts` (a
+        tentativa foi gasta na reclamacao) e trata posts e locks como `requeue_expired`. NAO toca
+        nas reservas de custo: as do worker morto continuam a contar (a quota de imagens deriva
+        da base) ate ao limiar de recuperacao, para nunca libertar dinheiro de uma chamada que
+        pode ter sido faturada.
+
+        Os que voltam a `queued` so podem ser reclamados depois de `grace` (ver
+        `startup.orphan_grace`, que a deriva do multiplicador de tempos): se o worker
+        anterior ainda esta vivo (perdeu o lock mas nao morreu), a chamada paga em voo tem de
+        terminar antes de outro comecar o mesmo job.
+        """
+        return self._requeue_running(expired_only=False, error=_ORPHANED_ERROR, grace=grace)
+
+    def _requeue_running(self, *, expired_only: bool, error: str, grace: timedelta | None) -> int:
+        """Recoloca os `running` candidatos; devolve quantos mudaram de estado."""
         now = self._clock.now()
         with self._session_factory.begin() as session:
-            expired = self._expired_running(session, now)
-            if not expired:
+            candidates = self._running_candidates(session, now, expired_only)
+            if not candidates:
                 return 0
-            self._lock_posts(session, {post_id for _, post_id in expired if post_id})
-            updated = self._requeue(session, [job_id for job_id, _ in expired], now)
+            self._lock_posts(session, {post_id for _, post_id in candidates if post_id})
+            updated = self._requeue(
+                session, [job_id for job_id, _ in candidates], now, error, expired_only, grace
+            )
             self._mark_posts_failed(
                 session,
                 {
                     post_id
-                    for job_id, post_id in expired
+                    for job_id, post_id in candidates
                     if post_id and updated.get(job_id) == "dead"
                 },
+                error,
             )
             return len(updated)
 
-    def _expired_running(self, session: Session, now: datetime) -> list[tuple[str, str | None]]:
-        statement = select(Job.id, Job.payload["post_id"].astext).where(
-            Job.status == "running", Job.locked_until < now
-        )
+    @staticmethod
+    def _running_candidates(
+        session: Session, now: datetime, expired_only: bool
+    ) -> list[tuple[str, str | None]]:
+        """`running` com lease vencida (qualquer tipo) ou, sem `expired_only`, de tipo de post."""
+        statement = select(Job.id, Job.payload["post_id"].astext).where(Job.status == "running")
+        if expired_only:
+            statement = statement.where(Job.locked_until < now)
+        else:
+            statement = statement.where(Job.type.in_(POST_JOB_TYPES))
         return [(job_id, post_id) for job_id, post_id in session.execute(statement)]
 
     @staticmethod
@@ -207,35 +241,56 @@ class JobQueue:
         statement = select(Post.id).where(Post.id.in_(sorted(post_ids))).order_by(Post.id)
         session.execute(statement.with_for_update()).all()
 
-    def _requeue(self, session: Session, job_ids: list[str], now: datetime) -> dict[str, str]:
-        """Aplica a recolocacao aos candidatos (que continuem vencidos); devolve id -> estado."""
+    @staticmethod
+    def _requeue(
+        session: Session,
+        job_ids: list[str],
+        now: datetime,
+        error: str,
+        expired_only: bool,
+        grace: timedelta | None,
+    ) -> dict[str, str]:
+        """Aplica a recolocacao aos candidatos (ainda `running` e, se pedido, vencidos).
+
+        Primeiro bloqueia as linhas dos jobs por ordem de id (depois dos posts), para duas
+        transacoes iguais nunca se esperarem em ciclo; so depois atualiza.
+        """
+        conditions = [Job.id.in_(job_ids), Job.status == "running"]
+        if expired_only:
+            conditions.append(Job.locked_until < now)
+        locked = session.execute(
+            select(Job.id).where(*conditions).order_by(Job.id).with_for_update()
+        ).scalars()
         exhausted = Job.attempts >= Job.max_attempts
+        values: dict[str, object] = {
+            "status": case((exhausted, "dead"), else_="queued"),
+            "last_error": error,
+            "updated_at": now,
+            **_RELEASED_LOCK,
+        }
+        if grace is not None:
+            values["run_at"] = now + grace  # `claim` so reclama com `run_at` vencido
         statement = (
             update(Job)
-            .where(Job.id.in_(job_ids), Job.status == "running", Job.locked_until < now)
-            .values(
-                status=case((exhausted, "dead"), else_="queued"),
-                last_error=_LEASE_EXPIRED_ERROR,
-                updated_at=now,
-                **_RELEASED_LOCK,
-            )
+            .where(Job.id.in_(list(locked)))
+            .values(**values)
             .returning(Job.id, Job.status)
         )
         return {job_id: status for job_id, status in session.execute(statement)}
 
     @staticmethod
-    def _mark_posts_failed(session: Session, post_ids: set[str]) -> None:
+    def _mark_posts_failed(session: Session, post_ids: set[str], error: str) -> None:
         """`last_error` fixo nos posts ainda `drafting` (os outros ja seguiram a sua vida)."""
         statement = (
             update(Post)
             .where(Post.id.in_(post_ids), Post.lifecycle == "drafting")
-            .values(last_error=_LEASE_EXPIRED_ERROR)
+            .values(last_error=error)
         )
         session.execute(statement)
 
     def has_active_for_post_in(self, session: Session, post_id: str) -> bool:
-        """Ha um `generate_post` `queued` ou `running` do post? Leitura na transacao do chamador."""
-        statement = select(Job.id).where(*_active_generate_post(post_id)).limit(1)
+        """Ha um `generate_post` ou `review_post` ativo (`queued`/`running`) do post? Sem lock."""
+        statement = select(Job.id).where(*_active_post_jobs(post_id)).limit(1)
         return session.execute(statement).first() is not None
 
     def latest_generate_payload_in(self, session: Session, post_id: str) -> Mapping[str, object]:
@@ -252,13 +307,13 @@ class JobQueue:
         return session.execute(statement).scalar_one_or_none() or {}
 
     def cancel_for_post_in(self, session: Session, post_id: str) -> int:
-        """Cancela os `generate_post` ativos do post na transacao do chamador; devolve quantos.
+        """Cancela os `generate_post` e `review_post` ativos do post; devolve quantos.
 
         Limpar o `lease_token` impede que um worker a meio do job o conclua depois.
         """
         statement = (
             update(Job)
-            .where(*_active_generate_post(post_id))
+            .where(*_active_post_jobs(post_id))
             .values(status="cancelled", updated_at=self._clock.now(), **_RELEASED_LOCK)
             .returning(Job.id)
         )
