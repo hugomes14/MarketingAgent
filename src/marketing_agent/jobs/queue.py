@@ -23,6 +23,10 @@ GENERATE_POST_JOB = "generate_post"
 REVIEW_POST_JOB = "review_post"
 # Jobs que escrevem uma revisao de um post: ambos bloqueiam e sao cancelados pelas acoes do dono.
 POST_JOB_TYPES = (GENERATE_POST_JOB, REVIEW_POST_JOB)
+# Pacote da comparacao (Plano 2C): NAO tem post. Fica fora de `POST_JOB_TYPES` (as acoes do dono
+# nao o veem nem o cancelam), cede a vez aos jobs de post em `claim` e e recuperado como eles.
+EVAL_PACKAGE_JOB = "eval_package"
+RECOVERABLE_JOB_TYPES = (*POST_JOB_TYPES, EVAL_PACKAGE_JOB)
 RETRY_BACKOFF = timedelta(seconds=30)  # espera = RETRY_BACKOFF x tentativas ja feitas
 MAX_ERROR_CHARS = 200
 _LEASE_EXPIRED_ERROR = "LeaseExpired: lease expirada sem conclusao"
@@ -103,12 +107,16 @@ class JobQueue:
         return session.execute(statement).scalar_one_or_none()
 
     def claim(self, worker_id: str) -> ClaimedJob | None:
-        """Reclama o job `queued` mais antigo com `run_at` vencido; `None` se nao houver."""
+        """Reclama o job `queued` mais antigo com `run_at` vencido; `None` se nao houver.
+
+        Os jobs de avaliacao so passam a frente se nao ha nenhum outro pronto: um lote semanal
+        nunca espera por uma corrida da comparacao (o job em curso, esse, termina primeiro).
+        """
         now = self._clock.now()
         statement = (
             select(Job)
             .where(Job.status == "queued", Job.run_at <= now)
-            .order_by(Job.run_at, Job.created_at)
+            .order_by(case((Job.type == EVAL_PACKAGE_JOB, 1), else_=0), Job.run_at, Job.created_at)
             .limit(1)
             .with_for_update(skip_locked=True)
         )
@@ -180,12 +188,13 @@ class JobQueue:
         """Devolve a `queued` (ou `dead`, se esgotou) os `running` com lease vencida; conta-os.
 
         Os posts dos que ficam `dead` e ainda estao `drafting` recebem `last_error` fixo (senao
-        ficavam em geracao para sempre). Ordem dos locks: posts primeiro, depois os jobs.
+        ficavam em geracao para sempre). Ordem dos locks: posts primeiro, depois os jobs. Um item
+        de avaliacao cujo job fica `dead` e fechado pelo `reconcile` do tratador de avaliacao.
         """
         return self._requeue_running(expired_only=True, error=_LEASE_EXPIRED_ERROR, grace=None)
 
     def requeue_orphans(self, *, grace: timedelta) -> int:
-        """Devolve a `queued` (ou `dead`) TODOS os jobs de post `running`, mesmo com lease viva.
+        """Devolve a `queued` (ou `dead`) TODOS os jobs de post e de avaliacao `running`.
 
         So e correto com o lock do worker unico tomado (`jobs.singleton`): o painel nunca
         reclama jobs, por isso um `running` e de um worker que morreu. Mantem `attempts` (a
@@ -227,17 +236,26 @@ class JobQueue:
     def _running_candidates(
         session: Session, now: datetime, expired_only: bool
     ) -> list[tuple[str, str | None]]:
-        """`running` com lease vencida (qualquer tipo) ou, sem `expired_only`, de tipo de post."""
+        """`running` com lease vencida (qualquer tipo) ou, sem `expired_only`, de tipo recuperavel.
+
+        Os jobs de avaliacao nao tem `post_id` (a segunda coluna vem `None`): nao ha post a
+        bloquear, por isso a ordem posts -> jobs dos jobs de post mantem-se.
+        """
         statement = select(Job.id, Job.payload["post_id"].astext).where(Job.status == "running")
         if expired_only:
             statement = statement.where(Job.locked_until < now)
         else:
-            statement = statement.where(Job.type.in_(POST_JOB_TYPES))
+            statement = statement.where(Job.type.in_(RECOVERABLE_JOB_TYPES))
         return [(job_id, post_id) for job_id, post_id in session.execute(statement)]
 
     @staticmethod
     def _lock_posts(session: Session, post_ids: set[str]) -> None:
-        """Bloqueia os posts por ordem de id (sem ciclos entre transacoes iguais)."""
+        """Bloqueia os posts por ordem de id (sem ciclos entre transacoes iguais).
+
+        Sem posts (jobs de avaliacao, ou de outros tipos) nem sequer se consulta a tabela.
+        """
+        if not post_ids:
+            return
         statement = select(Post.id).where(Post.id.in_(sorted(post_ids))).order_by(Post.id)
         session.execute(statement.with_for_update()).all()
 
@@ -281,6 +299,8 @@ class JobQueue:
     @staticmethod
     def _mark_posts_failed(session: Session, post_ids: set[str], error: str) -> None:
         """`last_error` fixo nos posts ainda `drafting` (os outros ja seguiram a sua vida)."""
+        if not post_ids:
+            return
         statement = (
             update(Post)
             .where(Post.id.in_(post_ids), Post.lifecycle == "drafting")

@@ -45,7 +45,9 @@ from marketing_agent.harness.engine import (
 from marketing_agent.harness.image_calls import MAX_IMAGES_PER_REQUEST
 from marketing_agent.harness.spec import AgentSpec, SpecLoadError, load_agent_spec
 from marketing_agent.images.factory import build_image_backend
+from marketing_agent.llm.router import ROUTE_FALLBACKS
 from marketing_agent.llm.types import IMAGE_CALL_TIMEOUT_S, LLM_CALL_TIMEOUT_S
+from marketing_agent.oficina.papeis import Papel
 from marketing_agent.planning.schemas import PlanoSemanal
 
 logger = logging.getLogger(__name__)
@@ -115,6 +117,32 @@ def build_budget_controller(
 
 def director_max_duration_s() -> int:
     """Maior `max_duration_s` entre os specs do Diretor (limiar de recuperacao no arranque)."""
+    return role_max_durations()["diretor"]
+
+
+def role_max_durations() -> dict[Papel, int]:
+    """Maior limite nominal de cada papel; o chamador aplica LLM_TIME_MULTIPLIER do processo."""
+    content = _content_specs()
+    return {
+        "diretor": _director_spec_duration_s(),
+        "copywriter": content.copywriter.limits.max_duration_s,
+        "designer": content.designer.limits.max_duration_s,
+        "revisor": content.reviewer.limits.max_duration_s,
+    }
+
+
+def role_run_bounds_s(*, time_multiplier: int) -> dict[Papel, float]:
+    """Pior caso de uma execucao viva por papel, a formula do motor (inclui uma chamada em voo).
+
+    E o limiar a partir do qual a oficina deixa de dar uma execucao `running` como viva.
+    """
+    return {
+        p: run_overrun_bound_s(seconds, time_multiplier)
+        for p, seconds in role_max_durations().items()
+    }
+
+
+def _director_spec_duration_s() -> int:
     paths = sorted(DIRETOR_DIR.glob("spec_*.yaml"))
     if not paths:
         raise StartupError(f"nenhum spec do Diretor encontrado em {DIRETOR_DIR}")
@@ -147,6 +175,10 @@ def check_content_routes(settings: Settings, prices: PriceBook) -> None:
     para a qualidade configurada e o tamanho gerado. As mensagens so levam nomes (papel,
     fornecedor, modelo, capacidades, variavel), nunca valores de segredos.
 
+    O papel `simples` da comparacao (Plano 2C) nao e verificado aqui: nao e papel do worker e,
+    sem rota propria, usa a do Copywriter (`llm.router.ROUTE_FALLBACKS`), que ja e verificada.
+    O inicio de uma corrida de avaliacao verifica-o com `check_simple_route`.
+
     Raises:
         StartupError: na primeira rota que falha, com uma mensagem fixa.
     """
@@ -161,6 +193,28 @@ def check_content_routes(settings: Settings, prices: PriceBook) -> None:
     for spec, route in routed:
         _check_text_price(spec.role, route, prices)
     _check_image_route(settings, prices)
+
+
+def check_simple_route(settings: Settings, prices: PriceBook) -> None:
+    """Recusa uma corrida de avaliacao cuja rota `simples` nao serve ou nao tem preco.
+
+    Usa a rota `simples` se existir; senao a do Copywriter (`llm.router.ROUTE_FALLBACKS`), sem
+    exigir uma rota propria. Verifica as capacidades do spec `simples` (texto e `json_schema`)
+    contra a rota que o motor vai usar e que o modelo tem preco. So nomes nas mensagens.
+
+    Raises:
+        StartupError: sem rota utilizavel, com capacidades em falta ou sem preco.
+    """
+    spec = _content_specs().simple
+    route = settings.role_routes.get(spec.role)
+    if route is None:
+        route = settings.role_routes.get(ROUTE_FALLBACKS[spec.role])
+    if route is None:
+        raise StartupError(
+            f"ROLE_ROUTES: faltam a rota '{spec.role}' e a do '{ROUTE_FALLBACKS[spec.role]}'"
+        )
+    _check_capabilities(spec, route)
+    _check_text_price(spec.role, route, prices)
 
 
 def _check_capabilities(spec: AgentSpec, route: RoleRoute) -> None:
@@ -255,13 +309,7 @@ def content_job_lease(*, time_multiplier: int) -> timedelta:
 
 def max_spec_duration_s() -> int:
     """Maior `max_duration_s` de TODOS os specs: Diretor, Copywriter, Designer e Revisor."""
-    specs = _content_specs()
-    return max(
-        director_max_duration_s(),
-        specs.copywriter.limits.max_duration_s,
-        specs.designer.limits.max_duration_s,
-        specs.reviewer.limits.max_duration_s,
-    )
+    return max(role_max_durations().values())
 
 
 def worker_stale_after(*, time_multiplier: int) -> timedelta:

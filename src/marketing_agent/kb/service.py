@@ -192,6 +192,20 @@ class KbService:
         with self._session_factory() as session:
             return {row.id: _to_entry(row) for row in session.scalars(statement)}
 
+    def entries_by_ids(self, brand_id: str, ids: Sequence[str]) -> dict[str, KbEntry]:
+        """Itens da marca com estes ids, ativos ou nao, validos ou nao, na ordem de `ids`.
+
+        Serve a quem fixou ids num instante (corrida de avaliacao) e tem de reler exatamente
+        esses itens depois, mesmo desativados ou expirados entretanto. Ids de outra marca ou
+        inexistentes ficam de fora.
+        """
+        if not ids:
+            return {}
+        statement = select(KbItem).where(KbItem.brand_id == brand_id, KbItem.id.in_(ids))
+        with self._session_factory() as session:
+            found = {row.id: _to_entry(row) for row in session.scalars(statement)}
+        return {item_id: found[item_id] for item_id in ids if item_id in found}
+
     def _build_promoted(self, topic: str, text: str, origin: str) -> NewKbEntry:
         """Entrada `outro` valida para o topico, com inicio de validade na data do relogio."""
         try:

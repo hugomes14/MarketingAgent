@@ -94,11 +94,11 @@ def test_untrusted_peer_gets_403_everywhere(make_panel: MakePanel) -> None:
 
 def test_home_shows_budget_and_over_reference_warning(make_panel: MakePanel) -> None:
     rig = make_panel([])
-    calm = rig.get("/")
+    calm = rig.get("/resumo")
     assert calm.status_code == 200
     assert "Gasto acima da referência mensal" not in calm.text
     rig.add_cost(Decimal("25"))
-    html = rig.get("/").text
+    html = rig.get("/resumo").text
     assert "Gasto acima da referência mensal de 20.00 USD" in html
     assert "o trabalho continua, mas convém rever" in html
     assert "25.0000" in html  # gasto do mes
@@ -110,7 +110,7 @@ def test_home_lists_sessions_newest_first_and_new_interview_button(make_panel: M
     first = rig.start_session()
     rig.clock.advance(timedelta(minutes=5))
     second = rig.start_session()
-    html = rig.get("/").text
+    html = rig.get("/resumo").text
     assert html.index(second) < html.index(first)
     assert 'action="/entrevista"' in html and "Nova entrevista" in html
 
@@ -349,5 +349,5 @@ def test_no_log_record_contains_user_text(
 
 def test_home_unknown_template_variables_do_not_break_empty_state(make_panel: MakePanel) -> None:
     rig = make_panel(fake_scenarios.interview_full(1))
-    html = rig.get("/").text
+    html = rig.get("/resumo").text
     assert "Nova entrevista" in html and "Aguarda a sua decisão" in html

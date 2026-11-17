@@ -195,6 +195,8 @@ def test_real_app_exposes_no_hidden_route(make_panel: MakePanel) -> None:
         "/kit",
         "/kit/contraste",
         "/kit/previa/{layout}",
+        "/resumo",
+        "/oficina",
     } <= paths
     assert {("GET", "/kit"), ("POST", "/kit")} <= set(endpoints)
 
@@ -665,7 +667,7 @@ def test_plan_page_escapes_model_text(make_panel: MakePanel) -> None:
     assert "&#34;&gt;&lt;img src=x onerror=alert(2)&gt;" in html
     kb_html = rig.get("/base").text
     assert "<b onmouseover" not in kb_html and "&lt;b onmouseover=alert(3)&gt;" in kb_html
-    home = rig.get("/").text
+    home = rig.get("/resumo").text
     assert script_tag not in home
 
 
@@ -682,7 +684,7 @@ def test_pages_have_no_inline_script_or_style(make_panel: MakePanel) -> None:
     rig = planning_rig(make_panel)
     plan_id = rig.propose_plan()
     add_item(rig)
-    for path in ("/base", f"/plano/{plan_id}", "/"):
+    for path in ("/base", f"/plano/{plan_id}", "/resumo"):
         html = rig.get(path).text
         assert html.count("<script") == html.count('<script src="/static/')
         assert "<style" not in html and ' style="' not in html and " onclick=" not in html
@@ -765,26 +767,26 @@ def test_failed_run_is_502_generic_without_model_text(make_panel: MakePanel) -> 
 
 def test_home_links_plan_and_pending(make_panel: MakePanel) -> None:
     rig = planning_rig(make_panel)
-    before = rig.get("/").text
+    before = rig.get("/resumo").text
     assert 'action="/plano"' in before and "Propor plano" in before
     assert 'href="/base"' in before
     plan_id = rig.propose_plan()
-    submitted = rig.get("/").text
+    submitted = rig.get("/resumo").text
     assert f'href="/plano/{plan_id}"' in submitted  # pendente e ligacao ao plano
     assert rig.post(f"/plano/{plan_id}/aprovar").status_code == 303
-    approved = rig.get("/").text
+    approved = rig.get("/resumo").text
     assert f'href="/plano/{plan_id}"' in approved and WEEK in approved
     assert "Nenhuma publicação por rever" in approved
     with rig.factory.begin() as session:
         first = session.scalars(select(Post).order_by(Post.slot_key)).first()
         assert first is not None
         session.execute(update(Post).where(Post.id == first.id).values(lifecycle="in_review"))
-    assert "1 publicação por rever" in rig.get("/").text
+    assert "1 publicação por rever" in rig.get("/resumo").text
 
 
 def test_home_plan_button_is_disabled_without_strategy(make_panel: MakePanel) -> None:
     rig = make_panel([])
-    html = rig.get("/").text
+    html = rig.get("/resumo").text
     assert "Propor plano" in html
     assert "Precisa primeiro de uma estratégia aprovada" in html
     assert 'href="/plano/' not in html

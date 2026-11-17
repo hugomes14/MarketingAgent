@@ -1,0 +1,23 @@
+# Aparencia dos quatro papeis; o estado e sempre derivado do trabalho real.
+versao: 1
+personagens:
+  diretor:
+    nome: Ana
+    cabelo: "#4A3024"
+    roupa: "#1D4ED8"
+    estilo: curto
+  copywriter:
+    nome: Bruno
+    cabelo: "#252525"
+    roupa: "#0F766E"
+    estilo: bone
+  designer:
+    nome: Clara
+    cabelo: "#793A21"
+    roupa: "#7E22CE"
+    estilo: comprido
+  revisor:
+    nome: Diogo
+    cabelo: "#6B7280"
+    roupa: "#B45309"
+    estilo: curto

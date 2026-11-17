@@ -32,7 +32,7 @@ from marketing_agent.budget.pricing import (
     sync_model_prices,
 )
 from marketing_agent.clock import FixedClock
-from marketing_agent.config import Capability, RoleRoute
+from marketing_agent.config import DEFAULT_PACKAGE_MAX_COST_USD, Capability, RoleRoute
 from marketing_agent.content.pipeline import ContentPipeline
 from marketing_agent.db.base import new_id
 from marketing_agent.db.models import AgentRun, CostEntry, Job, MediaAsset, Post, PostRevision
@@ -289,6 +289,7 @@ def build_rig(
     generator: ImageGenerator | None = None,
     with_kit: bool = True,
     abort_check: Callable[[], None] | None = None,
+    package_max_cost_usd: Decimal = DEFAULT_PACKAGE_MAX_COST_USD,
 ) -> ContentRig:
     free = PriceTier(0, Decimal(0), Decimal(0))
     per_image = tuple(ImagePrice(q, SIZE, Decimal(image_price)) for q in ("low", "medium", "high"))
@@ -331,7 +332,7 @@ def build_rig(
     photo_id = _seed_media(library, kits, brand_id, with_kit)
     pipeline = ContentPipeline(
         session_factory, engine, kb, feedback, queue, clock, store, strategy,
-        library, kits, "medium",
+        library, kits, "medium", package_max_cost_usd,
     )  # fmt: skip
     strategy_id = _activate_strategy(store, strategy, brand_id)
     plan = store.create(brand_id, ArtifactType.PLANO, {"semana": WEEK, "slots": []})

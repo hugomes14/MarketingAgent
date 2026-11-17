@@ -30,7 +30,7 @@ nunca em logs, mensagens de erro ou no `.env`.
 | `src/marketing_agent/` | Código: `config`, `secrets`, `clock`, `db`, `budget`, `llm`, `harness`, `artifacts`, `interview`, `strategy`, `kb`, `planning`, `jobs` (fila e worker), `content` (pipeline Copywriter e Revisor), `feedback`, `agents/{diretor,copywriter,revisor,designer}`, `panel`, `cli` |
 | `src/marketing_agent/panel/` | Painel FastAPI (autenticação por proxy, CSRF, páginas) e a fábrica `panel.main` |
 | `migrations/`, `alembic.ini` | Migrações da base (Alembic) |
-| `config/` | Preços dos modelos (`model_prices.yaml` e `model_prices.local.yaml`) |
+| `config/` | Preços dos modelos (`model_prices.yaml` e `model_prices.local.yaml`) e as personagens da oficina (`oficina.yaml`) |
 | `compose.test.yaml`, `compose.dev.yaml` | Postgres de teste (efémero) e de desenvolvimento (persistente) |
 | `.env.example`, `.env.local.example` | Modelos de configuração (valores fictícios) |
 | `scripts/smoke_ollama.py` | Teste de fumo do texto semanal contra o Ollama (base descartável; ver "Teste de fumo") |
@@ -149,6 +149,40 @@ A primeira pergunta e cada resposta chamam o modelo local, por isso podem demora
 um texto, com Copywriter e Revisor, pode levar vários minutos por publicação num CPU). Se o
 processo morrer a meio de uma chamada, a reserva fica `unknown_outcome` (conta no orçamento como
 desfecho desconhecido) e a mesma chave de formulário nunca repete a chamada.
+
+## A oficina (página inicial)
+
+`/` abre a **oficina** da equipa (Plano 02d): uma coluna com os quatro agentes (Diretor,
+Copywriter, Designer e Revisor), o estado de cada um (a trabalhar, erro por resolver, sem sinal,
+à espera de si, sem trabalho), as pendências e as entregas recentes, mais o botão da **revisão
+semanal** que leva ao lote com as publicações por rever. É só leitura: não há ações novas, nem
+chat, nem chamadas ao LLM; aprovar, editar e rejeitar continuam a fazer-se nas páginas
+existentes (`/lote`, `/biblioteca`, ...), com a mesma autenticação, CSRF e verificação de `Host`.
+O estado vem de `GET /oficina/estado` (JSON com `ETag`, `no-store`), sondado a cada 5 s pelo
+browser, que faz pausa quando o separador está oculto.
+
+- **`/resumo`** tem o que antes era a página inicial: orçamento do mês, decisões pendentes,
+  versões ativas (perfil, diagnóstico, estratégia, kit), plano semanal, "Rever publicações" e as
+  entrevistas (`/resumo#entrevistas`, também ligada a partir do Diretor em "Entrevistas (a
+  pedido)"). A navegação tem "Oficina" e "Resumo".
+- **`/oficina`** continua a existir como endereço antigo: responde 303 para `/` e conserva
+  `?papel=` (se for um papel conhecido) e `?medir=1`.
+- **Personagens**: `config/oficina.yaml` define nome, cores e estilo de cada agente e é
+  validado no arranque (caminho em `OFICINA_CONFIG_FILE`, por omissão `config/oficina.yaml`).
+  Os limites de tempo por papel vêm dos specs reais e respeitam `LLM_TIME_MULTIPLIER`.
+- **Vista 3D e 2D**: com WebGL2 e sem movimento reduzido a oficina abre em 3D; senão, em 2D.
+  O interruptor "Vista 3D"/"Vista 2D" guarda a escolha neste browser (`localStorage`,
+  `oficina.vista`) e ela persiste entre páginas. A vista 2D é completa e funciona sem
+  JavaScript (cada avatar é uma ligação `/?papel=...`). A 3D ajusta a qualidade ao
+  desempenho do dispositivo e avisa quando fica lenta, com a opção de mudar para 2D.
+- **Medição**: `/?medir=1` mostra o quadro de medição (FPS, memória, primeiro frame,
+  qualidade) usado no marco M5; sem este parâmetro o quadro nunca é carregado.
+- **Three.js** está versionado em `src/marketing_agent/panel/static/vendor/three/`
+  (0.186.1, MIT, sem Node nem build, servido da mesma origem sob a CSP do painel): o pacote npm
+  foi verificado pelo SHA-512 publicado antes de ser lido e só os imports nus foram reescritos
+  para caminhos relativos. Origem, hashes e como atualizar: `static/vendor/three/README.md` e
+  `scripts/vendor_three.py --help`. A cena e os módulos ES próprios estão em
+  `static/oficina/` (README com a origem MIT e as alterações).
 
 ## Sessão semanal de texto (do plano à aprovação)
 
@@ -283,6 +317,55 @@ configuração (uma linha em stderr), `1` erro inesperado. O arranque do painel 
 do que o maior `max_duration_s` de todos os specs mais o timeout de uma chamada de imagem (480 s). Equivalente direto ao `serve`:
 `uvicorn --factory marketing_agent.panel.main:create_app_from_env --no-proxy-headers`.
 
+## Comparação cega (Plano 2C)
+
+O painel, em **Início → Comparação cega de pacotes**, permite estimar e iniciar uma corrida.
+Cada brief gera dois pacotes na fila, com prioridade inferior às publicações semanais. Os
+pacotes só aparecem na avaliação; não criam publicações nem feedback para a semana.
+
+Antes da primeira corrida, adapte `evals/briefs_v1.yaml` à estratégia ativa: os oito briefs
+ainda são um rascunho, com pilares provisórios e uma referência `kb-REVER-oferta-temporada`.
+Substitua essa referência por um item ativo da base (ou esvazie `kb_refs`) e aumente `version`
+sempre que mudar o conjunto. A corrida exige perfil, estratégia, kit e referências válidas.
+
+```bash
+uv run marketing-agent eval run --set briefs_v1
+# Sem terminal interativo, só inicia com confirmação explícita:
+uv run marketing-agent eval run --set briefs_v1 --yes
+uv run marketing-agent worker
+```
+
+A estimativa mostra o teto da corrida e a referência mensal antes da confirmação. O contexto
+fica fixado no início. Quando todos os pacotes terminam, avalie cada par A/B: qualidade, erros
+e minutos de edição. Pares com falha ficam excluídos. Pode corrigir respostas antes de revelar;
+o histórico conserva ambas. **Revelar** só fica disponível quando todos os pares elegíveis
+tiverem resposta. O relatório mostra Wilson a 95 % nos pares decisivos, empates à parte,
+custos conhecidos, exposição de reservas por acertar, latência, erros, esforço de edição e
+limitações. A latência soma execuções encerradas de todas as tentativas; pacotes com tempos
+incompletos ficam assinalados e fora da média/máximo. O teto controla reservas estimadas,
+sujeitas ao acerto do consumo e preços efetivos do fornecedor. Registe a sua decisão para
+cada papel; o sistema não escolhe por si.
+
+```bash
+uv run marketing-agent eval report RUN_ID
+```
+
+Exporta uma nova cópia Markdown em `AgentDATA/docs/`, apenas depois da revelação. A decisão
+registada conserva o histórico; simplificar ou retirar um papel exige implementar e validar
+essa alteração do pipeline depois da avaliação humana.
+
+Para testar os dois percursos com Ollama, sem julgamento automático e numa base descartável:
+
+```bash
+uv run python scripts/smoke_ollama.py --eval-only --time-multiplier 5 \
+  --model marketing-qwen2.5-14b:8k --reviewer-model marketing-qwen2.5vl-7b:8k \
+  --ollama-url http://<IP-do-host-WSL>:11434 \
+  --server-url postgresql+psycopg://marketing_agent:marketing_agent@127.0.0.1:5543/postgres
+```
+
+As variantes têm de existir no anfitrião. Os fundos deste fumo são simulados, sem API paga.
+O teste Chromium da avaliação corre com `uv run pytest tests/e2e/test_eval_browser.py -m browser`.
+
 ## Configuração
 
 Copie `.env.example` (ou `.env.local.example`) para `.env`. O `.env` contém apenas campos de
@@ -294,7 +377,10 @@ corre sempre o Designer, por isso a rota `designer`, com `text` e `json_schema`,
 usar um modelo diferente do Copywriter e a rota `revisor` tem de declarar `image_input` (o papel
 exige-o mesmo nas publicações só de texto). O arranque do `worker` recusa rotas sem as
 capacidades do spec ou sem preço (corra `marketing-agent sync-prices`; para o Ollama use
-`--file config/model_prices.local.yaml`). `PLAN_MAX_POSTS_PER_WEEK` (5) e
+`--file config/model_prices.local.yaml`). A comparação cega (Plano 2C) usa um papel adicional (`simples`) (percurso de uma só chamada): não é
+exigido no arranque do `worker` e, sem rota própria em `ROLE_ROUTES`, usa a rota do `copywriter`
+(que tem de ter `text` e `json_schema`); uma rota `simples` explícita tem prioridade.
+`PLAN_MAX_POSTS_PER_WEEK` (5) e
 `PLAN_MAX_POSTS_PER_DAY` (1) limitam o plano do Diretor. As chaves de API e
 o segredo CSRF vão em ficheiros apontados por `ANTHROPIC_API_KEY_FILE`, `OPENAI_API_KEY_FILE` e
 `PANEL_CSRF_SECRET_FILE` (o segredo CSRF exige pelo menos 32 caracteres). A rota `fake` só existe
@@ -374,15 +460,21 @@ regista preços zero automaticamente para os modelos locais selecionados.
 ### Testes no Chromium
 
 Playwright está nas dependências de desenvolvimento. Instale o browser com
-`uv run python -m playwright install chromium` e execute separadamente:
+`uv run python -m playwright install chromium`. Os percursos de browser ficam fora da suite
+normal (`-m 'not live and not browser and not e2e_browser'` em `pyproject.toml`) e executam-se
+separadamente, sem outro pytest em paralelo e com a mesma `TEST_DATABASE_URL` da suite:
 
 ```bash
-uv run pytest tests/e2e/test_batch_browser.py -m browser -q
+uv run pytest tests/browser -m e2e_browser -q -p no:randomly   # oficina e painel (Chromium)
+uv run pytest tests/e2e/test_batch_browser.py -m browser -q    # lote
 ```
 
-Use a mesma configuração de TEST_DATABASE_URL da suite, sem outro pytest em paralelo.
-O teste abre o painel em loopback e usa modelos falsos. Para dependências Linux sem sudo,
-consulte [o registo Playwright](AgentDATA/tools/playwright.md).
+Os testes abrem o painel em loopback, com modelos falsos e identidade sintética, e usam o
+Chromium com WebGL por software (SwiftShader) para a cena 3D; falham se houver erros de
+JavaScript ou recusas da CSP. Em Linux/WSL sem as bibliotecas do sistema (e sem sudo), extraia-as
+para `var/browser-deps/` e exporte
+`LD_LIBRARY_PATH="$PWD/var/browser-deps/usr/lib/x86_64-linux-gnu"` antes do pytest; ver
+[o registo Playwright](AgentDATA/tools/playwright.md).
 
 ### Teste de fumo com o Ollama (fora da suite)
 
@@ -452,8 +544,10 @@ conhecimento, contexto e registos ficam em [`AgentDATA/`](AgentDATA/). Detalhes 
 
 ## O que ainda não está feito
 
-- Fecho operacional do Plano 02b (tarefa 16), comparação de variantes
-  (02c), oficina 3D (02d/Plano 4), publicação (Plano 3), revisão mensal e triagem (Plano 5).
+- Fecho operacional do Plano 02b (tarefa 16), avaliação humana e decisões da comparação
+  (02c), publicação (Plano 3), revisão mensal e triagem (Plano 5). A oficina (02d) está
+  implementada e validada automaticamente; faltam a revisão final do ramo e as verificações
+  manuais M1 a M6 (ver `AgentDATA/context/2026-11-13_plano02d_oficina_estado.md`).
   O lote já mostra a imagem, permite trocar a fotografia e carregar uma imagem à mão;
   editar o texto preserva a imagem. Faltam as verificações manuais dos marcos e a
   confirmação de um modelo pago compatível com o contrato de custos.

@@ -1,0 +1,18 @@
+# Conjunto minimo de teste do carregador (dados ficticios).
+name: briefs_teste
+version: 1
+briefs:
+  - key: pao_do_dia
+    tema: Pao do dia
+    pilar: Producao artesanal
+    objetivo: Mostrar a producao do dia
+    canais: [instagram]
+    kb_refs: []
+    tags: []
+  - key: oferta_teste
+    tema: Oferta de teste
+    pilar: Ofertas
+    objetivo: Dar a conhecer a oferta
+    canais: [instagram, facebook]
+    kb_refs: [kb-teste-1]
+    tags: [com_preco]

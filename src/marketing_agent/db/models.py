@@ -66,10 +66,42 @@ MEDIA_MIMES = ("image/jpeg", "image/png")
 STORAGE_BACKENDS = ("local",)
 REVISION_LAYOUTS = ("foto_inteira", "foto_titulo", "fundo_ia_titulo", "manual")
 BRAND_FONT_NAMES = ("inter-bold",)
+# Comparacao cega (Plano 2C). Cada tuplo alimenta o CHECK da tabela e, mais tarde, os `Literal`
+# da camada de servicos, para o contrato nao divergir entre base e codigo.
+EVAL_RUN_STATUSES = ("running", "ready", "revealed")
+EVAL_PATHS = ("simples", "especializado")
+EVAL_ITEM_STATUSES = ("queued", "running", "succeeded", "failed")
+EVAL_BETTER = ("a", "b", "empate")
+EVAL_ERROR_KINDS = (
+    "facto_errado",
+    "alegacao_sem_apoio",
+    "voz_errada",
+    "imagem_inadequada",
+    "outro",
+)
+EDIT_MINUTES = ("0", "1", "2_5", "mais_5")
+DECIDABLE_ROLES = ("copywriter", "designer", "revisor")
+ROLE_DECISIONS = ("manter", "simplificar", "retirar")
+# Tempo maximo por par aceite pelo cronometro do painel (1 hora) e limites de texto livre.
+MAX_EVAL_SECONDS_SPENT = 3600
+MAX_EVAL_NOTE_CHARS = 2000
+MAX_ROLE_JUSTIFICATION_CHARS = 2000
+# Mesmo formato de `EvalBrief.key` e do nome do conjunto (`evals/<nome>.yaml`).
+EVAL_KEY_REGEX = "^[a-z0-9_]{1,40}$"
 
 # Predicado SQL unico do indice parcial de `Job`; a migracao 0002 mantem o seu literal e um
 # teste (tests/jobs/test_queue.py) falha se os dois divergirem.
 ACTIVE_JOB_PREDICATE_SQL = "status IN (" + ", ".join(f"'{v}'" for v in ACTIVE_JOB_STATUSES) + ")"
+
+
+def known_values_array_check(column: str, values: tuple[str, ...], name: str) -> CheckConstraint:
+    """`CHECK` que limita a lista `column` aos elementos de `values` (no maximo `len(values)`)."""
+    quoted = ", ".join(f"'{value}'" for value in values)
+    return CheckConstraint(
+        f"{column} <@ ARRAY[{quoted}]::text[] AND cardinality({column}) <= {len(values)}",
+        name=name,
+    )
+
 
 type JsonValue = str | int | float | bool | None | list[JsonValue] | dict[str, JsonValue]
 type JsonObject = dict[str, JsonValue]
@@ -681,3 +713,183 @@ class Job(Base):
     last_error: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(Timestamp, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(Timestamp, nullable=False)
+
+
+class EvalRun(Base):
+    """Corrida de comparacao cega; so uma `running` por marca (indice parcial)."""
+
+    __tablename__ = "eval_run"
+    __table_args__ = (
+        UniqueConstraint("brand_id", "id"),
+        ForeignKeyConstraint(
+            ["brand_id", "strategy_artifact_id"], ["artifact.brand_id", "artifact.id"]
+        ),
+        Index(
+            "uq_eval_run_one_running_per_brand",
+            "brand_id",
+            unique=True,
+            postgresql_where=text("status = 'running'"),
+        ),
+        enum_check("status", EVAL_RUN_STATUSES, "status"),
+        CheckConstraint(f"set_name ~ '{EVAL_KEY_REGEX}'", name="set_name"),
+        CheckConstraint("set_version > 0", name="positive_set_version"),
+        CheckConstraint("estimate_usd >= 0", name="non_negative_estimate"),
+        # `revealed_at` e `status = 'revealed'` nascem juntos; NULL nunca aceita um estado errado.
+        CheckConstraint(
+            "(status = 'revealed') = (revealed_at IS NOT NULL)", name="revealed_at_matches_status"
+        ),
+    )
+
+    id: Mapped[str] = id_column()
+    brand_id: Mapped[str] = brand_fk()
+    set_name: Mapped[str] = mapped_column(Text, nullable=False)
+    set_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    # Sorteio dos lados A e B: `secrets.randbits(63)` cabe em `bigint` com sinal.
+    seed: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False)
+    strategy_artifact_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    # Copia dos briefs do conjunto no inicio: editar o YAML depois nao altera a corrida.
+    briefs: Mapped[list[JsonObject]] = mapped_column(JSONB, nullable=False)
+    # Ids da base, fotos, exemplos de feedback, versao do kit e perfil fixados no inicio.
+    context_snapshot: Mapped[JsonObject] = mapped_column(JSONB, nullable=False)
+    estimate_usd: Mapped[Decimal] = mapped_column(Money, nullable=False)
+    created_by: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(Timestamp, nullable=False)
+    revealed_at: Mapped[datetime | None] = mapped_column(Timestamp)
+
+
+class EvalItem(Base):
+    """Pacote de um percurso para um brief; nunca vira `post`."""
+
+    __tablename__ = "eval_item"
+    __table_args__ = (
+        UniqueConstraint("run_id", "brief_key", "path"),
+        UniqueConstraint("job_id"),
+        ForeignKeyConstraint(["brand_id", "run_id"], ["eval_run.brand_id", "eval_run.id"]),
+        ForeignKeyConstraint(
+            ["brand_id", "final_asset_id"], ["media_asset.brand_id", "media_asset.id"]
+        ),
+        enum_check("path", EVAL_PATHS, "path"),
+        enum_check("status", EVAL_ITEM_STATUSES, "status"),
+        CheckConstraint(f"brief_key ~ '{EVAL_KEY_REGEX}'", name="brief_key"),
+        CheckConstraint(
+            "cost_usd >= 0 AND invalid_outputs >= 0 AND review_rounds >= 0 "
+            "AND (latency_ms IS NULL OR latency_ms >= 0)",
+            name="non_negative_measures",
+        ),
+        # Um pacote concluido tem sempre o texto e a proveniencia que se compara.
+        CheckConstraint(
+            "status <> 'succeeded' OR revision_snapshot IS NOT NULL",
+            name="succeeded_requires_snapshot",
+        ),
+    )
+
+    id: Mapped[str] = id_column()
+    brand_id: Mapped[str] = brand_fk()
+    run_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    brief_key: Mapped[str] = mapped_column(Text, nullable=False)
+    path: Mapped[str] = mapped_column(Text, nullable=False)
+    # Texto e proveniencia do pacote; NULL ate o trabalho terminar.
+    revision_snapshot: Mapped[JsonObject | None] = mapped_column(JSONB)
+    final_asset_id: Mapped[str | None] = mapped_column(String(36))
+    cost_usd: Mapped[Decimal] = mapped_column(
+        Money, nullable=False, default=Decimal(0), server_default=text("0")
+    )
+    # NULL ate ser medida: um pacote falhado nao conta como latencia zero.
+    latency_ms: Mapped[int | None] = mapped_column(Integer)
+    invalid_outputs: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default=text("0")
+    )
+    review_rounds: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default=text("0")
+    )
+    status: Mapped[str] = mapped_column(Text, nullable=False)
+    # Sem FK: `job` e a fila global e pode ser limpa; o item guarda so a referencia.
+    job_id: Mapped[str | None] = mapped_column(String(36))
+    # Motivo curto da ultima falha; nunca conteudo produzido pelo modelo.
+    last_error: Mapped[str | None] = mapped_column(Text)
+
+
+class EvalJudgement(Base):
+    """Resposta cega a um par. Imutavel (ver o trigger na migracao).
+
+    Uma correcao e uma linha nova com `supersedes_id`; a primeira resposta de um par e unica.
+    """
+
+    __tablename__ = "eval_judgement"
+    __table_args__ = (
+        UniqueConstraint("supersedes_id"),
+        # Permite a FK composta abaixo provar que a correcao e do mesmo par.
+        UniqueConstraint("run_id", "brief_key", "id"),
+        ForeignKeyConstraint(["brand_id", "run_id"], ["eval_run.brand_id", "eval_run.id"]),
+        # Nome explicito: o nome da convencao passaria os 63 caracteres do Postgres.
+        ForeignKeyConstraint(
+            ["run_id", "brief_key", "supersedes_id"],
+            ["eval_judgement.run_id", "eval_judgement.brief_key", "eval_judgement.id"],
+            name="fk_eval_judgement_supersedes",
+        ),
+        Index(
+            "uq_eval_judgement_first_answer",
+            "run_id",
+            "brief_key",
+            unique=True,
+            postgresql_where=text("supersedes_id IS NULL"),
+        ),
+        enum_check("side_a_path", EVAL_PATHS, "side_a_path"),
+        enum_check("better", EVAL_BETTER, "better"),
+        enum_check("edit_a", EDIT_MINUTES, "edit_a"),
+        enum_check("edit_b", EDIT_MINUTES, "edit_b"),
+        known_values_array_check("errors_a", EVAL_ERROR_KINDS, "errors_a_known_kinds"),
+        known_values_array_check("errors_b", EVAL_ERROR_KINDS, "errors_b_known_kinds"),
+        CheckConstraint(f"brief_key ~ '{EVAL_KEY_REGEX}'", name="brief_key"),
+        CheckConstraint(
+            f"seconds_spent BETWEEN 0 AND {MAX_EVAL_SECONDS_SPENT}", name="seconds_spent_range"
+        ),
+        CheckConstraint(
+            f"note IS NULL OR char_length(note) <= {MAX_EVAL_NOTE_CHARS}", name="note_length"
+        ),
+        CheckConstraint(
+            "supersedes_id IS NULL OR supersedes_id <> id", name="not_self_superseding"
+        ),
+    )
+
+    id: Mapped[str] = id_column()
+    brand_id: Mapped[str] = brand_fk()
+    run_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    brief_key: Mapped[str] = mapped_column(Text, nullable=False)
+    # Percurso mostrado no lado A deste par; o lado B e o outro.
+    side_a_path: Mapped[str] = mapped_column(Text, nullable=False)
+    better: Mapped[str] = mapped_column(Text, nullable=False)
+    errors_a: Mapped[list[str]] = mapped_column(ARRAY(Text), nullable=False)
+    errors_b: Mapped[list[str]] = mapped_column(ARRAY(Text), nullable=False)
+    edit_a: Mapped[str] = mapped_column(Text, nullable=False)
+    edit_b: Mapped[str] = mapped_column(Text, nullable=False)
+    note: Mapped[str | None] = mapped_column(Text)
+    seconds_spent: Mapped[int] = mapped_column(Integer, nullable=False)
+    decided_by: Mapped[str] = mapped_column(Text, nullable=False)
+    decided_at: Mapped[datetime] = mapped_column(Timestamp, nullable=False)
+    supersedes_id: Mapped[str | None] = mapped_column(String(36))
+
+
+class RoleDecision(Base):
+    """Decisao do responsavel sobre um papel apos a revelacao. So se acrescenta (ver o trigger)."""
+
+    __tablename__ = "role_decision"
+    __table_args__ = (
+        ForeignKeyConstraint(["brand_id", "run_id"], ["eval_run.brand_id", "eval_run.id"]),
+        enum_check("role", DECIDABLE_ROLES, "role"),
+        enum_check("decision", ROLE_DECISIONS, "decision"),
+        CheckConstraint(
+            f"char_length(justificacao) BETWEEN 1 AND {MAX_ROLE_JUSTIFICATION_CHARS}",
+            name="justificacao_length",
+        ),
+    )
+
+    id: Mapped[str] = id_column()
+    brand_id: Mapped[str] = brand_fk()
+    run_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    role: Mapped[str] = mapped_column(Text, nullable=False)
+    decision: Mapped[str] = mapped_column(Text, nullable=False)
+    justificacao: Mapped[str] = mapped_column(Text, nullable=False)
+    decided_by: Mapped[str] = mapped_column(Text, nullable=False)
+    decided_at: Mapped[datetime] = mapped_column(Timestamp, nullable=False)

@@ -8,6 +8,7 @@ from alembic import command
 from alembic.autogenerate import compare_metadata
 from alembic.config import Config
 from alembic.migration import MigrationContext
+from alembic.script import ScriptDirectory
 from sqlalchemy import Engine, inspect, text
 
 from marketing_agent.db import models  # noqa: F401  (regista as tabelas em Base.metadata)
@@ -34,6 +35,9 @@ CORE_TABLES = {
 
 MEDIA_TABLES = {"media_asset", "brand_kit"}
 
+EVAL_TABLES = {"eval_run", "eval_item", "eval_judgement", "role_decision"}
+EVAL_FUNCTIONS = {"eval_judgement_immutable", "role_decision_immutable"}
+
 
 CONTENT_TABLES = {"kb_item", "post", "post_revision", "approval", "feedback_example", "job"}
 
@@ -56,7 +60,56 @@ def test_migration_matches_models(engine: Engine) -> None:
 
 def test_upgrade_head_creates_media_tables(engine: Engine) -> None:
     existentes = set(inspect(engine).get_table_names()) - {"alembic_version"}
-    assert existentes == CORE_TABLES | CONTENT_TABLES | MEDIA_TABLES
+    assert existentes >= CORE_TABLES | CONTENT_TABLES | MEDIA_TABLES
+
+
+def test_upgrade_head_creates_eval_tables(engine: Engine) -> None:
+    existentes = set(inspect(engine).get_table_names()) - {"alembic_version"}
+    assert existentes == CORE_TABLES | CONTENT_TABLES | MEDIA_TABLES | EVAL_TABLES
+    assert contar_objetos_eval(engine) == (len(EVAL_FUNCTIONS), len(EVAL_FUNCTIONS))
+
+
+def test_single_alembic_head() -> None:
+    raiz = Path(__file__).resolve().parents[2]
+    configuracao = Config(str(raiz / "alembic.ini"))
+    configuracao.set_main_option("script_location", str(raiz / "migrations"))
+    assert ScriptDirectory.from_config(configuracao).get_heads() == ["0004"]
+
+
+def test_downgrade_0004_removes_eval_objects_and_upgrade_restores_them(
+    engine: Engine, pg_url: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("DATABASE_URL", pg_url)
+    raiz = Path(__file__).resolve().parents[2]
+    configuracao = Config(str(raiz / "alembic.ini"))
+    configuracao.set_main_option("script_location", str(raiz / "migrations"))
+    try:
+        command.downgrade(configuracao, "0003")
+        existentes = set(inspect(engine).get_table_names()) - {"alembic_version"}
+        assert existentes == CORE_TABLES | CONTENT_TABLES | MEDIA_TABLES
+        assert contar_objetos_eval(engine) == (0, 0)
+    finally:
+        command.upgrade(configuracao, "head")
+    existentes = set(inspect(engine).get_table_names()) - {"alembic_version"}
+    assert existentes == CORE_TABLES | CONTENT_TABLES | MEDIA_TABLES | EVAL_TABLES
+    assert contar_objetos_eval(engine) == (len(EVAL_FUNCTIONS), len(EVAL_FUNCTIONS))
+    with engine.connect() as ligacao:
+        diff = compare_metadata(MigrationContext.configure(ligacao), Base.metadata)
+    assert diff == []
+
+
+def contar_objetos_eval(engine: Engine) -> tuple[int, int]:
+    """Conta (funcoes, gatilhos) de imutabilidade da avaliacao presentes na base."""
+    nomes = tuple(sorted(EVAL_FUNCTIONS))
+    with engine.connect() as ligacao:
+        funcoes = ligacao.scalar(
+            text("SELECT count(*) FROM pg_proc WHERE proname = ANY(:nomes)"), {"nomes": list(nomes)}
+        )
+        gatilhos = ligacao.scalar(
+            text("SELECT count(*) FROM pg_trigger WHERE tgname = ANY(:nomes)"),
+            {"nomes": list(nomes)},
+        )
+    return int(funcoes or 0), int(gatilhos or 0)
 
 
 def test_downgrade_0003_restores_0002(

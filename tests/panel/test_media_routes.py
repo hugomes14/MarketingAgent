@@ -93,7 +93,7 @@ def test_upload_photo_and_see_it_in_library(make_panel: MakePanel) -> None:
     assert "<script>alert" not in response.text and "&lt;script&gt;" in response.text
     assert 'enctype="multipart/form-data"' in response.text
     assert 'name="tem_autorizacao_pessoas"' in response.text and "checked" not in response.text
-    assert 'href="/biblioteca"' in rig.get("/").text
+    assert 'href="/biblioteca"' in rig.get("/resumo").text
 
 
 def test_fake_extension_upload_returns_422(make_panel: MakePanel) -> None:

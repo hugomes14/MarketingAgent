@@ -1,0 +1,16 @@
+<section class="lado-avaliacao">
+<h2>{{ side|upper }}</h2>
+<img class="imagem-avaliacao" src="/avaliacao/{{ run_id }}/par/{{ pair.index }}/imagem/{{ side }}" alt="{{ package.alt_text }}" width="540" height="675">
+{% if package.is_ai_generated %}<p>Contém imagem gerada por IA.</p>{% endif %}
+<p class="texto-publicacao">{{ package.legenda }}</p>
+<p>{{ package.hashtags|join(' ') }}</p>
+<p>{{ package.apelo_a_acao }}</p>
+<p>Texto alternativo: {{ package.alt_text }}</p>
+{% if package.alegacoes %}<h3>Alegações</h3><ul>{% for claim in package.alegacoes %}<li>{{ claim }}</li>{% endfor %}</ul>{% endif %}
+<fieldset><legend>Erros em {{ side|upper }} (marque os que encontrar)</legend>
+{% for kind, label in error_labels.items() %}<label><input type="checkbox" name="erro_{{ side }}_{{ kind }}">{{ label }}</label>{% endfor %}
+</fieldset>
+<fieldset><legend>Tempo estimado para editar {{ side|upper }}</legend>
+{% for value, label in edit_labels.items() %}<label><input type="radio" name="edit_{{ side }}" value="{{ value }}" required>{{ label }}</label>{% endfor %}
+</fieldset>
+</section>

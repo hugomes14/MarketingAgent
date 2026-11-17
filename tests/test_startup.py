@@ -28,6 +28,7 @@ from marketing_agent.llm.types import IMAGE_CALL_TIMEOUT_S, LLM_CALL_TIMEOUT_S
 from marketing_agent.startup import (
     StartupError,
     check_content_routes,
+    check_simple_route,
     content_job_lease,
     director_max_duration_s,
     max_spec_duration_s,
@@ -202,6 +203,41 @@ def test_designer_route_is_checked_when_present(session_factory: Factory) -> Non
     routes = {**good_routes(), "designer": route("qwen2.5:14b", ["text"])}
     with pytest.raises(StartupError, match="'designer' precisa das capacidades"):
         check_content_routes(settings_with(routes), PriceBook(session_factory))
+
+
+def test_simple_route_falls_back_to_the_copywriter_route(session_factory: Factory) -> None:
+    seed_text_prices(session_factory, "qwen2.5:14b", "qwen2.5vl:7b")
+    check_simple_route(settings_with(good_routes()), PriceBook(session_factory))  # sem `simples`
+
+
+def test_explicit_simple_route_wins_and_is_checked(session_factory: Factory) -> None:
+    seed_text_prices(session_factory, "qwen2.5:14b", "qwen2.5vl:7b")
+    routes = {**good_routes(), "simples": route("sem-preco", TEXT)}
+    with pytest.raises(StartupError) as caught:
+        check_simple_route(settings_with(routes), PriceBook(session_factory))
+    assert str(caught.value) == (
+        "ROLE_ROUTES: a rota 'simples' (openai/sem-preco) nao tem preco; "
+        "correr 'marketing-agent sync-prices'"
+    )
+    routes = {**good_routes(), "simples": route("qwen2.5:14b", ["text"])}
+    with pytest.raises(StartupError, match="'simples' precisa das capacidades \\['json_schema'\\]"):
+        check_simple_route(settings_with(routes), PriceBook(session_factory))
+
+
+def test_simple_route_fallback_without_price_or_capabilities_is_refused(
+    session_factory: Factory,
+) -> None:
+    with pytest.raises(StartupError, match="nao tem preco"):
+        check_simple_route(settings_with(good_routes()), PriceBook(session_factory))
+    seed_text_prices(session_factory, "m")
+    weak = {"copywriter": route("m", ["text"])}
+    with pytest.raises(StartupError, match="precisa das capacidades"):
+        check_simple_route(settings_with(weak), PriceBook(session_factory))
+
+
+def test_simple_route_needs_a_simple_or_a_copywriter_route(session_factory: Factory) -> None:
+    with pytest.raises(StartupError, match="faltam a rota 'simples' e a do 'copywriter'"):
+        check_simple_route(settings_with({}), PriceBook(session_factory))
 
 
 def image_settings(tmp_path: Path, **extra: object) -> Settings:

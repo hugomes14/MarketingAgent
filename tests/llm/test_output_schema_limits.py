@@ -21,6 +21,8 @@ from marketing_agent.agents.diretor.schemas import (
     PerfilMarca,
 )
 from marketing_agent.content.schemas import MAX_SCHEMA_CAPTION_CHARS, RascunhoTexto, Revisao
+from marketing_agent.content.visual import RascunhoVisual
+from marketing_agent.evals.simple_schema import PacoteSimples
 from marketing_agent.planning.schemas import PlanoSemanal
 
 SCHEMAS = [
@@ -31,6 +33,8 @@ SCHEMAS = [
     PerfilMarca,
     Diagnostico,
     Estrategia,
+    RascunhoVisual,
+    PacoteSimples,
 ]
 # Maior limite de repeticao verificado a funcionar no Ollama com o `qwen2.5:14b`.
 MAX_SAFE_BOUND = 1500

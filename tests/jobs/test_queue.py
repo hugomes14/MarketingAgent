@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from marketing_agent.clock import FixedClock
 from marketing_agent.db.models import ACTIVE_JOB_PREDICATE_SQL, Job
 from marketing_agent.jobs.queue import (
+    EVAL_PACKAGE_JOB,
     GENERATE_POST_JOB,
     MAX_ERROR_CHARS,
     ClaimedJob,
@@ -479,3 +480,107 @@ def test_holds_lease_in(queue: JobQueue, session_factory: Factory, clock: FixedC
         queue.cancel_for_post_in(session, "post-1")
     with session_factory() as session:
         assert queue.holds_lease_in(session, claimed) is False
+
+
+# --- jobs de avaliacao (Plano 2C): sem post, cedem a vez e sao recuperados --------------------
+
+
+def enqueue_eval(queue: JobQueue, session_factory: Factory, key: str) -> str:
+    with session_factory.begin() as session:
+        job_id = queue.enqueue_in(
+            session, EVAL_PACKAGE_JOB, {"eval_run_id": "r1", "eval_item_id": key}, key
+        )
+    assert job_id is not None
+    return job_id
+
+
+def test_claim_prefers_generate_post_over_eval_package(
+    queue: JobQueue, session_factory: Factory, clock: FixedClock
+) -> None:
+    older_eval = enqueue_eval(queue, session_factory, "eval_package:i1")
+    clock.advance(timedelta(seconds=1))
+    review = enqueue(queue, session_factory, "g1", job_type="review_post", post_id="p1")
+    clock.advance(timedelta(seconds=1))
+    generate = enqueue(queue, session_factory, "g2", post_id="p2")
+    second_eval = enqueue_eval(queue, session_factory, "eval_package:i2")
+    clock.advance(timedelta(seconds=1))
+    order = [queue.claim("w1") for _ in range(4)]
+    assert [job.id if job else None for job in order] == [review, generate, older_eval, second_eval]
+    assert queue.claim("w1") is None
+
+
+def test_eval_package_is_claimed_when_the_only_post_job_is_waiting_for_its_retry(
+    queue: JobQueue, session_factory: Factory
+) -> None:
+    waiting = claim_one(queue, session_factory, "g1")
+    assert queue.fail(waiting, "erro", retry=True)  # volta com `run_at` no futuro
+    eval_id = enqueue_eval(queue, session_factory, "eval_package:i1")
+    claimed = queue.claim("w1")
+    assert claimed is not None and claimed.id == eval_id
+
+
+def test_claim_still_dedupes_and_skips_locked_with_eval_jobs(
+    queue: JobQueue, session_factory: Factory
+) -> None:
+    first = enqueue_eval(queue, session_factory, "eval_package:i1")
+    with session_factory.begin() as session:
+        assert queue.enqueue_in(session, EVAL_PACKAGE_JOB, {}, "eval_package:i1") is None
+    claimed = queue.claim("w1")
+    assert claimed is not None and claimed.id == first and claimed.type == EVAL_PACKAGE_JOB
+    assert queue.claim("w2") is None  # o unico job esta `running`
+
+
+def test_requeue_expired_recovers_eval_jobs(
+    queue: JobQueue, session_factory: Factory, clock: FixedClock
+) -> None:
+    job_id = enqueue_eval(queue, session_factory, "eval_package:i1")
+    assert queue.claim("w1") is not None
+    clock.advance(LEASE + timedelta(seconds=1))
+    assert queue.requeue_expired() == 1
+    assert load(session_factory, job_id).status == "queued"
+    assert queue.claim("w2") is not None
+    with session_factory.begin() as session:
+        session.get_one(Job, job_id).attempts = 3
+    clock.advance(LEASE + timedelta(seconds=1))
+    assert queue.requeue_expired() == 1
+    assert load(session_factory, job_id).status == "dead"
+
+
+def test_requeue_orphans_recovers_eval_jobs_with_the_grace_and_without_post_locks(
+    queue: JobQueue, session_factory: Factory, clock: FixedClock
+) -> None:
+    eval_id = enqueue_eval(queue, session_factory, "eval_package:i1")
+    claimed = queue.claim("w1")
+    assert claimed is not None
+    # Um lock alheio num post nao pode bloquear a recuperacao de um job que nao tem post.
+    with session_factory.begin() as holder:
+        holder.execute(text("LOCK TABLE post IN ACCESS EXCLUSIVE MODE"))
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(queue.requeue_orphans, grace=GRACE_M1)
+            assert future.result(timeout=BARRIER_TIMEOUT_S) == 1
+    row = load(session_factory, eval_id)
+    assert (row.status, row.attempts) == ("queued", 1)
+    assert queue.claim("w2") is None
+    clock.advance(GRACE_M1)
+    again = queue.claim("w2")
+    assert again is not None and again.id == eval_id
+    with session_factory.begin() as session:
+        session.get_one(Job, eval_id).attempts = 3
+    assert queue.requeue_orphans(grace=GRACE_M1) == 1
+    assert load(session_factory, eval_id).status == "dead"
+
+
+def test_active_eval_job_never_blocks_or_cancels_owner_actions(
+    queue: JobQueue, session_factory: Factory
+) -> None:
+    with session_factory.begin() as session:  # ate com um `post_id` no payload, o tipo decide
+        queue.enqueue_in(
+            session,
+            EVAL_PACKAGE_JOB,
+            {"post_id": "post-1", "eval_item_id": "i1"},
+            "eval_package:i1",
+        )
+    assert has_active(queue, session_factory, "post-1") is False
+    with session_factory.begin() as session:
+        assert queue.cancel_for_post_in(session, "post-1") == 0
+    assert queue.claim("w1") is not None  # continua reclamavel

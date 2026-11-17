@@ -18,7 +18,13 @@ from marketing_agent.clock import FixedClock
 from marketing_agent.content.pipeline import GenerationOutcome
 from marketing_agent.db.base import make_engine
 from marketing_agent.db.models import Job
-from marketing_agent.jobs.queue import RETRY_BACKOFF, ClaimedJob, JobFailure, JobQueue
+from marketing_agent.jobs.queue import (
+    EVAL_PACKAGE_JOB,
+    RETRY_BACKOFF,
+    ClaimedJob,
+    JobFailure,
+    JobQueue,
+)
 from marketing_agent.jobs.singleton import WorkerLock, WorkerLockLost
 from marketing_agent.jobs.worker import IDLE_WAIT_S, Worker, require_lock_alive
 
@@ -602,3 +608,113 @@ def test_lock_that_dies_mid_job_stops_the_run_before_the_next_paid_call(
     finally:
         lock.release()
         admin.dispose()
+
+
+# --- jobs de avaliacao (Plano 2C): tratador proprio, falha propria, reconciliacao -------------
+
+
+class StubEvalHandler:
+    """Tratador de avaliacao substituto: regista o que o worker lhe entrega."""
+
+    queue: JobQueue
+
+    def __init__(self, error: BaseException | None = None) -> None:
+        self.error = error
+        self.handled: list[str] = []
+        self.failed: list[tuple[str, str, bool]] = []
+        self.reconciles = 0
+        self.reconcile_error: BaseException | None = None
+
+    def handle(self, job: ClaimedJob) -> None:
+        self.handled.append(job.id)
+        if self.error is not None:
+            raise self.error
+
+    def fail_job(self, job: ClaimedJob, message: str, retry: bool) -> JobFailure | None:
+        self.failed.append((job.id, message, retry))
+        return "queued" if self.queue.fail(job, message, retry) else None
+
+    def reconcile(self, brand_id: str | None = None) -> int:
+        self.reconciles += 1
+        if self.reconcile_error is not None:
+            raise self.reconcile_error
+        return 0
+
+
+def enqueue_eval(queue: JobQueue, session_factory: Factory, key: str = "eval_package:i1") -> str:
+    payload = {"eval_run_id": "r1", "eval_item_id": "i1"}
+    with session_factory.begin() as session:
+        job_id = queue.enqueue_in(session, EVAL_PACKAGE_JOB, payload, key)
+    assert job_id is not None
+    return job_id
+
+
+def eval_worker(queue: JobQueue, handler: StubEvalHandler, pipeline: StubPipeline) -> Worker:
+    handler.queue = queue
+    return Worker(queue, pipeline, "w1", eval_handler=handler)
+
+
+def test_eval_job_goes_to_the_eval_handler_only(queue: JobQueue, session_factory: Factory) -> None:
+    job_id = enqueue_eval(queue, session_factory)
+    handler, pipeline = StubEvalHandler(), StubPipeline()
+    assert eval_worker(queue, handler, pipeline).run_once() is True
+    assert handler.handled == [job_id] and pipeline.jobs == []
+
+
+def test_eval_job_failure_goes_through_the_eval_handler_with_a_safe_message(
+    queue: JobQueue, session_factory: Factory, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.DEBUG)
+    job_id = enqueue_eval(queue, session_factory)
+    handler, pipeline = StubEvalHandler(ValueError(HOSTILE)), StubPipeline()
+    assert eval_worker(queue, handler, pipeline).run_once() is True
+    assert handler.failed == [(job_id, "ValueError", True)]
+    row = load(session_factory, job_id)
+    assert (row.status, row.last_error) == ("queued", "ValueError")
+    assert HOSTILE not in caplog.text
+
+
+def test_eval_job_without_a_handler_fails_without_retry(
+    queue: JobQueue, session_factory: Factory
+) -> None:
+    job_id = enqueue_eval(queue, session_factory)
+    pipeline = StubPipeline()
+    assert Worker(queue, pipeline, "w1").run_once() is True
+    row = load(session_factory, job_id)
+    assert (row.status, row.last_error) == ("failed", "UnknownJobType")
+
+
+def test_recover_reconciles_eval_items_at_startup(queue: JobQueue) -> None:
+    handler = StubEvalHandler()
+    eval_worker(queue, handler, StubPipeline()).recover()
+    assert handler.reconciles == 1
+
+
+def test_idle_iteration_reconciles_eval_items_after_requeueing(queue: JobQueue) -> None:
+    handler = StubEvalHandler()
+    stop = threading.Event()
+    sleeps: list[float] = []
+    worker = eval_worker(queue, handler, StubPipeline())
+    worker._sleep = stopping_sleep(stop, sleeps, after=2)  # noqa: SLF001
+    worker.run_forever(stop)
+    assert handler.reconciles == 2  # arranque e a unica iteracao ociosa completa
+
+
+def test_a_failing_reconcile_does_not_stop_the_idle_loop(
+    queue: JobQueue, caplog: pytest.LogCaptureFixture
+) -> None:
+    class FailsWhenIdle(StubEvalHandler):
+        def reconcile(self, brand_id: str | None = None) -> int:
+            self.reconciles += 1
+            if self.reconciles > 1:  # o arranque passa; as iteracoes ociosas falham
+                raise RuntimeError(HOSTILE)
+            return 0
+
+    handler = FailsWhenIdle()
+    stop = threading.Event()
+    worker = eval_worker(queue, handler, StubPipeline())
+    worker._sleep = stopping_sleep(stop, [], after=2)  # noqa: SLF001
+    caplog.set_level(logging.DEBUG)
+    worker.run_forever(stop)  # nao levanta
+    assert handler.reconciles >= 2
+    assert HOSTILE not in caplog.text

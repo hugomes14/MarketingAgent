@@ -19,21 +19,29 @@ from marketing_agent.budget.controller import BudgetController
 from marketing_agent.clock import SystemClock
 from marketing_agent.config import Settings
 from marketing_agent.db.base import make_engine, make_session_factory
+from marketing_agent.evals.assembly import build_eval_context, build_eval_runs
+from marketing_agent.evals.judging import JudgingService
+from marketing_agent.evals.report import ReportService
+from marketing_agent.evals.views import EvalViews
 from marketing_agent.harness.engine import AgentEngine
 from marketing_agent.interview.service import InterviewService
 from marketing_agent.llm.factory import build_llm_router
 from marketing_agent.llm.router import LlmRouter
+from marketing_agent.oficina.config import OficinaConfigError, load_oficina_config
+from marketing_agent.oficina.queries import TeamStateQueries
 from marketing_agent.panel.app import create_app
 from marketing_agent.panel.assembly import build_content_services, build_media_services
-from marketing_agent.panel.context import PanelContext
+from marketing_agent.panel.context import EvalServices, PanelContext
 from marketing_agent.panel.queries import PanelQueries
 from marketing_agent.secrets import SecretFileError, read_secret_file
 from marketing_agent.startup import (
     StartupError,
     build_budget_controller,
+    content_job_lease,
     database_error_message,
     load_settings,
     log_time_settings,
+    role_run_bounds_s,
     worker_stale_after,
 )
 from marketing_agent.strategy.service import StrategyService
@@ -71,6 +79,11 @@ def _assemble(
     brand_id: str,
 ) -> FastAPI:
     """Liga o motor aos servicos reais e monta o painel (`create_app` valida a seguranca)."""
+    try:
+        oficina = load_oficina_config(settings.oficina_config_file)
+    except OficinaConfigError as exc:
+        raise StartupError(f"OFICINA_CONFIG_FILE: {exc}") from None
+    durations = role_run_bounds_s(time_multiplier=settings.llm_time_multiplier)
     clock = SystemClock()
     budget = build_budget_controller(settings, session_factory, clock)
     store = ArtifactStore(session_factory, clock)
@@ -92,6 +105,26 @@ def _assemble(
                 settings, session_factory, engine, store, strategy, clock
             ),
             media=build_media_services(settings, session_factory, clock),
+            oficina=oficina,
+            team=TeamStateQueries(
+                session_factory,
+                clock,
+                durations,
+                oficina,
+                job_lease=content_job_lease(time_multiplier=settings.llm_time_multiplier),
+            ),
+            evals=EvalServices(
+                build_eval_runs(
+                    settings,
+                    session_factory,
+                    build_eval_context(session_factory, store, strategy, clock),
+                    budget,
+                    clock,
+                ),
+                EvalViews(session_factory),
+                JudgingService(session_factory, clock, settings.max_message_chars),
+                ReportService(session_factory, clock),
+            ),
         )
     except ValueError as exc:
         raise StartupError(str(exc)) from exc

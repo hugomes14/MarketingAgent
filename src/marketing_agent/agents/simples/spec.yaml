@@ -1,0 +1,27 @@
+# Spec do percurso simples da comparacao (Plano 2C): UMA chamada devolve o texto e a escolha visual.
+# Valores monetarios SEMPRE como texto entre aspas (o carregador recusa numeros).
+# `writes: []`: o pacote (texto, escolha visual, imagem composta) e devolvido ao chamador. As
+# mesmas regras de codigo do percurso especializado verificam-se via `extra_validator` do motor
+# (`content.validation` e `content.visual`); nao ha Revisor nem voltas. Este papel nao e exigido no
+# arranque do worker: sem rota `simples` em ROLE_ROUTES usa-se a do Copywriter (`ROUTE_FALLBACKS`).
+# `max_steps` conta TODOS os passos: ate 3 chamadas de texto (saidas invalidas), repeticoes de rede
+# e a geracao do fundo (uma imagem, depois de o pacote passar a validacao).
+role: simples
+name: pacote
+version: 1
+loop_type: structured
+prompt_file: prompt.md
+output_schema: PacoteSimples
+required_capabilities: [text, json_schema]
+tools: []
+reads: [perfil_marca, estrategia, kb, kit_marca, biblioteca]
+writes: []
+validators: []
+limits:
+  max_steps: 4
+  max_tokens: 60000
+  max_cost_usd: "0.80"
+  max_duration_s: 300
+max_output_tokens: 2000
+budget_share_hint: "0.30"
+escalation: Sem pacote valido ou limite atingido, o item da comparacao fica sem resultado deste percurso e o motivo fica visivel.
