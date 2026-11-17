@@ -232,6 +232,13 @@ class EvalPackageHandler:
             if item.status in TERMINAL_ITEM_STATUSES:
                 self._queue.complete_in(session, job)
                 return None
+            if item.job_id != job.id:
+                # Payload e job discordam (dados corrompidos): nao tocar no item de outro job.
+                logger.warning(
+                    "eval_package: job com item alheio ignorado (tentativa %d)", job.attempts
+                )
+                self._queue.complete_in(session, job)
+                return None
             item.status = "running"
             return _Work(
                 run.id,

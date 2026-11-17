@@ -45,6 +45,7 @@ def test_report_shows_estimate_vs_actual_and_limits(evaluation):
         "Um só avaliador",
         "Sem causalidade",
         "0 pares decisivos",
+        "soma das durações das execuções do motor (exclui orquestração e armazenamento)",
     ):
         assert text in page.text
     assert (

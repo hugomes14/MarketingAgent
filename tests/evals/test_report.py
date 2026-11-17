@@ -108,6 +108,10 @@ def test_limitations_always_present_and_report_ends_with_question(make_eval_rig,
     report = ReportService(rig.factory, rig.content.clock).build(rig.brand_id, run_id)
     text = render_markdown(report)
     assert all(limitation in text for limitation in LIMITACOES)
+    assert (
+        "soma das durações das execuções do motor (exclui orquestração e armazenamento), "
+        "igual para os dois percursos"
+    ) in text
     assert text.rstrip().endswith(PERGUNTA_D35)
     assert report.decisions == ()
     assert (report.interval is None) == (winner == "empate")

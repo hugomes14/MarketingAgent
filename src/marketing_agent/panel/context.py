@@ -21,6 +21,8 @@ from marketing_agent.interview.service import InterviewService
 from marketing_agent.kb.service import KbService
 from marketing_agent.media.brand_kit import BrandKitService
 from marketing_agent.media.library import MediaLibrary
+from marketing_agent.oficina.config import OficinaConfig
+from marketing_agent.oficina.queries import TeamStateQueries
 from marketing_agent.panel.auth import TailscaleUser, require_tailscale_user
 from marketing_agent.panel.csrf import require_same_origin_and_csrf
 from marketing_agent.panel.errors import UpstreamFailure
@@ -77,6 +79,8 @@ class PanelContext:
     max_message_chars: int
     content: ContentServices
     media: MediaServices
+    team: TeamStateQueries
+    oficina: OficinaConfig
     evals: EvalServices | None = None
 
 

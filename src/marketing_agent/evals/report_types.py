@@ -8,6 +8,8 @@ LIMITACOES = (
     "Poucos briefs: a amostra é pequena e o intervalo de incerteza pode ser largo.",
     "Um só avaliador: os resultados refletem o julgamento de uma pessoa.",
     "Sem causalidade: esta comparação não isola a contribuição de cada papel.",
+    "Latência: soma das durações das execuções do motor (exclui orquestração e armazenamento), "
+    "igual para os dois percursos.",
 )
 PERGUNTA_D35 = (
     "Os papéis especializados melhoram o resultado o suficiente para pagar o custo? "

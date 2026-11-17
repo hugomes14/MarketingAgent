@@ -633,19 +633,19 @@ def test_layout_names_match_the_renderer() -> None:
 
 def test_home_shows_kit_status(make_panel: MakePanel) -> None:
     rig = make_panel([])
-    home = rig.get("/").text
+    home = rig.get("/resumo").text
     assert "sem kit" in home.lower() and 'href="/kit"' in home and 'href="/biblioteca"' in home
     add_kit(rig)
-    home = rig.get("/").text
+    home = rig.get("/resumo").text
     assert "versão 1" in home.lower() and "2026-11-05" in home
     assert "sem kit" not in home.lower()
     add_kit(rig, "#003366")
-    assert "versão 2" in rig.get("/").text.lower()
+    assert "versão 2" in rig.get("/resumo").text.lower()
 
 
 def test_navigation_links_the_kit_and_library(make_panel: MakePanel) -> None:
     rig = make_panel([])
-    for path in ("/", "/kit", "/biblioteca"):
+    for path in ("/", "/resumo", "/kit", "/biblioteca"):
         page = rig.get(path).text
         assert 'href="/kit"' in page and 'href="/biblioteca"' in page, path
 

@@ -30,7 +30,7 @@ nunca em logs, mensagens de erro ou no `.env`.
 | `src/marketing_agent/` | Código: `config`, `secrets`, `clock`, `db`, `budget`, `llm`, `harness`, `artifacts`, `interview`, `strategy`, `kb`, `planning`, `jobs` (fila e worker), `content` (pipeline Copywriter e Revisor), `feedback`, `agents/{diretor,copywriter,revisor,designer}`, `panel`, `cli` |
 | `src/marketing_agent/panel/` | Painel FastAPI (autenticação por proxy, CSRF, páginas) e a fábrica `panel.main` |
 | `migrations/`, `alembic.ini` | Migrações da base (Alembic) |
-| `config/` | Preços dos modelos (`model_prices.yaml` e `model_prices.local.yaml`) |
+| `config/` | Preços dos modelos (`model_prices.yaml` e `model_prices.local.yaml`) e as personagens da oficina (`oficina.yaml`) |
 | `compose.test.yaml`, `compose.dev.yaml` | Postgres de teste (efémero) e de desenvolvimento (persistente) |
 | `.env.example`, `.env.local.example` | Modelos de configuração (valores fictícios) |
 | `scripts/smoke_ollama.py` | Teste de fumo do texto semanal contra o Ollama (base descartável; ver "Teste de fumo") |
@@ -149,6 +149,40 @@ A primeira pergunta e cada resposta chamam o modelo local, por isso podem demora
 um texto, com Copywriter e Revisor, pode levar vários minutos por publicação num CPU). Se o
 processo morrer a meio de uma chamada, a reserva fica `unknown_outcome` (conta no orçamento como
 desfecho desconhecido) e a mesma chave de formulário nunca repete a chamada.
+
+## A oficina (página inicial)
+
+`/` abre a **oficina** da equipa (Plano 02d): uma coluna com os quatro agentes (Diretor,
+Copywriter, Designer e Revisor), o estado de cada um (a trabalhar, erro por resolver, sem sinal,
+à espera de si, sem trabalho), as pendências e as entregas recentes, mais o botão da **revisão
+semanal** que leva ao lote com as publicações por rever. É só leitura: não há ações novas, nem
+chat, nem chamadas ao LLM; aprovar, editar e rejeitar continuam a fazer-se nas páginas
+existentes (`/lote`, `/biblioteca`, ...), com a mesma autenticação, CSRF e verificação de `Host`.
+O estado vem de `GET /oficina/estado` (JSON com `ETag`, `no-store`), sondado a cada 5 s pelo
+browser, que faz pausa quando o separador está oculto.
+
+- **`/resumo`** tem o que antes era a página inicial: orçamento do mês, decisões pendentes,
+  versões ativas (perfil, diagnóstico, estratégia, kit), plano semanal, "Rever publicações" e as
+  entrevistas (`/resumo#entrevistas`, também ligada a partir do Diretor em "Entrevistas (a
+  pedido)"). A navegação tem "Oficina" e "Resumo".
+- **`/oficina`** continua a existir como endereço antigo: responde 303 para `/` e conserva
+  `?papel=` (se for um papel conhecido) e `?medir=1`.
+- **Personagens**: `config/oficina.yaml` define nome, cores e estilo de cada agente e é
+  validado no arranque (caminho em `OFICINA_CONFIG_FILE`, por omissão `config/oficina.yaml`).
+  Os limites de tempo por papel vêm dos specs reais e respeitam `LLM_TIME_MULTIPLIER`.
+- **Vista 3D e 2D**: com WebGL2 e sem movimento reduzido a oficina abre em 3D; senão, em 2D.
+  O interruptor "Vista 3D"/"Vista 2D" guarda a escolha neste browser (`localStorage`,
+  `oficina.vista`) e ela persiste entre páginas. A vista 2D é completa e funciona sem
+  JavaScript (cada avatar é uma ligação `/?papel=...`). A 3D ajusta a qualidade ao
+  desempenho do dispositivo e avisa quando fica lenta, com a opção de mudar para 2D.
+- **Medição**: `/?medir=1` mostra o quadro de medição (FPS, memória, primeiro frame,
+  qualidade) usado no marco M5; sem este parâmetro o quadro nunca é carregado.
+- **Three.js** está versionado em `src/marketing_agent/panel/static/vendor/three/`
+  (0.186.1, MIT, sem Node nem build, servido da mesma origem sob a CSP do painel): o pacote npm
+  foi verificado pelo SHA-512 publicado antes de ser lido e só os imports nus foram reescritos
+  para caminhos relativos. Origem, hashes e como atualizar: `static/vendor/three/README.md` e
+  `scripts/vendor_three.py --help`. A cena e os módulos ES próprios estão em
+  `static/oficina/` (README com a origem MIT e as alterações).
 
 ## Sessão semanal de texto (do plano à aprovação)
 
@@ -426,15 +460,21 @@ regista preços zero automaticamente para os modelos locais selecionados.
 ### Testes no Chromium
 
 Playwright está nas dependências de desenvolvimento. Instale o browser com
-`uv run python -m playwright install chromium` e execute separadamente:
+`uv run python -m playwright install chromium`. Os percursos de browser ficam fora da suite
+normal (`-m 'not live and not browser and not e2e_browser'` em `pyproject.toml`) e executam-se
+separadamente, sem outro pytest em paralelo e com a mesma `TEST_DATABASE_URL` da suite:
 
 ```bash
-uv run pytest tests/e2e/test_batch_browser.py -m browser -q
+uv run pytest tests/browser -m e2e_browser -q -p no:randomly   # oficina e painel (Chromium)
+uv run pytest tests/e2e/test_batch_browser.py -m browser -q    # lote
 ```
 
-Use a mesma configuração de TEST_DATABASE_URL da suite, sem outro pytest em paralelo.
-O teste abre o painel em loopback e usa modelos falsos. Para dependências Linux sem sudo,
-consulte [o registo Playwright](AgentDATA/tools/playwright.md).
+Os testes abrem o painel em loopback, com modelos falsos e identidade sintética, e usam o
+Chromium com WebGL por software (SwiftShader) para a cena 3D; falham se houver erros de
+JavaScript ou recusas da CSP. Em Linux/WSL sem as bibliotecas do sistema (e sem sudo), extraia-as
+para `var/browser-deps/` e exporte
+`LD_LIBRARY_PATH="$PWD/var/browser-deps/usr/lib/x86_64-linux-gnu"` antes do pytest; ver
+[o registo Playwright](AgentDATA/tools/playwright.md).
 
 ### Teste de fumo com o Ollama (fora da suite)
 
@@ -505,7 +545,9 @@ conhecimento, contexto e registos ficam em [`AgentDATA/`](AgentDATA/). Detalhes 
 ## O que ainda não está feito
 
 - Fecho operacional do Plano 02b (tarefa 16), avaliação humana e decisões da comparação
-  (02c), oficina 3D (02d/Plano 4), publicação (Plano 3), revisão mensal e triagem (Plano 5).
+  (02c), publicação (Plano 3), revisão mensal e triagem (Plano 5). A oficina (02d) está
+  implementada e validada automaticamente; faltam a revisão final do ramo e as verificações
+  manuais M1 a M6 (ver `AgentDATA/context/2026-11-13_plano02d_oficina_estado.md`).
   O lote já mostra a imagem, permite trocar a fotografia e carregar uma imagem à mão;
   editar o texto preserva a imagem. Faltam as verificações manuais dos marcos e a
   confirmação de um modelo pago compatível com o contrato de custos.

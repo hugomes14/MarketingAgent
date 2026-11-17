@@ -69,6 +69,25 @@ def request_texts(requests: list[LlmRequest]) -> str:
     )
 
 
+def content_snapshot(factory: Factory) -> dict[str, list[tuple[object, ...]]]:
+    """Conteudo (nao so contagens) das tabelas semanais: ids, hashes e cabecas de artefacto."""
+    with factory() as session:
+        revisions = session.execute(
+            select(PostRevision.id, PostRevision.revision_hash).order_by(PostRevision.id)
+        )
+        posts = session.execute(
+            select(Post.id, Post.lifecycle, Post.review_rounds).order_by(Post.id)
+        )
+        heads = session.execute(
+            select(*ArtifactHead.__table__.columns).order_by(ArtifactHead.type, ArtifactHead.scope)
+        )
+        return {
+            "post_revision": [tuple(row) for row in revisions],
+            "post": [tuple(row) for row in posts],
+            "artifact_head": [tuple(row) for row in heads],
+        }
+
+
 def row_counts(factory: Factory) -> dict[str, int]:
     with factory() as session:
         return {
@@ -392,6 +411,7 @@ def test_worker_killed_mid_item_reruns_and_counts_all_cost(make_eval_rig: MakeEv
 def test_eval_package_never_touches_weekly_tables(make_eval_rig: MakeEvalRig) -> None:
     rig = make_eval_rig(briefs=[brief("b1"), brief("b2")])
     before = row_counts(rig.factory)
+    content_before = content_snapshot(rig.factory)
     kinds_before = {a.kind for a in rig.content.assets("final")} | {
         a.kind for a in rig.content.assets("componente_gerado")
     }
@@ -401,6 +421,7 @@ def test_eval_package_never_touches_weekly_tables(make_eval_rig: MakeEvalRig) ->
     assert rig.run(run_id).status == "ready"
     assert {item.status for item in rig.items(run_id)} == {"succeeded"}
     assert row_counts(rig.factory) == before
+    assert content_snapshot(rig.factory) == content_before
     with rig.factory() as session:
         kinds = set(session.scalars(select(MediaAsset.kind).where(MediaAsset.kind != "foto"))) - {
             "logotipo"
@@ -502,6 +523,47 @@ def test_worker_cannot_raise_the_run_confirmed_package_ceiling(make_eval_rig, pa
     item = next(item for item in rig.items(run_id) if item.path == path)
     rig.process(item, simple_script() if path == "simples" else package_pass())
     assert rig.item(item.id).cost_usd <= Decimal("0.01")
+
+
+def test_lowering_the_worker_ceiling_after_start_keeps_the_run_ceiling_for_both_paths(
+    make_eval_rig,
+):
+    from marketing_agent.evals.handler import build_package_paths
+
+    rig = make_eval_rig(briefs=ONE_BRIEF, image_price="0.04")
+    run_id = rig.start()
+    # Reiniciar com PACKAGE_MAX_COST_USD menor nao enviesa um percurso contra o outro.
+    rig.handler._paths = build_package_paths(  # noqa: SLF001
+        rig.factory,
+        rig.content.engine,
+        rig.content.library,
+        rig.content.kits,
+        "medium",
+        Decimal("0.0001"),
+    )
+    for item in rig.items(run_id):
+        rig.process(item, simple_script() if item.path == "simples" else package_pass())
+    assert {item.status for item in rig.items(run_id)} == {"succeeded"}
+
+
+def test_job_that_is_not_the_items_job_completes_without_work(make_eval_rig, caplog):
+    rig = make_eval_rig(briefs=ONE_BRIEF)
+    run_id, simple, special = one_run(rig)
+    rig.content.llm.load(simple_script())
+    stranger = rig.claim(special)  # job do OUTRO item, com o payload do item simples
+    forged = ClaimedJob(
+        stranger.id,
+        stranger.type,
+        {"eval_run_id": run_id, "eval_item_id": simple.id},
+        stranger.attempts,
+        stranger.lease_token,
+    )
+    with caplog.at_level(logging.WARNING):
+        rig.handler.handle(forged)
+    assert rig.content.llm.requests == []
+    assert rig.item(simple.id).status == "queued"
+    assert rig.job_of(special).status == "succeeded"
+    assert simple.id not in caplog.text and special.id not in caplog.text
 
 
 def test_latency_accumulates_known_failed_attempts_without_queue_wait(make_eval_rig):

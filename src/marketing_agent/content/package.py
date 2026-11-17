@@ -91,8 +91,12 @@ class PackageRequest:
     ceiling_usd: Decimal | None = None
 
     def cost_ceiling(self, configured: Decimal) -> Decimal:
-        """O teto confirmado pode reduzir o do worker, nunca aumenta-lo apos reinicio."""
-        return configured if self.ceiling_usd is None else min(configured, self.ceiling_usd)
+        """Com teto confirmado (corrida de avaliacao) so ele conta, nunca a configuracao do worker.
+
+        Um reinicio com PACKAGE_MAX_COST_USD diferente nao pode dar tetos distintos aos dois
+        percursos da mesma corrida. Sem teto confirmado vale o configurado.
+        """
+        return configured if self.ceiling_usd is None else self.ceiling_usd
 
 
 @dataclass(frozen=True)

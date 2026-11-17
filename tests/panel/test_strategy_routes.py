@@ -174,7 +174,7 @@ def test_strategy_approval_activates_only_accepted_proposals(make_panel: MakePan
     assert active is not None and [p.proposta for p in active.propostas_aceites] == [
         "Cabaz semanal"
     ]
-    home = rig.get("/").text
+    home = rig.get("/resumo").text
     assert "Cabaz semanal" in home and "Pack para empresas" not in home
     page = rig.get(f"/estrategia/{strategy_id}").text
     assert "Aceite" in page and "Recusada" in page
@@ -200,7 +200,7 @@ def test_awaiting_decision_list_links_review_pages(make_panel: MakePanel) -> Non
     rig = make_panel(full_script())
     rig.confirm_profile()
     diagnosis_id = rig.post_id("/diagnostico")
-    home = rig.get("/").text
+    home = rig.get("/resumo").text
     assert f'href="/diagnostico/{diagnosis_id}"' in home
     assert "Aguarda a sua decisão" in home
 
@@ -209,7 +209,7 @@ def test_home_shows_active_cards(make_panel: MakePanel) -> None:
     rig = make_panel(full_script())
     profile_id = rig.confirm_profile()
     diagnosis_id = rig.approve_diagnosis()
-    home = rig.get("/").text
+    home = rig.get("/resumo").text
     assert f'href="/perfil/{profile_id}"' in home and f'href="/diagnostico/{diagnosis_id}"' in home
     assert "Propor estratégia" in home and "Propor diagnóstico" in home
 
@@ -245,7 +245,7 @@ def test_hostile_artifact_text_is_escaped_on_every_page(make_panel: MakePanel) -
     profile_id = rig.store.active(rig.brand_id, ArtifactType.PERFIL_MARCA)
     assert profile_id is not None
     paths = [
-        "/",
+        "/resumo",
         f"/perfil/{profile_id.id}",
         f"/diagnostico/{diagnosis_id}",
         f"/estrategia/{strategy_id}",
@@ -253,9 +253,9 @@ def test_hostile_artifact_text_is_escaped_on_every_page(make_panel: MakePanel) -
     for path in paths:
         html = rig.get(path).text
         assert "<img" not in html and "</resposta_do_utilizador>" not in html, path
-        assert "&lt;img src=x onerror=alert(1)&gt;" in html or path == "/", path
+        assert "&lt;img src=x onerror=alert(1)&gt;" in html or path == "/resumo", path
     rig.post(f"/estrategia/{strategy_id}/aprovar", {"decisao_0": "aceitar", "decisao_1": "recusar"})
-    home = rig.get("/").text
+    home = rig.get("/resumo").text
     assert "<img" not in home and "&lt;img" in home
 
 

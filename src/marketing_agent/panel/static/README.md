@@ -38,3 +38,35 @@ formularios simples (nao-HTMX): o segundo `submit` e cancelado e os botoes ficam
 Repoe o estado em `pageshow` quando a pagina vem da cache de retrocesso do browser.
 Tambem salta a substituicao periodica do lote (`#lote`, evento `htmx:beforeSwap`) quando ha um
 painel de edicao aberto ou um campo alterado, para nao apagar o que o responsavel escreve.
+
+## oficina/
+
+Modulos ES proprios, sem build, importmap ou dependencias externas. Carregados apenas na
+pagina da oficina (a pagina inicial `/`; `/oficina` so redireciona para la), com a mesma CSP do
+painel:
+
+- `estado.js`: GET sequencial a cada5s, If-None-Match, pausa quando oculto e espera10/20/40/60s
+  em falhas; 401/403 termina a sondagem. Exporta detetarTransicoes e urlInterna; dados ficam
+  na mesma origem (URLs com barras invertidas/controlos tambem sao recusadas).
+- `coluna.js`: foco itinerante com setas/Home/End e ativacao por Enter; seleciona o agente,
+  acompanha estados e pendencias e abre o parcial HTMX existente. Recargas serializadas
+  para impedir que respostas antigas substituam a selecao mais recente.
+- `main.js`: liga os modulos e deixa de afirmar estados apos tres falhas ou30s sem sucesso,
+  incluindo pedidos bloqueados. Recuperacao 304 restaura tambem o painel escolhido.
+
+Os dados entram no DOM por textContent. Nao ha POST nem chamadas ao LLM.
+Verificar com `pytest tests/browser -m e2e_browser`; os testes usam relogio simulado,
+falhas de rede e dados hostis. Continuam a existir os links normais para uso sem JavaScript.
+
+## vendor/three/
+
+Three.js0.186.1 local, MIT, com subconjunto de addons e sem Node/build.
+[Proveniencia, hashes e atualizacao](vendor/three/README.md).
+A ferramenta scripts/vendor_three.py verifica o SHA512 npm antes de ler o arquivo e altera
+apenas imports nus para caminhos relativos. A vista2D nao carrega estes ficheiros;
+a vista3D importa-os dinamicamente desde a tarefa9.
+
+
+A tarefa9 acrescenta a cena MIT da referencia e o wrapper oficina3d.js em oficina/.
+[Origem, licenca e alteracoes por ficheiro](oficina/README.md). Com WebGL e sem movimento
+reduzido, main.js importa a cena dinamicamente; os links2D permanecem disponiveis.

@@ -48,3 +48,9 @@ AgentDATA/secrets/*
 
 # Objetos de media locais
 var/
+
+# Biblioteca verificada e servida pelo painel (inclui a pasta build do pacote).
+!/src/marketing_agent/panel/static/vendor/
+/src/marketing_agent/panel/static/vendor/*
+!/src/marketing_agent/panel/static/vendor/three/
+!/src/marketing_agent/panel/static/vendor/three/**

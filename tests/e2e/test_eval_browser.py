@@ -32,6 +32,8 @@ def server(panel):
         queries=panel.app.state.panel.queries,
         content=panel.content,
         media=panel.media,
+        team=panel.app.state.panel.team,
+        oficina=panel.app.state.panel.oficina,
         evals=panel.app.state.panel.evals,
     )
     with socket.socket() as sock:
