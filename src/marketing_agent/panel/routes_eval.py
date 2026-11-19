@@ -14,7 +14,12 @@ from fastapi import APIRouter, Path, Query
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from pydantic import ValidationError
 
-from marketing_agent.db.models import EDIT_MINUTES, EVAL_ERROR_KINDS
+from marketing_agent.db.models import (
+    DECIDABLE_ROLES,
+    EDIT_MINUTES,
+    EVAL_ERROR_KINDS,
+    ROLE_DECISIONS,
+)
 from marketing_agent.evals.judging import JudgementInput
 from marketing_agent.evals.runs import EvalRunNotFound
 from marketing_agent.panel.context import (
@@ -177,3 +182,32 @@ def _read_replaces(fields: FormFields) -> str | None:
     if not _UUID_RE.fullmatch(value):
         raise InvalidForm("Pedido inválido.")
     return value
+
+
+@router.get("/avaliacao/{run_id}/relatorio")
+def show_report(run_id: RecordId, user: CurrentUser, panel: Panel) -> HTMLResponse:
+    """Relatorio da corrida revelada, com as decisoes em vigor e o formulario de decisao."""
+    report = panel.evals.report.build(panel.brand_id, run_id)
+    context: Context = {
+        "report": report,
+        "roles": DECIDABLE_ROLES,
+        "decisions": ROLE_DECISIONS,
+        "edit_values": EDIT_MINUTES,
+    }
+    return panel.renderer.page("eval_report.html", user, context)
+
+
+@router.post("/avaliacao/{run_id}/decisao", dependencies=[MUTATION_GUARD])
+def record_decision(
+    run_id: RecordId, user: CurrentUser, panel: Panel, fields: Fields
+) -> RedirectResponse:
+    """Regista a decisao de um papel (so acrescenta; a mais recente vale)."""
+    panel.evals.report.record_role_decision(
+        panel.brand_id,
+        run_id,
+        fields.get("papel", ""),
+        fields.get("decisao", ""),
+        fields.get("justificacao", ""),
+        user.login,
+    )
+    return see_other(f"{EVAL_URL}/{run_id}/relatorio")

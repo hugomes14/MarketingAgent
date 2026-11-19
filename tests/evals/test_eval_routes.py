@@ -217,3 +217,27 @@ def test_unknown_run_is_404_and_running_pairs_409(make_panel: MakePanel, evals: 
     assert rig.get(f"/avaliacao/{run_id}/par/1").status_code == 409
     assert len(evals.items(run_id)) == 4
     assert all(isinstance(item, EvalItem) for item in evals.items(run_id))
+
+
+def test_report_page_and_decision_from_the_panel(make_panel: MakePanel, evals: EvalRig) -> None:
+    run_id = ready_run(evals)
+    rig = make_panel([])
+    assert rig.get(f"/avaliacao/{run_id}/relatorio").status_code == 409
+    early = rig.post(f"/avaliacao/{run_id}/decisao", {"papel": "revisor", "decisao": "manter"})
+    assert early.status_code == 409
+    for index in (1, 2):
+        assert answer(rig, run_id, index) == 303
+    assert rig.post(f"/avaliacao/{run_id}/revelar").status_code == 303
+    page = rig.get(f"/avaliacao/{run_id}/relatorio")
+    assert page.status_code == 200
+    assert "Intervalo de Wilson a 95 %" in page.text and "Um só avaliador" in page.text
+    assert "manter, simplificar ou retirar" in page.text
+    decided = rig.post(
+        f"/avaliacao/{run_id}/decisao",
+        {"papel": "designer", "decisao": "simplificar", "justificacao": "<b>Pouco ganho</b>"},
+    )
+    assert decided.status_code == 303
+    html = rig.get(f"/avaliacao/{run_id}/relatorio").text
+    assert "&lt;b&gt;Pouco ganho&lt;/b&gt;" in html and "<b>Pouco ganho</b>" not in html
+    bad = rig.post(f"/avaliacao/{run_id}/decisao", {"papel": "designer", "decisao": "talvez"})
+    assert bad.status_code == 422

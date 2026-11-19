@@ -14,6 +14,7 @@ from marketing_agent.clock import Clock
 from marketing_agent.config import Settings
 from marketing_agent.content.review import ReviewService
 from marketing_agent.evals.judging import JudgingService
+from marketing_agent.evals.report import ReportService
 from marketing_agent.evals.runs import EvalRunDeps, EvalRunService
 from marketing_agent.feedback.service import FeedbackService
 from marketing_agent.harness.engine import AgentEngine
@@ -101,4 +102,8 @@ def build_eval_services(
         evals_dir=settings.evals_dir,
         package_max_cost_usd=settings.package_max_cost_usd,
     )
-    return EvalServices(runs=runs, judging=JudgingService(session_factory, media.library, clock))
+    return EvalServices(
+        runs=runs,
+        judging=JudgingService(session_factory, media.library, clock),
+        report=ReportService(session_factory, clock),
+    )

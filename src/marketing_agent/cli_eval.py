@@ -8,6 +8,7 @@ pacotes na fila (o worker processa-os). Fora de um terminal interativo, sem `--y
 import argparse
 import sys
 from collections.abc import Callable
+from pathlib import Path
 
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -18,6 +19,8 @@ from marketing_agent.clock import Clock
 from marketing_agent.config import Settings
 from marketing_agent.content.specs import load_content_specs
 from marketing_agent.evals.handler import EvalHandlerDeps, EvalPackageHandler
+from marketing_agent.evals.report import ReportService, RevealPending
+from marketing_agent.evals.report_markdown import render_markdown
 from marketing_agent.evals.runs import (
     EstimateChanged,
     EvalRunDeps,
@@ -149,10 +152,46 @@ def run_eval(
     return 0
 
 
+def write_report(
+    reports: ReportService,
+    session_factory: sessionmaker[Session],
+    run_id: str,
+    out_dir: Path,
+    clock: Clock,
+) -> Path:
+    """Escreve o relatorio Markdown de uma corrida revelada em `out_dir`; devolve o caminho.
+
+    Raises:
+        StartupError: corrida por revelar (ou de outra marca) ou pasta inexistente.
+    """
+    brand_id = resolve_single_brand(session_factory)
+    try:
+        report = reports.build(brand_id, run_id)
+    except RevealPending:
+        raise StartupError("a corrida nao existe ou ainda nao foi revelada no painel") from None
+    if not out_dir.is_dir():
+        raise StartupError(f"pasta de saida inexistente: {out_dir}")
+    now = clock.now()
+    stamp = now.strftime("%Y-%m-%dT%H-%M-%S+00-00")
+    path = out_dir / f"{stamp}_relatorio_avaliacao_{report.set_name}.md"
+    path.write_text(render_markdown(report, now.isoformat()), encoding="utf-8")
+    return path
+
+
 def add_eval_parser(sub: "argparse._SubParsersAction[argparse.ArgumentParser]") -> None:
-    """Subcomando `eval` com `run` (e, mais tarde, `report`)."""
+    """Subcomando `eval` com `run` e `report`."""
     evaluation = sub.add_parser("eval", help="Avaliação cega: percurso simples vs. especializado.")
     actions = evaluation.add_subparsers(dest="eval_command", required=True, metavar="ACAO")
     run = actions.add_parser("run", help="Mostra o custo máximo e cria uma corrida na fila.")
     run.add_argument("--set", required=True, dest="set_name", metavar="NOME")
     run.add_argument("--yes", action="store_true", help="Confirma sem perguntar.")
+    report = actions.add_parser(
+        "report", help="Escreve o relatório Markdown de uma corrida já revelada."
+    )
+    report.add_argument("run_id", metavar="CORRIDA")
+    report.add_argument(
+        "--out",
+        type=Path,
+        default=Path("AgentDATA/docs"),
+        help="Pasta de saída (por omissão AgentDATA/docs).",
+    )

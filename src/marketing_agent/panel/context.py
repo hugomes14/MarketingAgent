@@ -12,6 +12,7 @@ from marketing_agent.budget.controller import BudgetController
 from marketing_agent.clock import Clock
 from marketing_agent.content.review import ReviewService
 from marketing_agent.evals.judging import JudgingService
+from marketing_agent.evals.report import ReportService
 from marketing_agent.evals.runs import EvalRunService
 from marketing_agent.feedback.service import FeedbackService
 from marketing_agent.harness.engine import RunResult, RunStatus
@@ -55,10 +56,11 @@ class MediaServices:
 
 @dataclass(frozen=True)
 class EvalServices:
-    """Servicos da avaliacao cega (2C): corridas e respostas aos pares."""
+    """Servicos da avaliacao cega (2C): corridas, respostas aos pares e relatorio."""
 
     runs: EvalRunService
     judging: JudgingService
+    report: ReportService
 
 
 @dataclass(frozen=True)

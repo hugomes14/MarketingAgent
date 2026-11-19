@@ -34,12 +34,13 @@ from marketing_agent.budget.pricing import (
     load_model_prices,
     sync_model_prices,
 )
-from marketing_agent.cli_eval import build_eval_handler, build_eval_runs, run_eval
+from marketing_agent.cli_eval import build_eval_handler, build_eval_runs, run_eval, write_report
 from marketing_agent.cli_parser import build_parser
 from marketing_agent.clock import Clock, SystemClock
 from marketing_agent.config import IMAGE_ROUTE, Settings
 from marketing_agent.content.pipeline import ContentPipeline
 from marketing_agent.dev_proxy import DevProxyServer, build_dev_proxy
+from marketing_agent.evals.report import ReportService
 from marketing_agent.feedback.service import FeedbackService
 from marketing_agent.harness.engine import AgentEngine
 from marketing_agent.images.factory import ImageBackend, build_image_backend
@@ -391,8 +392,10 @@ def _run_worker(settings: Settings, lock: WorkerLock) -> int:
 
 
 def cmd_eval(args: argparse.Namespace) -> int:
-    """`eval run`: estimativa, confirmacao e corrida na fila (o worker gera os pacotes)."""
+    """`eval run` (estimativa, confirmacao e corrida na fila) ou `eval report` (Markdown)."""
     settings = load_settings()
+    if args.eval_command == "report":
+        return _eval_report(settings, args.run_id, args.out)
     with open_database(settings) as session_factory:
         clock = SystemClock()
         budget = build_budget_controller(settings, session_factory, clock)
@@ -414,6 +417,17 @@ def cmd_eval(args: argparse.Namespace) -> int:
             assume_yes=args.yes,
             is_interactive=sys.stdin.isatty(),
         )
+
+
+def _eval_report(settings: Settings, run_id: str, out_dir: Path) -> int:
+    """Escreve o relatorio de uma corrida revelada e imprime o caminho."""
+    with open_database(settings) as session_factory:
+        clock = SystemClock()
+        path = write_report(
+            ReportService(session_factory, clock), session_factory, run_id, out_dir, clock
+        )
+    print(path)
+    return 0
 
 
 def serve_forever(server: DevProxyServer) -> None:

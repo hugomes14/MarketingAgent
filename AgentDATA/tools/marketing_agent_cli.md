@@ -40,6 +40,7 @@ uv run marketing-agent --help
 | `serve [--host --port --allow-non-loopback]` | Serve o painel (uvicorn, `proxy_headers=False`) | `marketing-agent serve` |
 | `worker` | Processa a fila de geracao (Copywriter, Designer, Revisor) e os pacotes da avaliacao (`eval_package`, com prioridade inferior), um job de cada vez, ate `SIGINT`/`SIGTERM`; um so por base de dados | `marketing-agent worker` |
 | `eval run --set NOME [--yes]` | Mostra o custo maximo de uma corrida de avaliacao cega (pacotes x `PACKAGE_MAX_COST_USD`) e o gasto do mes, pede confirmacao e cria a corrida (`eval_run`, um `eval_item` e um job `eval_package` por brief e percurso). Fora de um terminal exige `--yes` (saida 2 sem ele). Conjunto invalido, pilar fora da estrategia ativa, item da base em falta, majorante alterado ou corrida em curso: saida 2 | `marketing-agent eval run --set briefs_v1` |
+| `eval report CORRIDA [--out PASTA]` | Escreve o relatorio Markdown de uma corrida ja revelada no painel (vitorias com intervalo de Wilson a 95 %, erros, minutos, custo e latencia por percurso, concordancia do Revisor, limitacoes, pergunta do D35 e decisoes registadas) em `PASTA` (por omissao `AgentDATA/docs`) e imprime o caminho. Corrida por revelar ou pasta inexistente: saida 2 | `marketing-agent eval report <id>` |
 | `dev-proxy --login L [--name N --listen H:P --upstream H:P]` | Proxy local de desenvolvimento que injeta a identidade | `marketing-agent dev-proxy --login dono@local` |
 
 ## Entradas
