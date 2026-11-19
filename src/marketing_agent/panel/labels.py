@@ -75,6 +75,21 @@ def _labeller(labels: Mapping[str, str]) -> Callable[[str], str]:
     return label
 
 
+_EVAL_STATUS: Final = {
+    "running": "a gerar pacotes",
+    "ready": "pronta para avaliar",
+    "revealed": "revelada",
+}
+_EVAL_ERROR: Final = {
+    "facto_errado": "Facto errado",
+    "alegacao_sem_apoio": "Alegação sem apoio",
+    "voz_errada": "Voz errada",
+    "imagem_inadequada": "Imagem inadequada",
+    "outro": "Outro",
+}
+_EDIT_MINUTES: Final = {"0": "0 min", "1": "1 min", "2_5": "2 a 5 min", "mais_5": "mais de 5 min"}
+
+
 def install_label_filters(environment: Environment) -> None:
     """Regista os filtros `lifecycle_label`, `verdict_label`, `violation_label`, etc."""
     environment.filters["layout_label"] = _labeller(
@@ -93,3 +108,6 @@ def install_label_filters(environment: Environment) -> None:
     environment.filters["revision_origin_label"] = _labeller(_REVISION_ORIGIN)
     environment.filters["feedback_label"] = _labeller(_FEEDBACK)
     environment.filters["feedback_kind_label"] = _labeller(_FEEDBACK_SHORT)
+    environment.filters["eval_status_label"] = _labeller(_EVAL_STATUS)
+    environment.filters["eval_error_label"] = _labeller(_EVAL_ERROR)
+    environment.filters["edit_minutes_label"] = _labeller(_EDIT_MINUTES)

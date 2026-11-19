@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% import "_macros.html" as ui %}
+{% block title %}Nova corrida{% endblock %}
+{% block content %}
+<h1>Nova corrida de avaliação</h1>
+<section class="cartao" id="estimativa">
+  <h2>Conjunto {{ estimate.set_name }} (versão {{ estimate.set_version }})</h2>
+  <dl class="valores">
+    <div><dt>Briefs</dt><dd>{{ estimate.briefs }}</dd></div>
+    <div><dt>Pacotes a gerar</dt><dd>{{ estimate.packages }}</dd></div>
+    <div><dt>Custo máximo</dt><dd>{{ estimate.upper_bound_usd|usd(2) }} USD</dd></div>
+    <div><dt>Teto por pacote</dt><dd>{{ estimate.package_max_cost_usd|usd(2) }} USD</dd></div>
+    <div><dt>Gasto do mês</dt><dd>{{ estimate.month_spent_usd|usd }} USD</dd></div>
+    <div><dt>Referência mensal</dt><dd>{{ estimate.month_reference_usd|usd(2) }} USD</dd></div>
+  </dl>
+  <p class="nota">O custo máximo é um teto, não uma previsão: cada pacote para quando chega ao teto por pacote. O gasto real aparece no relatório.</p>
+  <form method="post" action="/avaliacao">
+    {{ ui.csrf_field(csrf_token) }}
+    <input type="hidden" name="conjunto" value="{{ estimate.set_name }}">
+    <input type="hidden" name="majorante" value="{{ estimate.upper_bound_usd }}">
+    <button type="submit">Começar a corrida</button>
+  </form>
+</section>
+{% endblock %}

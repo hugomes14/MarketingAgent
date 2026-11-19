@@ -140,7 +140,7 @@ def app_endpoints(rig: PanelRig) -> list[Endpoint]:
 
 def concrete_path(template: str) -> str:
     def value(match: re.Match[str]) -> str:
-        fixed = {"{week}": "2026-W46", "{layout}": "foto_titulo"}
+        fixed = {"{week}": "2026-W46", "{layout}": "foto_titulo", "{index}": "1", "{side}": "a"}
         return fixed.get(match.group(0)) or str(uuid.uuid4())
 
     return re.sub(r"\{[^}]+\}", value, template)

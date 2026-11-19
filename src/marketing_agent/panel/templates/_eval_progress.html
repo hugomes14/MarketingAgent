@@ -1,0 +1,10 @@
+{# Progresso agregado: so contagens. Nada por percurso nem por brief (cegueira). #}
+<section class="cartao" id="progresso"{% if run.status == "running" %} hx-get="/avaliacao/{{ run.id }}/estado" hx-trigger="every 5s" hx-swap="outerHTML"{% endif %}>
+  <h2>Estado: {{ run.status|eval_status_label }}</h2>
+  <dl class="valores">
+    <div><dt>Pacotes terminados</dt><dd>{{ run.finished }} de {{ run.packages }}</dd></div>
+    <div><dt>Pacotes falhados</dt><dd>{{ run.failed }}</dd></div>
+    {% if progress %}<div><dt>Pares respondidos</dt><dd>{{ progress.judged }} de {{ progress.pairs }}</dd></div>{% endif %}
+  </dl>
+  {% if run.status == "running" %}<p class="nota">O worker gera os pacotes pela fila; esta página atualiza-se sozinha.</p>{% endif %}
+</section>

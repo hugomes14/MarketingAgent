@@ -40,9 +40,16 @@ from marketing_agent.interview.service import InterviewService
 from marketing_agent.llm.fake import FakeLlmClient
 from marketing_agent.llm.router import LlmRouter
 from marketing_agent.panel.app import create_app
-from marketing_agent.panel.assembly import build_content_services, build_media_services
+from marketing_agent.panel.assembly import (
+    build_content_services,
+    build_eval_services,
+    build_media_services,
+)
 from marketing_agent.panel.queries import PanelQueries
 from marketing_agent.strategy.service import StrategyService
+
+# Conjuntos de avaliacao pequenos dos testes (o `evals/` da raiz e o conjunto real).
+EVAL_SETS = Path(__file__).resolve().parents[1] / "fixtures" / "evals"
 
 
 @pytest.fixture
@@ -60,7 +67,7 @@ def make_panel(
     )
 
     def make(script: Script, *, peer: str = PEER) -> PanelRig:
-        settings = build_settings(media_dir=tmp_path / "media")
+        settings = build_settings(media_dir=tmp_path / "media", evals_dir=EVAL_SETS)
         media = build_media_services(settings, session_factory, clock)
         llm = FakeLlmClient(scripted(script), VISION_CAPABILITIES)
         route = RoleRoute(provider="fake", model_id="fake-1", capabilities=VISION_CAPABILITIES)
@@ -93,6 +100,9 @@ def make_panel(
             queries=PanelQueries(session_factory, store),
             content=content,
             media=media,
+            evals=build_eval_services(
+                settings, session_factory, store, strategy, budget, media, clock
+            ),
         )
         client = TestClient(app, client=(peer, 5000))
         return PanelRig(

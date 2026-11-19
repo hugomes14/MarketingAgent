@@ -9,9 +9,12 @@ cancele trabalhos e nunca os reclame.
 from sqlalchemy.orm import Session, sessionmaker
 
 from marketing_agent.artifacts.store import ArtifactStore
+from marketing_agent.budget.controller import BudgetController
 from marketing_agent.clock import Clock
 from marketing_agent.config import Settings
 from marketing_agent.content.review import ReviewService
+from marketing_agent.evals.judging import JudgingService
+from marketing_agent.evals.runs import EvalRunDeps, EvalRunService
 from marketing_agent.feedback.service import FeedbackService
 from marketing_agent.harness.engine import AgentEngine
 from marketing_agent.jobs.queue import JobQueue
@@ -19,7 +22,7 @@ from marketing_agent.kb.service import KbService
 from marketing_agent.media.brand_kit import BrandKitService
 from marketing_agent.media.library import MediaLibrary
 from marketing_agent.media.store import LocalMediaStore
-from marketing_agent.panel.context import ContentServices, MediaServices
+from marketing_agent.panel.context import ContentServices, EvalServices, MediaServices
 from marketing_agent.planning.service import PlanningService
 from marketing_agent.planning.validation import PlanLimits
 from marketing_agent.startup import content_job_lease
@@ -66,3 +69,36 @@ def build_media_services(
     """Liga a biblioteca de fotos e o kit de marca ao mesmo armazem local (`MEDIA_DIR`)."""
     library = MediaLibrary(session_factory, LocalMediaStore(settings.media_dir), clock)
     return MediaServices(library=library, kits=BrandKitService(session_factory, library, clock))
+
+
+def build_eval_services(
+    settings: Settings,
+    session_factory: sessionmaker[Session],
+    store: ArtifactStore,
+    strategy: StrategyService,
+    budget: BudgetController,
+    media: MediaServices,
+    clock: Clock,
+) -> EvalServices:
+    """Corridas de avaliacao (o painel so as cria; o worker gera os pacotes) e respostas cegas."""
+    queue = JobQueue(
+        session_factory, clock, content_job_lease(time_multiplier=settings.llm_time_multiplier)
+    )
+    deps = EvalRunDeps(
+        store=store,
+        strategy=strategy,
+        kb=KbService(session_factory, store, clock),
+        feedback=FeedbackService(session_factory, clock),
+        library=media.library,
+        kits=media.kits,
+        budget=budget,
+        queue=queue,
+    )
+    runs = EvalRunService(
+        session_factory,
+        deps,
+        clock,
+        evals_dir=settings.evals_dir,
+        package_max_cost_usd=settings.package_max_cost_usd,
+    )
+    return EvalServices(runs=runs, judging=JudgingService(session_factory, media.library, clock))

@@ -11,11 +11,12 @@ um valor e gastar outro.
 
 import secrets
 from dataclasses import dataclass
+from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Final
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -58,6 +59,10 @@ class RunInProgress(ValueError):
     """Ja ha uma corrida `running` nesta marca."""
 
 
+class EvalRunNotFound(LookupError):
+    """Nao ha corrida com este id nesta marca."""
+
+
 @dataclass(frozen=True)
 class RunEstimate:
     """O que o responsavel ve antes de comecar: pacotes, majorante e o mes ate agora."""
@@ -70,6 +75,26 @@ class RunEstimate:
     upper_bound_usd: Decimal
     month_spent_usd: Decimal
     month_reference_usd: Decimal
+
+
+@dataclass(frozen=True)
+class RunView:
+    """Uma corrida no painel: so contagens agregadas, nunca o estado por percurso.
+
+    O percurso simples acaba antes do especializado; mostrar que pacotes estao prontos, ou
+    em que ordem, quebraria a cegueira da avaliacao (spec 2C, secao 5).
+    """
+
+    id: str
+    set_name: str
+    set_version: int
+    status: str
+    created_at: datetime
+    packages: int
+    finished: int
+    failed: int
+    cost_usd: Decimal
+    estimate_usd: Decimal
 
 
 @dataclass(frozen=True)
@@ -151,6 +176,24 @@ class EvalRunService:
         except IntegrityError:
             # Corrida concorrente: o indice parcial so admite uma `running` por marca.
             raise RunInProgress("ja ha uma corrida de avaliacao em curso nesta marca") from None
+
+    def list_runs(self, brand_id: str) -> list[RunView]:
+        """Corridas da marca, das mais recentes."""
+        with self._session_factory() as session:
+            runs = session.scalars(
+                select(EvalRun)
+                .where(EvalRun.brand_id == brand_id)
+                .order_by(EvalRun.created_at.desc(), EvalRun.id)
+            ).all()
+            return [_run_view(session, run) for run in runs]
+
+    def run_view(self, brand_id: str, run_id: str) -> RunView | None:
+        """A corrida desta marca, ou `None` (inexistente ou de outra marca)."""
+        with self._session_factory() as session:
+            run = session.scalar(
+                select(EvalRun).where(EvalRun.id == run_id, EvalRun.brand_id == brand_id)
+            )
+            return None if run is None else _run_view(session, run)
 
     def running_run_id(self, brand_id: str) -> str | None:
         """Id da corrida `running` da marca, se houver."""
@@ -321,6 +364,29 @@ def close_run_if_done(session: Session, run_id: str) -> bool:
         return False
     run.status = "ready"
     return True
+
+
+def _run_view(session: Session, run: EvalRun) -> RunView:
+    total, finished, failed, cost = session.execute(
+        select(
+            func.count(),
+            func.count().filter(EvalItem.status.in_(TERMINAL_ITEM_STATUSES)),
+            func.count().filter(EvalItem.status == "failed"),
+            func.coalesce(func.sum(EvalItem.cost_usd), Decimal(0)),
+        ).where(EvalItem.run_id == run.id)
+    ).one()
+    return RunView(
+        id=run.id,
+        set_name=run.set_name,
+        set_version=run.set_version,
+        status=run.status,
+        created_at=run.created_at,
+        packages=total,
+        finished=finished,
+        failed=failed,
+        cost_usd=Decimal(cost),
+        estimate_usd=run.estimate_usd,
+    )
 
 
 def _fixed_brief(brief: EvalBrief, kb: dict[str, KbEntry]) -> FixedBrief:

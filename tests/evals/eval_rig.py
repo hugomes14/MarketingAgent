@@ -32,6 +32,7 @@ from marketing_agent.config import RoleRoute
 from marketing_agent.content.specs import load_content_specs
 from marketing_agent.db.models import EvalItem, EvalRun, Job
 from marketing_agent.evals.handler import EvalHandlerDeps, EvalPackageHandler
+from marketing_agent.evals.judging import JudgingService
 from marketing_agent.evals.runs import EvalRunDeps, EvalRunService
 from marketing_agent.evals.simple_path import load_simple_spec
 from marketing_agent.feedback.service import FeedbackService
@@ -128,6 +129,7 @@ class EvalRig:
     kits: BrandKitService
     photo_id: str
     engine: AgentEngine
+    judging: JudgingService
 
     def add_price_item(self, key: str = "pao", amount: str = "12.50") -> str:
         entry = NewKbEntry(
@@ -251,5 +253,5 @@ def build_eval_rig(
     )
     return EvalRig(
         factory, clock, brand_id, llm, generator, runs, handler, queue, worker, kb, feedback,
-        library, kits, photo_id, engine,
+        library, kits, photo_id, engine, JudgingService(factory, library, clock),
     )  # fmt: skip

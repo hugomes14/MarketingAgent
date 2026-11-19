@@ -22,6 +22,20 @@ from marketing_agent.content.review_errors import (
     PostNotFound,
     StaleRevision,
 )
+from marketing_agent.evals.judging import (
+    AlreadyRevealed,
+    PairNotFound,
+    RevealBlocked,
+    RunNotReady,
+    StaleJudgement,
+)
+from marketing_agent.evals.runs import (
+    EstimateChanged,
+    EvalRunNotFound,
+    EvalSetMismatch,
+    RunInProgress,
+)
+from marketing_agent.evals.sets import EvalSetError
 from marketing_agent.feedback.service import FeedbackError
 from marketing_agent.images.codec import ImageRejected
 from marketing_agent.images.layouts import LayoutError
@@ -121,6 +135,23 @@ _RESPONSES: Final[dict[type[Exception], tuple[int, str]]] = {
     ProfileRequestFailed: (502, UPSTREAM_MESSAGE),
     InterviewStartFailed: (502, UPSTREAM_MESSAGE),
     UpstreamFailure: (502, UPSTREAM_MESSAGE),
+    # Avaliacao cega (2C): mensagens fixas, nunca nomes de briefs, ids ou valores do conjunto.
+    EvalSetError: (422, "Conjunto de avaliação inválido ou inexistente."),
+    EvalSetMismatch: (
+        422,
+        "O conjunto não serve a estratégia ativa: confirme os pilares e os itens da base.",
+    ),
+    EstimateChanged: (
+        409,
+        "O custo máximo mudou desde que o viu. Reveja a estimativa e confirme de novo.",
+    ),
+    RunInProgress: (409, "Já há uma corrida de avaliação em curso."),
+    EvalRunNotFound: (404, NOT_FOUND_MESSAGE),
+    RunNotReady: (409, "A corrida ainda está a gerar os pacotes ou não existe."),
+    PairNotFound: (404, NOT_FOUND_MESSAGE),
+    StaleJudgement: (409, f"A resposta deste par mudou entretanto. {RELOAD_HINT}"),
+    AlreadyRevealed: (409, "A corrida já foi revelada: as respostas estão fechadas."),
+    RevealBlocked: (409, "Faltam pares por responder antes de revelar."),
 }
 
 
