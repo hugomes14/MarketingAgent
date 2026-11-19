@@ -38,7 +38,8 @@ uv run marketing-agent --help
 | `recover-reservations [--older-than-minutes N]` | Marca reservas abertas antigas como `unknown_outcome`; N abaixo do minimo seguro e recusado (saida 2) e, omitido, usa o minimo: 8 min com `LLM_TIME_MULTIPLIER=1`, 35 min com 5 (= `worker_stale_after` arredondado para cima) | `marketing-agent recover-reservations --older-than-minutes 10` (so com multiplicador 1) |
 | `migrate` | Alembic `upgrade head` | `marketing-agent migrate` |
 | `serve [--host --port --allow-non-loopback]` | Serve o painel (uvicorn, `proxy_headers=False`) | `marketing-agent serve` |
-| `worker` | Processa a fila de geracao (Copywriter, Designer, Revisor), um job de cada vez, ate `SIGINT`/`SIGTERM`; um so por base de dados | `marketing-agent worker` |
+| `worker` | Processa a fila de geracao (Copywriter, Designer, Revisor) e os pacotes da avaliacao (`eval_package`, com prioridade inferior), um job de cada vez, ate `SIGINT`/`SIGTERM`; um so por base de dados | `marketing-agent worker` |
+| `eval run --set NOME [--yes]` | Mostra o custo maximo de uma corrida de avaliacao cega (pacotes x `PACKAGE_MAX_COST_USD`) e o gasto do mes, pede confirmacao e cria a corrida (`eval_run`, um `eval_item` e um job `eval_package` por brief e percurso). Fora de um terminal exige `--yes` (saida 2 sem ele). Conjunto invalido, pilar fora da estrategia ativa, item da base em falta, majorante alterado ou corrida em curso: saida 2 | `marketing-agent eval run --set briefs_v1` |
 | `dev-proxy --login L [--name N --listen H:P --upstream H:P]` | Proxy local de desenvolvimento que injeta a identidade | `marketing-agent dev-proxy --login dono@local` |
 
 ## Entradas

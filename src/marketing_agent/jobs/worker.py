@@ -14,6 +14,7 @@ from typing import Protocol
 from marketing_agent.content.pipeline import GenerationOutcome
 from marketing_agent.jobs.errors import describe_error
 from marketing_agent.jobs.queue import (
+    EVAL_PACKAGE_JOB,
     GENERATE_POST_JOB,
     REVIEW_POST_JOB,
     ClaimedJob,
@@ -43,6 +44,18 @@ class JobHandler(Protocol):
         ...
 
 
+class EvalJobHandler(Protocol):
+    """Quem processa os jobs `eval_package` da avaliacao (2C)."""
+
+    def handle(self, job: ClaimedJob) -> str:
+        """Processa e fecha o job; erros inesperados sobem ao worker."""
+        ...
+
+    def fail_job(self, job: ClaimedJob, message: str, retry: bool) -> JobFailure | None:
+        """Falha o job (e, se ficou terminal, o item da avaliacao)."""
+        ...
+
+
 class LockGuard(Protocol):
     """O lock de worker unico: o worker so precisa de saber se a ligacao que o guarda vive."""
 
@@ -61,7 +74,7 @@ def require_lock_alive(lock: LockGuard) -> None:
 
 
 class Worker:
-    """Consome a fila de `generate_post` ate lhe pedirem para parar."""
+    """Consome a fila (`generate_post`, `review_post` e `eval_package`) ate lhe pedirem parar."""
 
     def __init__(
         self,
@@ -73,6 +86,8 @@ class Worker:
         recover_reservations: Callable[[], int] | None = None,
         lock: LockGuard | None = None,
         recover_orphans: Callable[[], int] | None = None,
+        evals: EvalJobHandler | None = None,
+        reconcile_evals: Callable[[], int] | None = None,
     ) -> None:
         """`sleep` substitui a espera de fila vazia (testes); por omissao `stop.wait`, que acorda
         logo que `stop` e ativado. `recover_reservations` corre no arranque e devolve quantas
@@ -83,6 +98,10 @@ class Worker:
         arrancar. `recover_orphans` corre no arranque e devolve quantos jobs `running` recolocou
         (so e correto com o lock tomado: sao orfaos de um worker morto). Sem eles (testes) so as
         leases vencidas sao recuperadas.
+
+        `evals` processa os `eval_package` (sem ele falham como tipo desconhecido);
+        `reconcile_evals` corre no arranque, depois de recolocar os jobs, e fecha os itens de
+        avaliacao cujo job terminou sem os concluir.
         """
         self._queue = queue
         self._pipeline = pipeline
@@ -91,6 +110,8 @@ class Worker:
         self._recover_reservations = recover_reservations
         self._lock = lock
         self._recover_orphans = recover_orphans
+        self._evals = evals
+        self._reconcile_evals = reconcile_evals
 
     def _ensure_lock_alive(self) -> None:
         """Sem o lock nao se reclama nada: levanta `WorkerLockLost` se a ligacao se perdeu."""
@@ -107,18 +128,23 @@ class Worker:
         job = self._queue.claim(self._worker_id)
         if job is None:
             return False
+        is_eval = job.type == EVAL_PACKAGE_JOB and self._evals is not None
+        fail_job = self._evals.fail_job if is_eval and self._evals else self._pipeline.fail_job
         try:
+            outcome: str
             if job.type == GENERATE_POST_JOB:
                 outcome = self._pipeline.generate(job)
             elif job.type == REVIEW_POST_JOB:
                 outcome = self._pipeline.review_manual(job)
+            elif is_eval and self._evals is not None:
+                outcome = self._evals.handle(job)
             else:
                 self._pipeline.fail_job(job, "UnknownJobType", retry=False)
                 return True
         except Exception as exc:
             logger.error("job %s falhou: %s", job.id, type(exc).__name__)
             # `None` = lease perdida: o job ja e de outro worker e nao se altera nada.
-            self._pipeline.fail_job(job, describe_error(exc), retry=True)
+            fail_job(job, describe_error(exc), retry=True)
         else:
             logger.info("job %s: %s", job.id, outcome)
         return True
@@ -133,11 +159,14 @@ class Worker:
         orphans = self._recover_orphans() if self._recover_orphans is not None else 0
         requeued = orphans + self._queue.requeue_expired()
         reservations = self._recover_reservations() if self._recover_reservations else 0
+        closed = self._reconcile_evals() if self._reconcile_evals is not None else 0
         logger.info(
-            "arranque: %d job(s) recolocado(s) (%d orfao(s)), %d reserva(s) orfa(s)",
+            "arranque: %d job(s) recolocado(s) (%d orfao(s)), %d reserva(s) orfa(s), "
+            "%d item(ns) de avaliacao fechado(s)",
             requeued,
             orphans,
             reservations,
+            closed,
         )
 
     def run_forever(self, stop: threading.Event) -> None:

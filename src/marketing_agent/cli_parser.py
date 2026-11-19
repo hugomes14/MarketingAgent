@@ -3,6 +3,8 @@
 import argparse
 from pathlib import Path
 
+from marketing_agent.cli_eval import add_eval_parser
+
 MAX_PORT = 65535
 
 
@@ -54,6 +56,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     _add_dev_proxy(sub)
+    add_eval_parser(sub)
     return parser
 
 

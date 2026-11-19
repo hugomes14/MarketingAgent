@@ -111,11 +111,16 @@ def _reviewer_notes(review: Revisao) -> str:
 
 @dataclass(frozen=True)
 class GeneratedPackage:
-    """Pacote final: texto com o parecer efetivo, imagem final e se o Revisor viu a imagem."""
+    """Pacote final: texto com o parecer efetivo, imagem final e se o Revisor viu a imagem.
+
+    `all_violations` junta as violacoes de TODAS as voltas do Revisor (sem repetidos, pela ordem
+    em que apareceram); a avaliacao do 2C mede com elas a concordancia com o responsavel.
+    """
 
     text: GeneratedText
     design: DesignResult
     image_checked: bool
+    all_violations: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -252,6 +257,7 @@ class _PackageRun:
         self._draft: RascunhoTexto | None = None
         self._copy_run_id = ""
         self._last: _Complete | None = None
+        self._seen_violations: list[str] = []
 
     def preset_inputs(self, inputs: DesignInputs | None) -> None:
         """Media do Designer fixada pelo chamador (corridas de avaliacao); `None` le a ativa."""
@@ -274,6 +280,7 @@ class _PackageRun:
             review = self._review(design)
             if not isinstance(review, Revisao):
                 return review
+            self._remember(review)
             self._last = _Complete(self._require_draft(), self._copy_run_id, design, review, rounds)
             if _effective(review) != "rever" or rounds == MAX_REVIEW_ROUNDS:
                 return self._ship(self._last, None)
@@ -284,6 +291,11 @@ class _PackageRun:
             is_copy_needed = not (violations and violations <= VISUAL_VIOLATIONS)
             notes = _reviewer_notes(review)
         raise AssertionError("inalcancavel: a ultima volta devolve sempre")
+
+    def _remember(self, review: Revisao) -> None:
+        for violation in review.violacoes:
+            if violation not in self._seen_violations:
+                self._seen_violations.append(violation)
 
     def _trigger(self, step: Literal["copy", "design", "review"]) -> str:
         return run_trigger(step, self._request.request_id, self._request.scope)
@@ -430,7 +442,9 @@ class _PackageRun:
             complete.rounds,
             complete.copy_run_id,
         )
-        return GeneratedPackage(text, complete.design, review.imagem_verificada)
+        return GeneratedPackage(
+            text, complete.design, review.imagem_verificada, tuple(self._seen_violations)
+        )
 
 
 def _unavailable_note(reason: str) -> str:
