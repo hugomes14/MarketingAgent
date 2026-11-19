@@ -69,6 +69,8 @@ class Settings(BaseSettings):
     package_max_cost_usd: Decimal = Field(default=Decimal("1.50"), gt=0)
     model_prices_path: Path = Path("config/model_prices.yaml")
     media_dir: Path = Path("var/media")
+    # Pasta dos conjuntos de avaliacao versionados do 2C (`<nome>.yaml`).
+    evals_dir: Path = Path("evals")
 
     @field_validator(
         "anthropic_api_key_file",

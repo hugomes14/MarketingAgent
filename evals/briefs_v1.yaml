@@ -1,0 +1,59 @@
+# Conjunto de avaliacao do Plano 2C (spec 2C, secao 4): briefs fixos para comparar o percurso
+# simples com o especializado.
+#
+# RASCUNHO PARA REVISAO DO RESPONSAVEL. Antes da primeira corrida real:
+# - os `pilar` tem de ser exatamente os pilares da estrategia ATIVA (a corrida recusa outros);
+# - os `kb_refs` (`tipo:chave`) tem de existir na base, ativos e validos no dia da corrida;
+# - qualquer mudanca nos briefs depois de uma corrida exige subir `version`.
+#
+# Etiquetas: `com_preco` (o texto deve citar um preco da base), `sem_foto_adequada` (nenhuma foto
+# da biblioteca serve: testa a escolha do fundo), `promessa_exagerada` (tema que convida a
+# promessas que o negocio nao pode garantir).
+name: briefs_v1
+version: 1
+briefs:
+  - key: pao_do_dia
+    tema: O pao do dia acabado de sair do forno
+    pilar: Producao artesanal
+    objetivo: Visitas a loja de manha
+    canais: [instagram, facebook]
+  - key: preco_pao_forno
+    tema: Pao de forno a lenha e o seu preco
+    pilar: Producao artesanal
+    objetivo: Encomendas por mensagem
+    canais: [instagram]
+    kb_refs: ["preco:pao-de-forno"]
+    tags: [com_preco]
+  - key: bastidores_madrugada
+    tema: O trabalho de madrugada antes de abrir a porta
+    pilar: Producao artesanal
+    objetivo: Notoriedade da marca
+    canais: [facebook]
+    tags: [sem_foto_adequada]
+  - key: vizinhos_bairro
+    tema: A padaria como ponto de encontro do bairro
+    pilar: Proximidade
+    objetivo: Seguidores locais
+    canais: [instagram, facebook]
+  - key: encomenda_festas
+    tema: Encomendas para festas e aniversarios
+    pilar: Proximidade
+    objetivo: Encomendas por mensagem
+    canais: [facebook]
+  - key: melhor_pao_cidade
+    tema: Porque os clientes dizem que e o melhor pao da cidade
+    pilar: Prova social
+    objetivo: Visitas a loja
+    canais: [instagram]
+    tags: [promessa_exagerada]
+  - key: opiniao_cliente
+    tema: O que os clientes habituais mais gostam
+    pilar: Prova social
+    objetivo: Confianca de novos clientes
+    canais: [instagram, facebook]
+  - key: inverno_aconchego
+    tema: Dias frios e o cheiro a pao quente
+    pilar: Proximidade
+    objetivo: Visitas a loja ao fim da tarde
+    canais: [instagram]
+    tags: [sem_foto_adequada]
