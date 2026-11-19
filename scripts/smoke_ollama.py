@@ -164,7 +164,8 @@ class PostOutcome:
 
     `layout`, `components` (rotulos `tipo:ref`) e `image_checked` (`imagem_verificada` do
     Revisor) so existem se a revisao mais recente tem imagem. `timings` sao as execucoes do job
-    do post (papel e segundos), por ordem de inicio.
+    do post (papel e segundos), por ordem de inicio. `violations` e `review_notes` sao o parecer
+    guardado na revisao mais recente: mostram porque o Revisor pediu `rever`.
     """
 
     slot_key: str
@@ -176,6 +177,8 @@ class PostOutcome:
     components: tuple[str, ...] = ()
     image_checked: bool | None = None
     timings: tuple[tuple[str, float], ...] = ()
+    violations: tuple[str, ...] = ()
+    review_notes: str | None = None
 
 
 @dataclass
@@ -359,6 +362,23 @@ def require_models(base_url: str, required: Collection[str]) -> None:
 # ---------------------------------------------------------------- relatorio
 
 
+# Teto das notas do Revisor no relatorio: chegam para diagnosticar sem inundar o terminal.
+MAX_REPORT_NOTES_CHARS = 300
+
+
+def _review_lines(post: PostOutcome) -> list[str]:
+    """Violacoes e notas do parecer mais recente, numa linha cada (notas cortadas e sem quebras)."""
+    if post.verdict is None:
+        return []
+    lines = [f"      violacoes: {', '.join(post.violations) or 'nenhuma'}"]
+    if post.review_notes:
+        notes = " ".join(post.review_notes.split())
+        if len(notes) > MAX_REPORT_NOTES_CHARS:
+            notes = notes[:MAX_REPORT_NOTES_CHARS] + "…"
+        lines.append(f"      notas do revisor: {notes}")
+    return lines
+
+
 def _image_lines(post: PostOutcome) -> list[str]:
     """Layout, componentes, `imagem_verificada` e tempos das execucoes de uma publicacao."""
     lines = []
@@ -389,6 +409,7 @@ def format_report(report: SmokeReport) -> str:
             f"  {post.slot_key}: {post.lifecycle}, voltas do revisor={post.review_rounds}, "
             f"parecer={post.verdict or '-'}{error}"
         )
+        lines += _review_lines(post)
         lines += _image_lines(post)
     lines.append(f"Voltas do revisor (total): {sum(p.review_rounds for p in report.posts)}")
     checked = sum(1 for post in report.posts if post.image_checked)
@@ -729,6 +750,8 @@ def post_outcomes(session_factory: sessionmaker[Session], week: str) -> list[Pos
                     else (),
                     image_checked=revision.review_image_checked if revision and has_image else None,
                     timings=_post_timings(session, post.id),
+                    violations=tuple(revision.review_violations) if revision else (),
+                    review_notes=revision.review_notes if revision else None,
                 )
             )
     return outcomes
