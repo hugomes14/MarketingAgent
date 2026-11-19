@@ -254,6 +254,26 @@ def visual_draft(**campos: str | None) -> Script:
     return [_json_response({**_VISUAL_DEFAULTS, **campos})]
 
 
+def simple_package(texto: Mapping[str, object] | None = None, **visual: str | None) -> Script:
+    """Pacote do percurso simples (2C) valido por omissao: o texto e o visual de omissao.
+
+    `texto` substitui campos do texto de omissao (o de `caption_draft`); `visual` substitui
+    campos do visual de omissao (`fundo_ia_titulo`), como em `visual_draft`.
+    """
+    unknown = sorted(set(visual) - set(_VISUAL_DEFAULTS))
+    if unknown:
+        raise ValueError(f"campo desconhecido de RascunhoVisual: {unknown}")
+    text_body: dict[str, object] = {
+        "legenda": "Pao quente todas as manhas, feito com receitas de familia.",
+        "hashtags": list(_DEFAULT_HASHTAGS),
+        "apelo_a_acao": "Passe pela loja e experimente.",
+        "alt_text": "Pao artesanal acabado de sair do forno.",
+        "alegacoes": [],
+        **(texto or {}),
+    }
+    return [_json_response({"texto": text_body, "visual": {**_VISUAL_DEFAULTS, **visual}})]
+
+
 def review(
     veredicto: str,
     violacoes: Sequence[str] = (),

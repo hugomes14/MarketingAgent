@@ -1,10 +1,15 @@
 """Escolha do cliente e do modelo por papel, validando as capacidades exigidas."""
 
 from collections.abc import Mapping
+from typing import Final
 
 from marketing_agent.config import RoleRoute
 from marketing_agent.harness.spec import AgentSpec
 from marketing_agent.llm.types import LlmClient
+
+# Papel sem rota propria que herda a de outro. O percurso simples da avaliacao (2C) usa por
+# omissao o modelo do Copywriter: a comparacao com o percurso especializado e justa.
+ROUTE_FALLBACKS: Final = {"simples": "copywriter"}
 
 
 class RouteNotConfigured(Exception):
@@ -23,8 +28,14 @@ class LlmRouter:
         self._clients = clients
 
     def resolve(self, spec: AgentSpec) -> tuple[LlmClient, RoleRoute]:
-        """Devolve (cliente, rota) do papel; levanta `RouteNotConfigured` ou `MissingCapability`."""
+        """Devolve (cliente, rota) do papel; levanta `RouteNotConfigured` ou `MissingCapability`.
+
+        Sem rota propria, um papel de `ROUTE_FALLBACKS` usa a rota do papel indicado.
+        """
         route = self._routes.get(spec.role)
+        fallback = ROUTE_FALLBACKS.get(spec.role)
+        if route is None and fallback is not None:
+            route = self._routes.get(fallback)
         if route is None:
             raise RouteNotConfigured(f"papel {spec.role!r} sem rota configurada")
         client = self._clients.get(route.provider)

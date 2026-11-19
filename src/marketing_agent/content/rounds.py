@@ -84,7 +84,7 @@ def _as_typed[T](result: RunResult, expected: type[T], role: str) -> T | RunResu
 _CONFIGURATION_FAILURES = ("MissingCapability", "RouteNotConfigured", "UnknownPrice")
 
 
-def _raise_if_configuration(result: RunResult, role: str) -> None:
+def raise_if_configuration(result: RunResult, role: str) -> None:
     """Falha de configuracao (so nomes de papel, modelo e capacidades) sobe com o seu texto."""
     message = result.message or ""
     if any(message.startswith(f"{name}: ") for name in _CONFIGURATION_FAILURES):
@@ -93,7 +93,7 @@ def _raise_if_configuration(result: RunResult, role: str) -> None:
 
 def _raise_failed(result: RunResult, role: str) -> NoReturn:
     """Falha de configuracao (sem texto do modelo) ou erro inesperado de mensagem fixa."""
-    _raise_if_configuration(result, role)
+    raise_if_configuration(result, role)
     raise AgentRunFailed(f"a execucao do {role} falhou ({result.run_id or 'sem execucao'})")
 
 
@@ -160,7 +160,7 @@ def _designer_output(result: RunResult) -> DesignResult | _NoImage:
             raise TypeError(f"designer: saida de tipo inesperado ({type(result.output).__name__})")
         return result.output
     if result.status is RunStatus.FAILED:
-        _raise_if_configuration(result, "designer")
+        raise_if_configuration(result, "designer")
     return _NoImage(describe_image_stop(result), is_image_limit(result))
 
 
@@ -190,12 +190,14 @@ class PackageRounds:
         *,
         scope: TriggerScope = "post",
         guard: PackageCostGuard | None = None,
+        inputs: DesignInputs | None = None,
     ) -> PackageOutcome:
         """Uma geracao completa do pacote; as execucoes ficam ligadas ao `job_id` (trigger).
 
         `scope` separa os pedidos do lote (`post`) dos da avaliacao (`eval`, com o id do item
         como `job_id`). `guard` impoe o teto de custo do pacote antes de cada execucao: sem
         teto restante, o papel seguinte para como num limite (`PackageCostExceeded`).
+        `inputs` fixa a media do Designer (kit, logotipo e fotos); sem eles le-se a media ativa.
 
         Cada passagem corre o Copywriter (so se o parecer apontou o texto), o Designer e o
         Revisor com a imagem final. Em `rever`, no maximo `MAX_REVIEW_ROUNDS` voltas:
@@ -215,6 +217,7 @@ class PackageRounds:
         run = _PackageRun(
             self, _Request(job_id, brand_id, scope, guard), payload, owner_comment, allowance
         )
+        run.preset_inputs(inputs)
         return run.execute()
 
 
@@ -249,6 +252,10 @@ class _PackageRun:
         self._draft: RascunhoTexto | None = None
         self._copy_run_id = ""
         self._last: _Complete | None = None
+
+    def preset_inputs(self, inputs: DesignInputs | None) -> None:
+        """Media do Designer fixada pelo chamador (corridas de avaliacao); `None` le a ativa."""
+        self._inputs = inputs
 
     def execute(self) -> PackageOutcome:
         """Corre as passagens e devolve o pacote final, a falha de imagem ou a paragem."""

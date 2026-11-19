@@ -63,3 +63,27 @@ def test_router_missing_capability_raises() -> None:
     router = LlmRouter(_routes(), {"fake": limited})
     with pytest.raises(MissingCapability, match="json_schema"):
         router.resolve(_spec("diretor"))
+
+
+def test_simples_route_falls_back_to_copywriter() -> None:
+    openai_client = FakeLlmClient([])
+    router = LlmRouter(_routes(), {"fake": FakeLlmClient([]), "openai": openai_client})
+    client, route = router.resolve(_spec("simples"))
+    assert client is openai_client and route.model_id == "m2"
+
+
+def test_explicit_simples_route_wins() -> None:
+    routes = {
+        **_routes(),
+        "simples": RoleRoute(provider="fake", model_id="m9", capabilities=_TEXT_JSON),
+    }
+    fake_client = FakeLlmClient([])
+    router = LlmRouter(routes, {"fake": fake_client, "openai": FakeLlmClient([])})
+    client, route = router.resolve(_spec("simples"))
+    assert client is fake_client and route.model_id == "m9"
+
+
+def test_fallback_is_only_for_listed_roles() -> None:
+    router = LlmRouter(_routes(), {"fake": FakeLlmClient([]), "openai": FakeLlmClient([])})
+    with pytest.raises(RouteNotConfigured, match="revisor"):
+        router.resolve(_spec("revisor"))
