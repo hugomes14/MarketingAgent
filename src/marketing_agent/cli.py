@@ -282,6 +282,7 @@ def _build_pipeline(
         library,
         BrandKitService(session_factory, library, clock),
         settings.image_quality,
+        package_max_cost_usd=settings.package_max_cost_usd,
     )
 
 

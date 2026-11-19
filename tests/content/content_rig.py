@@ -289,6 +289,7 @@ def build_rig(
     generator: ImageGenerator | None = None,
     with_kit: bool = True,
     abort_check: Callable[[], None] | None = None,
+    package_max_cost_usd: Decimal = Decimal("1.50"),
 ) -> ContentRig:
     free = PriceTier(0, Decimal(0), Decimal(0))
     per_image = tuple(ImagePrice(q, SIZE, Decimal(image_price)) for q in ("low", "medium", "high"))
@@ -331,7 +332,7 @@ def build_rig(
     photo_id = _seed_media(library, kits, brand_id, with_kit)
     pipeline = ContentPipeline(
         session_factory, engine, kb, feedback, queue, clock, store, strategy,
-        library, kits, "medium",
+        library, kits, "medium", package_max_cost_usd=package_max_cost_usd,
     )  # fmt: skip
     strategy_id = _activate_strategy(store, strategy, brand_id)
     plan = store.create(brand_id, ArtifactType.PLANO, {"semana": WEEK, "slots": []})

@@ -18,7 +18,8 @@ from marketing_agent.content.loops import (
     ReviewImage,
     ReviewPayload,
 )
-from marketing_agent.content.package_costs import run_trigger
+from marketing_agent.content.package_costs import TriggerScope, run_trigger
+from marketing_agent.content.package_guard import PackageCostGuard, run_capped
 from marketing_agent.content.package_media import DesignInputs, DesignMedia, ImageUnavailable
 from marketing_agent.content.revision_store import GeneratedText
 from marketing_agent.content.schemas import (
@@ -186,8 +187,15 @@ class PackageRounds:
         payload: CopyPayload,
         owner_comment: str | None,
         allowance: ImageAllowance,
+        *,
+        scope: TriggerScope = "post",
+        guard: PackageCostGuard | None = None,
     ) -> PackageOutcome:
         """Uma geracao completa do pacote; as execucoes ficam ligadas ao `job_id` (trigger).
+
+        `scope` separa os pedidos do lote (`post`) dos da avaliacao (`eval`, com o id do item
+        como `job_id`). `guard` impoe o teto de custo do pacote antes de cada execucao: sem
+        teto restante, o papel seguinte para como num limite (`PackageCostExceeded`).
 
         Cada passagem corre o Copywriter (so se o parecer apontou o texto), o Designer e o
         Revisor com a imagem final. Em `rever`, no maximo `MAX_REVIEW_ROUNDS` voltas:
@@ -204,8 +212,20 @@ class PackageRounds:
         passagem) com uma nota fixa (`IMAGE_LIMIT_NOTE` ou `FINAL_REVIEW_UNAVAILABLE_NOTE`).
         Na 1.a passagem essas paragens e falhas mantem-se: `RunResult` ou `AgentRunFailed`.
         """
-        run = _PackageRun(self, job_id, brand_id, payload, owner_comment, allowance)
+        run = _PackageRun(
+            self, _Request(job_id, brand_id, scope, guard), payload, owner_comment, allowance
+        )
         return run.execute()
+
+
+@dataclass(frozen=True)
+class _Request:
+    """Identidade de um pedido de geracao: o id, a marca, o ambito dos triggers e o teto."""
+
+    request_id: str
+    brand_id: str
+    scope: TriggerScope
+    guard: PackageCostGuard | None
 
 
 class _PackageRun:
@@ -214,15 +234,14 @@ class _PackageRun:
     def __init__(
         self,
         rounds: PackageRounds,
-        job_id: str,
-        brand_id: str,
+        request: _Request,
         payload: CopyPayload,
         owner_comment: str | None,
         allowance: ImageAllowance,
     ) -> None:
         self._r = rounds
-        self._job_id = job_id
-        self._brand_id = brand_id
+        self._request = request
+        self._brand_id = request.brand_id
         self._payload = payload
         self._owner_comment = owner_comment
         self._allowance = allowance
@@ -259,6 +278,9 @@ class _PackageRun:
             notes = _reviewer_notes(review)
         raise AssertionError("inalcancavel: a ultima volta devolve sempre")
 
+    def _trigger(self, step: Literal["copy", "design", "review"]) -> str:
+        return run_trigger(step, self._request.request_id, self._request.scope)
+
     def _no_quota(self) -> bool:
         return self._allowance.remaining == 0
 
@@ -286,12 +308,12 @@ class _PackageRun:
     def _copy(self, notes: str | None) -> _Stop | None:
         """Corre o Copywriter; `None` se produziu o rascunho, senao a paragem a devolver."""
         payload = replace(self._payload, reviewer_notes=notes, owner_comment=self._owner_comment)
-        run = self._r.engine.run(
+        run = run_capped(
+            self._request.guard,
             self._r.specs.copywriter,
-            self._brand_id,
-            run_trigger("copy", self._job_id),
-            CopywriterLoop(),
-            payload,
+            lambda spec: self._r.engine.run(
+                spec, self._brand_id, self._trigger("copy"), CopywriterLoop(), payload
+            ),
         )
         try:
             draft = _as_typed(run, RascunhoTexto, "copywriter")
@@ -324,13 +346,17 @@ class _PackageRun:
             previous_background=_previous_background(previous),
             force_new_background=is_new_background,
         )
-        run = self._r.engine.run(
+        run = run_capped(
+            self._request.guard,
             self._r.specs.designer,
-            self._brand_id,
-            run_trigger("design", self._job_id),
-            DesignerLoop(),
-            payload,
-            image_allowance=self._allowance,
+            lambda spec: self._r.engine.run(
+                spec,
+                self._brand_id,
+                self._trigger("design"),
+                DesignerLoop(),
+                payload,
+                image_allowance=self._allowance,
+            ),
         )
         return _designer_output(run)
 
@@ -354,12 +380,12 @@ class _PackageRun:
             perfil_marca=self._payload.perfil_marca,
             image=ReviewImage.from_design(design),
         )
-        run = self._r.engine.run(
+        run = run_capped(
+            self._request.guard,
             self._r.specs.reviewer,
-            self._brand_id,
-            run_trigger("review", self._job_id),
-            ReviewerLoop(),
-            payload,
+            lambda spec: self._r.engine.run(
+                spec, self._brand_id, self._trigger("review"), ReviewerLoop(), payload
+            ),
         )
         try:
             reviewed = _as_typed(run, Revisao, "revisor")

@@ -9,6 +9,7 @@ from typing import Final
 
 from marketing_agent.budget.controller import RunCostLimitExceeded
 from marketing_agent.content.design import COMPOSE_FAILED_MESSAGE
+from marketing_agent.content.package_guard import PackageCostExceeded
 from marketing_agent.content.package_media import PHOTO_UNAVAILABLE_MESSAGE
 from marketing_agent.harness.engine import RunResult, RunStatus
 from marketing_agent.harness.image_calls import (
@@ -69,6 +70,8 @@ def is_image_limit(result: RunResult) -> bool:
 def _limit_reason(result: RunResult) -> str:
     if is_image_limit(result):
         return "limite de imagens geradas atingido"
+    if result.limit is not None and issubclass(result.limit, PackageCostExceeded):
+        return "teto de custo do pacote atingido"
     if result.limit is not None and issubclass(result.limit, RunCostLimitExceeded):
         return "limite de custo do designer atingido"
     return "limite de passos ou de tempo do designer atingido"
