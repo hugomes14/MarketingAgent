@@ -139,7 +139,7 @@ class DesignResult:
     generated: GeneratedImage | None
 
 
-def _offered_photos(photos: Mapping[str, PhotoRef]) -> list[dict[str, str]]:
+def offered_photos(photos: Mapping[str, PhotoRef]) -> list[dict[str, str]]:
     """Fotos que o modelo pode escolher: sem pessoas por autorizar, ate ao teto do pedido."""
     usable = (
         photo
@@ -174,7 +174,7 @@ def _design_messages(payload: DesignPayload) -> list[Message]:
                 "cor_secundaria": payload.kit.cor_secundaria,
             },
         ),
-        wrap_data("fotos_biblioteca", {"fotos": _offered_photos(payload.photos)}),
+        wrap_data("fotos_biblioteca", {"fotos": offered_photos(payload.photos)}),
         *notes,
     )
 
@@ -260,6 +260,24 @@ def _components(
     return tuple(parts)
 
 
+def compose_design(ctx: RunContext, payload: DesignPayload, draft: RascunhoVisual) -> DesignResult:
+    """Fundo (gerado ou reutilizado), composicao e proveniencia de um rascunho JA validado.
+
+    Partilhado pelo Designer e pelo percurso simples do 2C, para os dois produzirem a imagem
+    com o mesmo codigo (mesmos layouts, mesma geracao pelo motor, mesmos componentes).
+    """
+    background = _background(ctx, payload, draft)
+    final = _compose(payload, draft, background)
+    components = _components(payload, draft, background)
+    return DesignResult(
+        draft=draft,
+        final=final,
+        components=components,
+        is_ai_generated=any(c.tipo == "gerada" for c in components),
+        generated=background,
+    )
+
+
 class DesignerLoop:
     """Escolhe a imagem de um post: uma chamada estruturada, o fundo (se preciso) e a composicao."""
 
@@ -271,13 +289,4 @@ class DesignerLoop:
             RascunhoVisual,
             extra_validator=_visual_validator(payload.photos),
         )
-        background = _background(ctx, payload, draft)
-        final = _compose(payload, draft, background)
-        components = _components(payload, draft, background)
-        return DesignResult(
-            draft=draft,
-            final=final,
-            components=components,
-            is_ai_generated=any(c.tipo == "gerada" for c in components),
-            generated=background,
-        )
+        return compose_design(ctx, payload, draft)

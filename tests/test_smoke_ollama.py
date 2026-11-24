@@ -241,6 +241,26 @@ def test_report_flags_failures_and_posts_without_a_review() -> None:
     assert not empty.is_success and "nenhuma" in smoke.format_report(empty)
 
 
+def test_report_shows_the_review_violations_and_notes_on_one_line() -> None:
+    report = sample_report()
+    long_notes = "Retira a frase\nsem apoio na base. " + "x" * 400
+    report.posts[1] = smoke.PostOutcome(
+        "2026-W47-2", "in_review", 2, "rever", None,
+        violations=("alegacao_sem_apoio", "marca_incoerente"), review_notes=long_notes,
+    )  # fmt: skip
+    out = smoke.format_report(report)
+    assert "violacoes: alegacao_sem_apoio, marca_incoerente" in out
+    [notes_line] = [line for line in out.splitlines() if "notas do revisor:" in line]
+    assert "Retira a frase sem apoio na base." in notes_line
+    assert notes_line.endswith("…")
+    assert len(notes_line.split("notas do revisor: ")[1]) == smoke.MAX_REPORT_NOTES_CHARS + 1
+    assert "violacoes: nenhuma" in out  # o post aprovado sem violacoes
+    no_review = sample_report()
+    no_review.posts[1] = smoke.PostOutcome("2026-W47-2", "drafting", 1, None, "NeedsHuman")
+    assert out.count("violacoes:") == 2
+    assert smoke.format_report(no_review).count("violacoes:") == 1
+
+
 # --- pacote com imagem: foto, kit, relatorio e opcoes -----------------------------------------
 
 
@@ -352,6 +372,7 @@ def test_post_outcomes_reports_image_fields_and_run_timings(
         "fundo_ia_titulo",
     )
     assert outcome.image_checked is True
+    assert outcome.violations == () and outcome.review_notes is not None
     assert [c.split(":")[0] for c in outcome.components] == ["gerada", "logotipo", "texto"]
     assert sorted(role for role, _ in outcome.timings) == ["copywriter", "designer", "revisor"]
 

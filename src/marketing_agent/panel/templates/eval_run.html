@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% import "_macros.html" as ui %}
+{% block title %}Corrida de avaliação{% endblock %}
+{% block content %}
+<h1>Corrida {{ run.set_name }} v{{ run.set_version }}</h1>
+{% include "_eval_progress.html" %}
+{% if run.status == "ready" and progress %}
+<section class="cartao" id="avaliar">
+  <h2>Avaliar</h2>
+  {% if progress.pairs %}
+  <p><a href="/avaliacao/{{ run.id }}/par/1">Abrir o par 1</a></p>
+  {{ ui.post_button("/avaliacao/" ~ run.id ~ "/revelar", csrf_token, "Revelar", disabled=progress.judged < progress.pairs) }}
+  {% if progress.judged < progress.pairs %}<p class="nota">A revelação só fica disponível depois de responder a todos os pares.</p>{% endif %}
+  {% else %}
+  <p class="nota">Nenhum par comparável: todos os briefs têm pelo menos um pacote falhado.</p>
+  {% endif %}
+</section>
+{% elif run.status == "revealed" %}
+<section class="cartao" id="revelada">
+  <h2>Revelada</h2>
+  <p><a href="/avaliacao/{{ run.id }}/relatorio">Ver o relatório</a></p>
+</section>
+{% endif %}
+{% endblock %}

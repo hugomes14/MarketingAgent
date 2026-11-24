@@ -38,6 +38,9 @@ MEDIA_TABLES = {"media_asset", "brand_kit"}
 CONTENT_TABLES = {"kb_item", "post", "post_revision", "approval", "feedback_example", "job"}
 
 
+EVAL_TABLES = {"eval_run", "eval_item", "eval_judgement", "role_decision"}
+
+
 def test_upgrade_head_creates_core_tables(engine: Engine) -> None:
     existing = set(inspect(engine).get_table_names()) - {"alembic_version"}
     assert existing >= CORE_TABLES
@@ -56,7 +59,32 @@ def test_migration_matches_models(engine: Engine) -> None:
 
 def test_upgrade_head_creates_media_tables(engine: Engine) -> None:
     existentes = set(inspect(engine).get_table_names()) - {"alembic_version"}
-    assert existentes == CORE_TABLES | CONTENT_TABLES | MEDIA_TABLES
+    assert existentes >= CORE_TABLES | CONTENT_TABLES | MEDIA_TABLES
+
+
+def test_upgrade_head_creates_eval_tables(engine: Engine) -> None:
+    existentes = set(inspect(engine).get_table_names()) - {"alembic_version"}
+    assert existentes == CORE_TABLES | CONTENT_TABLES | MEDIA_TABLES | EVAL_TABLES
+
+
+def test_downgrade_0004_restores_0003(
+    engine: Engine, pg_url: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("DATABASE_URL", pg_url)
+    raiz = Path(__file__).resolve().parents[2]
+    configuracao = Config(str(raiz / "alembic.ini"))
+    configuracao.set_main_option("script_location", str(raiz / "migrations"))
+    try:
+        command.downgrade(configuracao, "0003")
+        existentes = set(inspect(engine).get_table_names()) - {"alembic_version"}
+        assert existentes == CORE_TABLES | CONTENT_TABLES | MEDIA_TABLES
+        with engine.connect() as ligacao:
+            funcoes = ligacao.scalar(
+                text("SELECT count(*) FROM pg_proc WHERE proname = 'eval_append_only'")
+            )
+        assert funcoes == 0
+    finally:
+        command.upgrade(configuracao, "head")
 
 
 def test_downgrade_0003_restores_0002(

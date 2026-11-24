@@ -11,6 +11,9 @@ from marketing_agent.artifacts.store import ArtifactRecord
 from marketing_agent.budget.controller import BudgetController
 from marketing_agent.clock import Clock
 from marketing_agent.content.review import ReviewService
+from marketing_agent.evals.judging import JudgingService
+from marketing_agent.evals.report import ReportService
+from marketing_agent.evals.runs import EvalRunService
 from marketing_agent.feedback.service import FeedbackService
 from marketing_agent.harness.engine import RunResult, RunStatus
 from marketing_agent.interview.service import InterviewService
@@ -21,6 +24,7 @@ from marketing_agent.panel.auth import TailscaleUser, require_tailscale_user
 from marketing_agent.panel.csrf import require_same_origin_and_csrf
 from marketing_agent.panel.errors import UpstreamFailure
 from marketing_agent.panel.forms import FormFields, read_form
+from marketing_agent.panel.pair_timer import PairTimer
 from marketing_agent.panel.queries import PanelQueries
 from marketing_agent.panel.rendering import Renderer
 from marketing_agent.planning.service import PlanningService
@@ -51,6 +55,15 @@ class MediaServices:
 
 
 @dataclass(frozen=True)
+class EvalServices:
+    """Servicos da avaliacao cega (2C): corridas, respostas aos pares e relatorio."""
+
+    runs: EvalRunService
+    judging: JudgingService
+    report: ReportService
+
+
+@dataclass(frozen=True)
 class PanelContext:
     """Servicos, leituras e marca com que as rotas trabalham (guardado em `app.state.panel`)."""
 
@@ -63,6 +76,8 @@ class PanelContext:
     max_message_chars: int
     content: ContentServices
     media: MediaServices
+    evals: EvalServices
+    pair_timer: PairTimer
 
 
 def get_panel(request: Request) -> PanelContext:

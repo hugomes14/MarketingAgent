@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% import "_macros.html" as ui %}
+{% block title %}Relatório da avaliação{% endblock %}
+{% block content %}
+<h1>Relatório: {{ report.set_name }} v{{ report.set_version }}</h1>
+<section class="cartao" id="resultado">
+  <h2>Resultado</h2>
+  <p>Percurso especializado: {{ report.wins }} vitórias, {{ report.losses }} derrotas, {{ report.ties }} empates em {{ report.pairs }} pares.</p>
+  {% if report.interval %}
+  <p>Intervalo de Wilson a 95 % sobre {{ report.wins + report.losses }} pares decisivos: {{ "%.0f"|format(report.interval[0] * 100) }} % a {{ "%.0f"|format(report.interval[1] * 100) }} % de vitórias do especializado.</p>
+  {% else %}
+  <p class="nota">Sem pares decisivos: não há intervalo.</p>
+  {% endif %}
+  <p>Custo: estimativa máxima {{ report.estimate_usd|usd }} USD, real {{ report.actual_usd|usd }} USD. Tempo médio por par: {{ report.seconds_per_pair_mean }} s.</p>
+  <p>Concordância do Revisor:
+  {% if report.reviewer_agreement %}{{ report.reviewer_agreement[0] }} de {{ report.reviewer_agreement[1] }} erros que marcou no lado especializado foram também assinalados pelo Revisor.{% else %}sem erros marcados no lado especializado.{% endif %}</p>
+</section>
+
+<section class="cartao" id="por-percurso">
+  <h2>Por percurso</h2>
+  <table>
+    <thead><tr><th>Medida</th>{% for path in report.paths %}<th>{{ path.path }}</th>{% endfor %}</tr></thead>
+    <tbody>
+      <tr><td>Pacotes (falhados)</td>{% for p in report.paths %}<td>{{ p.packages }} ({{ p.failed }})</td>{% endfor %}</tr>
+      <tr><td>Custo médio</td>{% for p in report.paths %}<td>{{ p.cost_mean_usd|usd }} USD</td>{% endfor %}</tr>
+      <tr><td>Custo máximo</td>{% for p in report.paths %}<td>{{ p.cost_max_usd|usd }} USD</td>{% endfor %}</tr>
+      <tr><td>Custo de imagem (total)</td>{% for p in report.paths %}<td>{{ p.image_cost_usd|usd }} USD</td>{% endfor %}</tr>
+      <tr><td>Latência média / máxima</td>{% for p in report.paths %}<td>{{ "%.1f"|format(p.latency_mean_ms / 1000) }} s / {{ "%.1f"|format(p.latency_max_ms / 1000) }} s</td>{% endfor %}</tr>
+      <tr><td>Saídas inválidas</td>{% for p in report.paths %}<td>{{ p.invalid_outputs }}</td>{% endfor %}</tr>
+      <tr><td>Voltas do Revisor</td>{% for p in report.paths %}<td>{{ p.review_rounds }}</td>{% endfor %}</tr>
+      {% for kind in report.paths[0].errors %}
+      <tr><td>Erros: {{ kind|eval_error_label }}</td>{% for p in report.paths %}<td>{{ p.errors[kind] }}</td>{% endfor %}</tr>
+      {% endfor %}
+      {% for value in edit_values %}
+      <tr><td>Edição: {{ value|edit_minutes_label }}</td>{% for p in report.paths %}<td>{{ p.edit_minutes[value] }}</td>{% endfor %}</tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="cartao" id="limitacoes">
+  <h2>Limitações</h2>
+  <ul>{% for item in report.limitations %}<li>{{ item }}</li>{% endfor %}</ul>
+</section>
+
+{% if report.notes %}
+<section class="cartao" id="notas">
+  <h2>As suas notas</h2>
+  <ul>{% for note in report.notes %}<li>{{ note }}</li>{% endfor %}</ul>
+</section>
+{% endif %}
+
+<section class="cartao" id="decisao">
+  <h2>Decisão (D35)</h2>
+  <p>{{ report.question }}</p>
+  {% if report.decisions %}
+  <ul>{% for d in report.decisions %}<li>{{ d.role|capitalize }}: <strong>{{ d.decision }}</strong> — {{ d.justificacao }} <span class="nota">({{ d.decided_by }}, {{ d.decided_at.strftime("%Y-%m-%d") }})</span></li>{% endfor %}</ul>
+  {% else %}
+  <p class="nota">Ainda sem decisões registadas.</p>
+  {% endif %}
+  <form method="post" action="/avaliacao/{{ report.run_id }}/decisao">
+    {{ ui.csrf_field(csrf_token) }}
+    <label for="papel">Papel</label>
+    <select id="papel" name="papel" required>{% for role in roles %}<option value="{{ role }}">{{ role|capitalize }}</option>{% endfor %}</select>
+    <fieldset>
+      <legend>Decisão</legend>
+      {% for value in decisions %}<label><input type="radio" name="decisao" value="{{ value }}" required> {{ value|capitalize }}</label>{% endfor %}
+    </fieldset>
+    <label for="justificacao">Justificação</label>
+    <textarea id="justificacao" name="justificacao" rows="3" maxlength="2000" required></textarea>
+    <button type="submit">Registar decisão</button>
+  </form>
+</section>
+{% endblock %}

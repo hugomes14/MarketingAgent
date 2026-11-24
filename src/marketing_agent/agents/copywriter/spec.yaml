@@ -5,7 +5,7 @@
 # `content.validation` via `extra_validator` do motor.
 role: copywriter
 name: copywriter
-version: 1
+version: 2
 loop_type: structured
 prompt_file: prompt.md
 output_schema: RascunhoTexto

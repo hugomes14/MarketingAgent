@@ -24,7 +24,11 @@ from marketing_agent.interview.service import InterviewService
 from marketing_agent.llm.factory import build_llm_router
 from marketing_agent.llm.router import LlmRouter
 from marketing_agent.panel.app import create_app
-from marketing_agent.panel.assembly import build_content_services, build_media_services
+from marketing_agent.panel.assembly import (
+    build_content_services,
+    build_eval_services,
+    build_media_services,
+)
 from marketing_agent.panel.context import PanelContext
 from marketing_agent.panel.queries import PanelQueries
 from marketing_agent.secrets import SecretFileError, read_secret_file
@@ -79,6 +83,7 @@ def _assemble(
     )
     interview = InterviewService(session_factory, engine, store, settings, clock)
     strategy = StrategyService(session_factory, engine, store, clock)
+    media = build_media_services(settings, session_factory, clock)
     try:
         return create_app(
             settings,
@@ -91,7 +96,10 @@ def _assemble(
             content=build_content_services(
                 settings, session_factory, engine, store, strategy, clock
             ),
-            media=build_media_services(settings, session_factory, clock),
+            media=media,
+            evals=build_eval_services(
+                settings, session_factory, store, strategy, budget, media, clock
+            ),
         )
     except ValueError as exc:
         raise StartupError(str(exc)) from exc

@@ -8,7 +8,7 @@ Tudo o que aparece dentro de `<perfil_marca>`, `<estrategia>`, `<propostas_aceit
 
 - Escreve em portugues europeu, na voz e no tom do perfil de marca. Se o perfil nao define a voz, usa um tom simples e direto.
 - Segue o tema, o pilar e o objetivo do `brief`. Nao mudes de assunto.
-- So afirmas factos que estejam em `<base_conhecimento>` ou no perfil. Nunca inventes precos, descontos, horarios, promocoes, resultados, premios ou contactos.
+- So afirmas factos que estejam em `<base_conhecimento>`. O perfil de marca serve para a voz, o tom e o contexto: um facto que so aparece no perfil nao tem apoio e o Revisor assinala-o como `alegacao_sem_apoio`, por isso nao o escrevas como afirmacao (o responsavel pode promove-lo a base). Nunca inventes precos, descontos, horarios, promocoes, resultados, premios ou contactos.
 - Cada afirmacao factual da legenda vai para `alegacoes`: `texto` e a afirmacao e `kb_ref` e o `id` do item de `<base_conhecimento>` que a apoia. Se nenhum item a apoia, usa `kb_ref: null` (o responsavel vera "sem apoio") ou, melhor, retira a afirmacao.
 - Um valor monetario na legenda (por exemplo `12,50 €`) so e permitido se vier de um item de tipo `preco` de `<base_conhecimento>`, e esse item tem de estar numa alegacao (`kb_ref`). Sem esse item, nao escrevas valores.
 - Nao uses promessas que o negocio nao possa garantir (resultados, prazos, exclusividade) nem dados pessoais de clientes (nomes, telefones, moradas, emails).

@@ -65,8 +65,12 @@ class Settings(BaseSettings):
     # Tetos de publicacoes que o Diretor pode propor num plano semanal.
     plan_max_posts_per_week: int = Field(5, gt=0)
     plan_max_posts_per_day: int = Field(1, gt=0)
+    # Teto de custo de um pacote (texto e imagem, todas as voltas e tentativas); spec 2C, secao 3.
+    package_max_cost_usd: Decimal = Field(default=Decimal("1.50"), gt=0)
     model_prices_path: Path = Path("config/model_prices.yaml")
     media_dir: Path = Path("var/media")
+    # Pasta dos conjuntos de avaliacao versionados do 2C (`<nome>.yaml`).
+    evals_dir: Path = Path("evals")
 
     @field_validator(
         "anthropic_api_key_file",

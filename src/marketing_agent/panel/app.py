@@ -14,6 +14,7 @@ from marketing_agent.config import Settings
 from marketing_agent.interview.service import InterviewService
 from marketing_agent.panel import (
     routes_batch,
+    routes_eval,
     routes_feedback,
     routes_home,
     routes_interview,
@@ -24,10 +25,16 @@ from marketing_agent.panel import (
     routes_strategy,
 )
 from marketing_agent.panel.auth import _parse_networks
-from marketing_agent.panel.context import ContentServices, MediaServices, PanelContext
+from marketing_agent.panel.context import (
+    ContentServices,
+    EvalServices,
+    MediaServices,
+    PanelContext,
+)
 from marketing_agent.panel.csrf import MIN_SECRET_BYTES
 from marketing_agent.panel.errors import install_error_handlers
 from marketing_agent.panel.hosts import AllowedHostsMiddleware, normalize_allowed_hosts
+from marketing_agent.panel.pair_timer import PairTimer
 from marketing_agent.panel.queries import PanelQueries
 from marketing_agent.panel.rendering import STATIC_DIR, Renderer
 from marketing_agent.panel.security import SecurityHeadersMiddleware
@@ -45,6 +52,7 @@ def create_app(
     queries: PanelQueries,
     content: ContentServices,
     media: MediaServices,
+    evals: EvalServices,
 ) -> FastAPI:
     """Monta o painel; falha no arranque se a configuracao de seguranca for invalida.
 
@@ -70,6 +78,8 @@ def create_app(
         settings.max_message_chars,
         content,
         media,
+        evals,
+        PairTimer(csrf_secret),
     )
     # Ordem: o ultimo adicionado e o mais externo. Os cabecalhos de seguranca envolvem o filtro
     # de Host, para tambem cobrirem as suas respostas 400.
@@ -86,6 +96,7 @@ def create_app(
         routes_plan,
         routes_batch,
         routes_feedback,
+        routes_eval,
     ):
         app.include_router(module.router)
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")

@@ -54,8 +54,9 @@ plugins = ["pydantic.mypy"]
 testpaths = ["tests"]
 # panel_rig/panel_fixtures sao partilhados pelos testes do painel e pelos ponta a ponta;
 # content_rig, pelos testes do pipeline, do worker e dos ponta a ponta; planning_rig, pelos
-# testes do plano semanal; image_factory vive em tests/support.
-pythonpath = ["tests/panel", "tests/content", "tests/planning", "tests/support"]
+# testes do plano semanal; eval_rig, pelos testes da avaliacao (2C); image_factory vive em
+# tests/support.
+pythonpath = ["tests/panel", "tests/content", "tests/planning", "tests/evals", "tests/support"]
 addopts = "-ra --import-mode=importlib --strict-markers -m 'not live and not browser'"
 markers = [
     "live: testes que chamam provedores reais (fora da execucao padrao)",

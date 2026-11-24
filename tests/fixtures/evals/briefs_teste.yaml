@@ -1,0 +1,16 @@
+# Conjunto pequeno para os testes da corrida (pilares do cenario falso da estrategia).
+name: briefs_teste
+version: 3
+briefs:
+  - key: pao_do_dia
+    tema: Pao do dia
+    pilar: Producao artesanal
+    objetivo: Mensagens
+    canais: [instagram]
+  - key: preco_pao
+    tema: Pao de forno a lenha e o seu preco
+    pilar: Proximidade
+    objetivo: Encomendas
+    canais: [instagram, facebook]
+    kb_refs: ["preco:pao"]
+    tags: [com_preco]

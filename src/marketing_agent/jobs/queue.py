@@ -23,6 +23,10 @@ GENERATE_POST_JOB = "generate_post"
 REVIEW_POST_JOB = "review_post"
 # Jobs que escrevem uma revisao de um post: ambos bloqueiam e sao cancelados pelas acoes do dono.
 POST_JOB_TYPES = (GENERATE_POST_JOB, REVIEW_POST_JOB)
+# Pacote de uma corrida de avaliacao (2C): nunca toca em posts e cede a vez aos jobs de post.
+EVAL_PACKAGE_JOB = "eval_package"
+# Jobs de longa duracao que um worker morto deixa `running` (recuperados no arranque).
+WORKER_JOB_TYPES = (*POST_JOB_TYPES, EVAL_PACKAGE_JOB)
 RETRY_BACKOFF = timedelta(seconds=30)  # espera = RETRY_BACKOFF x tentativas ja feitas
 MAX_ERROR_CHARS = 200
 _LEASE_EXPIRED_ERROR = "LeaseExpired: lease expirada sem conclusao"
@@ -103,12 +107,17 @@ class JobQueue:
         return session.execute(statement).scalar_one_or_none()
 
     def claim(self, worker_id: str) -> ClaimedJob | None:
-        """Reclama o job `queued` mais antigo com `run_at` vencido; `None` se nao houver."""
+        """Reclama o job `queued` mais antigo com `run_at` vencido; `None` se nao houver.
+
+        Os `eval_package` so sao reclamados quando nao ha outro job pronto, por isso um job do
+        lote semanal passa sempre a frente na fila. Nao ha preempcao: se chega a meio de um pacote
+        de avaliacao, espera que esse pacote acabe (o worker faz um job de cada vez).
+        """
         now = self._clock.now()
         statement = (
             select(Job)
             .where(Job.status == "queued", Job.run_at <= now)
-            .order_by(Job.run_at, Job.created_at)
+            .order_by(Job.type == EVAL_PACKAGE_JOB, Job.run_at, Job.created_at)
             .limit(1)
             .with_for_update(skip_locked=True)
         )
@@ -185,7 +194,7 @@ class JobQueue:
         return self._requeue_running(expired_only=True, error=_LEASE_EXPIRED_ERROR, grace=None)
 
     def requeue_orphans(self, *, grace: timedelta) -> int:
-        """Devolve a `queued` (ou `dead`) TODOS os jobs de post `running`, mesmo com lease viva.
+        """Devolve a `queued` (ou `dead`) TODOS os jobs do worker `running`, mesmo com lease viva.
 
         So e correto com o lock do worker unico tomado (`jobs.singleton`): o painel nunca
         reclama jobs, por isso um `running` e de um worker que morreu. Mantem `attempts` (a
@@ -227,12 +236,12 @@ class JobQueue:
     def _running_candidates(
         session: Session, now: datetime, expired_only: bool
     ) -> list[tuple[str, str | None]]:
-        """`running` com lease vencida (qualquer tipo) ou, sem `expired_only`, de tipo de post."""
+        """`running` com lease vencida (qualquer tipo) ou, sem `expired_only`, do worker."""
         statement = select(Job.id, Job.payload["post_id"].astext).where(Job.status == "running")
         if expired_only:
             statement = statement.where(Job.locked_until < now)
         else:
-            statement = statement.where(Job.type.in_(POST_JOB_TYPES))
+            statement = statement.where(Job.type.in_(WORKER_JOB_TYPES))
         return [(job_id, post_id) for job_id, post_id in session.execute(statement)]
 
     @staticmethod

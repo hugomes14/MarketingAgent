@@ -16,6 +16,7 @@ Mensagens de falha: so `describe_error` chega a `job.last_error` e `post.last_er
 """
 
 import logging
+from decimal import Decimal
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -28,6 +29,7 @@ from marketing_agent.content.loops import CopyPayload
 from marketing_agent.content.manual_review import ForeignAssetError, ManualReviewer
 from marketing_agent.content.package_assets import store_package_image
 from marketing_agent.content.package_costs import job_costs_in, remaining_images
+from marketing_agent.content.package_guard import DEFAULT_PACKAGE_MAX_COST_USD, PackageCostGuard
 from marketing_agent.content.package_media import DesignMedia
 from marketing_agent.content.revision_store import (
     DRAFTING,
@@ -95,11 +97,14 @@ class ContentPipeline:
         library: MediaLibrary,
         kits: BrandKitService,
         image_quality: ImageQuality,
+        *,
+        package_max_cost_usd: Decimal = DEFAULT_PACKAGE_MAX_COST_USD,
     ) -> None:
         """Guarda os colaboradores; `store` e `strategy` dao o perfil e as propostas aceites.
 
         `library` e `kits` dao ao Designer as fotos e o kit de marca e guardam os ativos;
-        `image_quality` e a qualidade dos fundos gerados.
+        `image_quality` e a qualidade dos fundos gerados; `package_max_cost_usd` e o teto de
+        custo de um pedido, somado sobre todas as tentativas do job (`PackageCostGuard`).
         """
         self._session_factory = session_factory
         self._kb = kb
@@ -109,6 +114,7 @@ class ContentPipeline:
         self._store = store
         self._strategy = strategy
         self._library = library
+        self._package_max_cost_usd = package_max_cost_usd
         self._manual = ManualReviewer(session_factory, engine, kb, library, store, queue, clock)
         self._rounds = PackageRounds(
             engine, load_content_specs(), DesignMedia(library, kits), image_quality
@@ -147,8 +153,11 @@ class ContentPipeline:
         allowance = ImageAllowance(
             remaining_images(self._session_factory, started.brand_id, job.id)
         )
+        guard = PackageCostGuard(
+            self._session_factory, started.brand_id, job.id, self._package_max_cost_usd
+        )
         result = self._rounds.run(
-            job.id, started.brand_id, payload, request.owner_comment, allowance
+            job.id, started.brand_id, payload, request.owner_comment, allowance, guard=guard
         )
         if isinstance(result, RunResult):
             return self._fail(job, describe_stop(result))

@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% import "_macros.html" as ui %}
+{% block title %}Par {{ pair.index }}{% endblock %}
+{% block content %}
+<h1>Par {{ pair.index }} de {{ pair.total }}</h1>
+<section class="cartao" id="brief">
+  <h2>Pedido</h2>
+  <dl class="valores">
+    <div><dt>Tema</dt><dd>{{ pair.brief.tema }}</dd></div>
+    <div><dt>Pilar</dt><dd>{{ pair.brief.pilar }}</dd></div>
+    <div><dt>Objetivo</dt><dd>{{ pair.brief.objetivo }}</dd></div>
+    <div><dt>Canais</dt><dd>{% for channel in pair.brief.canais %}{{ channel|channel_label }}{% if not loop.last %}, {% endif %}{% endfor %}</dd></div>
+  </dl>
+  {% if pair.current %}<p class="aviso info">Este par já tem resposta. Gravar de novo substitui-a (a anterior fica registada).</p>{% endif %}
+</section>
+{% set current = pair.current %}
+<form method="post" action="/avaliacao/{{ run_id }}/par/{{ pair.index }}">
+  {{ ui.csrf_field(csrf_token) }}
+  <input type="hidden" name="inicio" value="{{ timer }}">
+  <input type="hidden" name="substitui" value="{{ current.id if current else '' }}">
+  <div class="grelha">
+    {% with side = "a", content = pair.a, current_errors = current.errors_a if current else (), current_edit = current.edit_a if current else none %}{% include "_eval_side.html" %}{% endwith %}
+    {% with side = "b", content = pair.b, current_errors = current.errors_b if current else (), current_edit = current.edit_b if current else none %}{% include "_eval_side.html" %}{% endwith %}
+  </div>
+  <section class="cartao" id="decisao">
+    <fieldset>
+      <legend>Qual é melhor?</legend>
+      {% for value, label in (("a", "Lado A"), ("b", "Lado B"), ("empate", "Empate")) %}
+      <label><input type="radio" name="melhor" value="{{ value }}" required{% if current and current.better == value %} checked{% endif %}> {{ label }}</label>
+      {% endfor %}
+    </fieldset>
+    <label for="nota">Nota (opcional)</label>
+    <textarea id="nota" name="nota" rows="3" maxlength="2000">{{ current.note if current and current.note else "" }}</textarea>
+    <button type="submit">Gravar e seguir</button>
+  </section>
+</form>
+<p>{% if pair.index > 1 %}<a href="/avaliacao/{{ run_id }}/par/{{ pair.index - 1 }}">Par anterior</a> · {% endif %}<a href="/avaliacao/{{ run_id }}">Voltar à corrida</a></p>
+{% endblock %}

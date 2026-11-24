@@ -34,11 +34,13 @@ from marketing_agent.budget.pricing import (
     load_model_prices,
     sync_model_prices,
 )
+from marketing_agent.cli_eval import build_eval_handler, build_eval_runs, run_eval, write_report
 from marketing_agent.cli_parser import build_parser
 from marketing_agent.clock import Clock, SystemClock
 from marketing_agent.config import IMAGE_ROUTE, Settings
 from marketing_agent.content.pipeline import ContentPipeline
 from marketing_agent.dev_proxy import DevProxyServer, build_dev_proxy
+from marketing_agent.evals.report import ReportService
 from marketing_agent.feedback.service import FeedbackService
 from marketing_agent.harness.engine import AgentEngine
 from marketing_agent.images.factory import ImageBackend, build_image_backend
@@ -282,6 +284,7 @@ def _build_pipeline(
         library,
         BrandKitService(session_factory, library, clock),
         settings.image_quality,
+        package_max_cost_usd=settings.package_max_cost_usd,
     )
 
 
@@ -301,6 +304,9 @@ def build_worker(
     engine = _build_worker_engine(settings, session_factory, budget, store, clock, lock)
     queue = JobQueue(session_factory, clock, content_job_lease(time_multiplier=multiplier))
     pipeline = _build_pipeline(settings, session_factory, engine, store, queue, clock)
+    library = _build_media_library(settings, session_factory, clock)
+    evals = build_eval_handler(settings, session_factory, engine, queue, library, clock)
+    runs = build_eval_runs(settings, session_factory, engine, store, budget, queue, library, clock)
     older_than = worker_stale_after(time_multiplier=multiplier)
     grace = orphan_grace(time_multiplier=multiplier)
     return Worker(
@@ -310,6 +316,8 @@ def build_worker(
         recover_reservations=lambda: budget.recover_stale(older_than),
         lock=lock,
         recover_orphans=None if lock is None else lambda: queue.requeue_orphans(grace=grace),
+        evals=evals,
+        reconcile_evals=runs.reconcile,
     )
 
 
@@ -383,6 +391,45 @@ def _run_worker(settings: Settings, lock: WorkerLock) -> int:
     return 0
 
 
+def cmd_eval(args: argparse.Namespace) -> int:
+    """`eval run` (estimativa, confirmacao e corrida na fila) ou `eval report` (Markdown)."""
+    settings = load_settings()
+    if args.eval_command == "report":
+        return _eval_report(settings, args.run_id, args.out)
+    with open_database(settings) as session_factory:
+        clock = SystemClock()
+        budget = build_budget_controller(settings, session_factory, clock)
+        store = ArtifactStore(session_factory, clock)
+        engine = _build_worker_engine(settings, session_factory, budget, store, clock, None)
+        queue = JobQueue(
+            session_factory,
+            clock,
+            content_job_lease(time_multiplier=settings.llm_time_multiplier),
+        )
+        library = _build_media_library(settings, session_factory, clock)
+        runs = build_eval_runs(
+            settings, session_factory, engine, store, budget, queue, library, clock
+        )
+        return run_eval(
+            runs,
+            session_factory,
+            args.set_name,
+            assume_yes=args.yes,
+            is_interactive=sys.stdin.isatty(),
+        )
+
+
+def _eval_report(settings: Settings, run_id: str, out_dir: Path) -> int:
+    """Escreve o relatorio de uma corrida revelada e imprime o caminho."""
+    with open_database(settings) as session_factory:
+        clock = SystemClock()
+        path = write_report(
+            ReportService(session_factory, clock), session_factory, run_id, out_dir, clock
+        )
+    print(path)
+    return 0
+
+
 def serve_forever(server: DevProxyServer) -> None:
     """Serve ate Ctrl+C e liberta a porta."""
     try:
@@ -427,6 +474,7 @@ COMMANDS: dict[str, Command] = {
     "serve": cmd_serve,
     "worker": cmd_worker,
     "dev-proxy": cmd_dev_proxy,
+    "eval": cmd_eval,
 }
 
 

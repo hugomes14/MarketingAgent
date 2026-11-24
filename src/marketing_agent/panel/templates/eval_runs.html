@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Avaliação{% endblock %}
+{% block content %}
+<h1>Avaliação cega</h1>
+<p class="nota">Compara dois percursos de criação sobre os mesmos briefs, sem saber qual é qual. Só no fim, depois de avaliar todos os pares, se revela que lado era cada um.</p>
+
+<section class="cartao" id="nova-corrida">
+  <h2>Nova corrida</h2>
+  <form method="get" action="/avaliacao/nova">
+    <label for="eval-set">Conjunto de briefs</label>
+    <input type="text" id="eval-set" name="conjunto" value="{{ default_set }}" maxlength="40" pattern="[a-z0-9_]{1,40}" required autocomplete="off">
+    <button type="submit">Ver o custo máximo</button>
+  </form>
+</section>
+
+<section class="cartao" id="corridas">
+  <h2>Corridas</h2>
+  {% if runs %}
+  <ul class="itens">
+    {% for run in runs %}
+    <li><a href="/avaliacao/{{ run.id }}">{{ run.set_name }} v{{ run.set_version }}</a>
+      <span class="etiqueta">{{ run.status|eval_status_label }}</span>
+      <span class="nota">{{ run.created_at.strftime("%Y-%m-%d %H:%M") }} UTC · {{ run.finished }} de {{ run.packages }} pacotes</span></li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="nota">Ainda não há corridas.</p>
+  {% endif %}
+</section>
+{% endblock %}

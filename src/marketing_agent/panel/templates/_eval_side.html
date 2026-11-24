@@ -1,0 +1,29 @@
+{# Um lado do par. As classes, os ids e os atributos dependem SO da letra do lado (`side`). #}
+<article class="cartao lado lado-{{ side }}" id="lado-{{ side }}">
+  <h2>Lado {{ side|upper }}</h2>
+  <img class="pre-visualizacao" src="/avaliacao/{{ run_id }}/par/{{ pair.index }}/imagem/{{ side }}" alt="{{ content.alt_text }}" width="432" height="540">
+  {% if content.is_ai_generated %}<p class="etiqueta">Imagem com fundo gerado por IA</p>{% endif %}
+  <p class="texto">{{ content.legenda }}</p>
+  {% if content.hashtags %}<p class="nota">{{ content.hashtags|join(" ") }}</p>{% endif %}
+  {% if content.apelo_a_acao %}<p><strong>{{ content.apelo_a_acao }}</strong></p>{% endif %}
+  {% if content.alegacoes %}
+  <h3>Afirmações</h3>
+  <ul class="itens">
+    {% for claim in content.alegacoes %}
+    <li>{{ claim.texto }} {% if claim.has_support %}<span class="etiqueta">com apoio na base</span>{% else %}<span class="etiqueta atencao">sem apoio</span>{% endif %}</li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+  <fieldset>
+    <legend>Erros no lado {{ side|upper }}</legend>
+    {% for kind in error_kinds %}
+    <label><input type="checkbox" name="erro_{{ side }}_{{ kind }}" value="1"{% if current and kind in current_errors %} checked{% endif %}> {{ kind|eval_error_label }}</label>
+    {% endfor %}
+  </fieldset>
+  <fieldset>
+    <legend>Minutos para deixar o lado {{ side|upper }} publicável</legend>
+    {% for value in edit_values %}
+    <label><input type="radio" name="edicao_{{ side }}" value="{{ value }}" required{% if current and current_edit == value %} checked{% endif %}> {{ value|edit_minutes_label }}</label>
+    {% endfor %}
+  </fieldset>
+</article>

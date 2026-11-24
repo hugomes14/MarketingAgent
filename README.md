@@ -27,9 +27,10 @@ nunca em logs, mensagens de erro ou no `.env`.
 
 | Caminho | Conteúdo |
 | --- | --- |
-| `src/marketing_agent/` | Código: `config`, `secrets`, `clock`, `db`, `budget`, `llm`, `harness`, `artifacts`, `interview`, `strategy`, `kb`, `planning`, `jobs` (fila e worker), `content` (pipeline Copywriter e Revisor), `feedback`, `agents/{diretor,copywriter,revisor,designer}`, `panel`, `cli` |
+| `src/marketing_agent/` | Código: `config`, `secrets`, `clock`, `db`, `budget`, `llm`, `harness`, `artifacts`, `interview`, `strategy`, `kb`, `planning`, `jobs` (fila e worker), `content` (pipeline Copywriter e Revisor), `feedback`, `evals` (avaliação cega do 2C), `agents/{diretor,copywriter,revisor,designer,simples}`, `panel`, `cli` |
 | `src/marketing_agent/panel/` | Painel FastAPI (autenticação por proxy, CSRF, páginas) e a fábrica `panel.main` |
 | `migrations/`, `alembic.ini` | Migrações da base (Alembic) |
+| `evals/` | Conjuntos de briefs versionados da avaliação cega (`briefs_v1.yaml`) |
 | `config/` | Preços dos modelos (`model_prices.yaml` e `model_prices.local.yaml`) |
 | `compose.test.yaml`, `compose.dev.yaml` | Postgres de teste (efémero) e de desenvolvimento (persistente) |
 | `.env.example`, `.env.local.example` | Modelos de configuração (valores fictícios) |
@@ -266,6 +267,33 @@ vencer a lease. O painel nunca reclama trabalhos nem toma o lock.
 O painel e o worker marcam como `unknown_outcome` reservas abertas há mais de 480 s
 (`worker_stale_after()`), sem repetir chamadas cujo resultado é desconhecido.
 
+## Avaliação cega (Plano 2C)
+
+Compara o **percurso especializado** (Copywriter, Designer e Revisor, até 2 voltas) com um
+**percurso simples** de uma chamada (papel `simples`: texto e escolha visual juntos, sem Revisor)
+sobre os mesmos briefs, para decidir com dados se cada papel justifica o custo (D35).
+
+1. **Conjunto de briefs.** `evals/briefs_v1.yaml` (versionado; subir `version` ao mudar). Os
+   `pilar` têm de ser os da estratégia ativa e os `kb_refs` (`tipo:chave`, por exemplo
+   `preco:pao-de-forno`) têm de existir na base, ativos e válidos no dia da corrida. O ficheiro
+   atual é um **rascunho a rever** antes da primeira corrida real.
+2. **Corrida.** No painel, **Avaliação → Ver o custo máximo → Começar a corrida**, ou
+   `marketing-agent eval run --set briefs_v1`. O custo máximo é `pacotes × PACKAGE_MAX_COST_USD`
+   (1,50 USD por omissão): cada pacote para quando chega a esse teto, por isso é um teto e não uma
+   previsão. O contexto (perfil, estratégia, base, fotos, kit, exemplos de feedback) fica fixado no
+   início: os dois percursos de cada brief veem os mesmos dados.
+3. **Worker.** Gera os pacotes pela fila (`eval_package`), sempre depois dos trabalhos do lote
+   semanal. Os pacotes de avaliação nunca criam publicações nem revisões.
+4. **Avaliar.** Cada par mostra o lado A e o lado B por ordem aleatória (semente gravada), sem
+   percurso, custo nem parecer do Revisor. Responde-se qual é melhor, os erros e os minutos de
+   edição de cada lado. Uma correção grava uma resposta nova e mantém a anterior.
+5. **Revelar e decidir.** Com todos os pares respondidos, **Revelar** abre o relatório
+   (vitórias com intervalo de Wilson a 95 %, erros, minutos, custo, latência, concordância do
+   Revisor e limitações) e o registo da decisão por papel (manter, simplificar, retirar).
+   `marketing-agent eval report <id>` exporta-o para `AgentDATA/docs/`.
+
+A rota do papel `simples` herda a do `copywriter` se não estiver em `ROLE_ROUTES`.
+
 ## Comandos
 
 | Comando | Função |
@@ -276,6 +304,8 @@ O painel e o worker marcam como `unknown_outcome` reservas abertas há mais de 4
 | `migrate` | Aplica as migrações (`upgrade head`) na base de `DATABASE_URL` |
 | `serve [--host 127.0.0.1] [--port 8000]` | Serve o painel com o uvicorn (recusa `FORWARDED_ALLOW_IPS` e hosts fora do loopback) |
 | `worker` | Processa a fila de geração de publicações (pacote texto e imagem: Copywriter, Designer e Revisor com visão) até `SIGINT`/`SIGTERM`; exige as rotas `copywriter`, `designer` e `revisor` e recusa o fornecedor `fake` |
+| `eval run --set NOME [--yes]` | Mostra o custo máximo de uma corrida de avaliação cega e o gasto do mês, pede confirmação e cria a corrida na fila (fora de um terminal exige `--yes`) |
+| `eval report CORRIDA [--out PASTA]` | Escreve o relatório Markdown de uma corrida já revelada (por omissão em `AgentDATA/docs/`) |
 | `dev-proxy --login LOGIN [--name NOME] [--listen 127.0.0.1:8001] [--upstream 127.0.0.1:8000]` | Só desenvolvimento: proxy local que injeta a identidade |
 
 Códigos de saída: `0` sucesso (também no `worker` parado por sinal), `2` erro de uso ou de
@@ -452,8 +482,10 @@ conhecimento, contexto e registos ficam em [`AgentDATA/`](AgentDATA/). Detalhes 
 
 ## O que ainda não está feito
 
-- Fecho operacional do Plano 02b (tarefa 16), comparação de variantes
-  (02c), oficina 3D (02d/Plano 4), publicação (Plano 3), revisão mensal e triagem (Plano 5).
+- Fecho operacional do Plano 02b (tarefa 16), oficina 3D (02d/Plano 4), publicação (Plano 3),
+  revisão mensal e triagem (Plano 5). O 2C (avaliação cega) está implementado, mas falta a
+  corrida real com o responsável (`briefs_v1` revisto, decisões por papel registadas) e a
+  revisão final do ramo.
   O lote já mostra a imagem, permite trocar a fotografia e carregar uma imagem à mão;
   editar o texto preserva a imagem. Faltam as verificações manuais dos marcos e a
   confirmação de um modelo pago compatível com o contrato de custos.

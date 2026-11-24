@@ -66,6 +66,22 @@ MEDIA_MIMES = ("image/jpeg", "image/png")
 STORAGE_BACKENDS = ("local",)
 REVISION_LAYOUTS = ("foto_inteira", "foto_titulo", "fundo_ia_titulo", "manual")
 BRAND_FONT_NAMES = ("inter-bold",)
+# Avaliacao cega do 2C (spec 2C, secao 7).
+EVAL_RUN_STATUSES = ("running", "ready", "revealed")
+EVAL_PATHS = ("simples", "especializado")
+EVAL_ITEM_STATUSES = ("queued", "running", "succeeded", "failed")
+EVAL_BETTER = ("a", "b", "empate")
+EVAL_ERROR_KINDS = (
+    "facto_errado",
+    "alegacao_sem_apoio",
+    "voz_errada",
+    "imagem_inadequada",
+    "outro",
+)
+EDIT_MINUTES = ("0", "1", "2_5", "mais_5")
+DECIDABLE_ROLES = ("copywriter", "designer", "revisor")
+ROLE_DECISIONS = ("manter", "simplificar", "retirar")
+EVAL_SET_NAME_PATTERN = "^[a-z0-9_]{1,40}$"
 
 # Predicado SQL unico do indice parcial de `Job`; a migracao 0002 mantem o seu literal e um
 # teste (tests/jobs/test_queue.py) falha se os dois divergirem.
@@ -681,3 +697,166 @@ class Job(Base):
     last_error: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(Timestamp, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(Timestamp, nullable=False)
+
+
+def array_subset_check(column: str, values: tuple[str, ...], name: str) -> CheckConstraint:
+    """`CHECK` que restringe todos os elementos do array `column` ao conjunto `values`."""
+    quoted = ", ".join(f"'{value}'" for value in values)
+    return CheckConstraint(f"{column} <@ ARRAY[{quoted}]::text[]", name=name)
+
+
+class EvalRun(Base):
+    """Corrida de avaliacao: um conjunto de briefs gerado pelos dois percursos.
+
+    `briefs` e `context_snapshot` fixam, no inicio, os briefs e o contexto (itens da base, fotos,
+    exemplos de feedback, kit e perfil) que os dois percursos de cada brief recebem. So pode
+    haver uma corrida `running` por marca (indice parcial).
+    """
+
+    __tablename__ = "eval_run"
+    __table_args__ = (
+        UniqueConstraint("brand_id", "id"),
+        ForeignKeyConstraint(
+            ["brand_id", "strategy_artifact_id"], ["artifact.brand_id", "artifact.id"]
+        ),
+        enum_check("status", EVAL_RUN_STATUSES, "status"),
+        CheckConstraint(f"set_name ~ '{EVAL_SET_NAME_PATTERN}'", name="set_name"),
+        CheckConstraint("set_version > 0", name="positive_set_version"),
+        CheckConstraint("estimate_usd >= 0", name="non_negative_estimate"),
+        Index(
+            "uq_eval_run_one_running_per_brand",
+            "brand_id",
+            unique=True,
+            postgresql_where=text("status = 'running'"),
+        ),
+    )
+
+    id: Mapped[str] = id_column()
+    brand_id: Mapped[str] = brand_fk()
+    set_name: Mapped[str] = mapped_column(Text, nullable=False)
+    set_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    seed: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False)
+    strategy_artifact_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    briefs: Mapped[list[JsonObject]] = mapped_column(JSONB, nullable=False)
+    context_snapshot: Mapped[JsonObject] = mapped_column(JSONB, nullable=False)
+    estimate_usd: Mapped[Decimal] = mapped_column(Money, nullable=False)
+    created_by: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(Timestamp, nullable=False)
+    revealed_at: Mapped[datetime | None] = mapped_column(Timestamp)
+
+
+class EvalItem(Base):
+    """Pacote de um brief por um percurso; nunca vira `post` nem `post_revision`.
+
+    Custo, latencia e saidas invalidas derivam dos `agent_run` com `trigger = eval.<passo>:<id>`.
+    """
+
+    __tablename__ = "eval_item"
+    __table_args__ = (
+        UniqueConstraint("brand_id", "id"),
+        UniqueConstraint("run_id", "brief_key", "path"),
+        ForeignKeyConstraint(["brand_id", "run_id"], ["eval_run.brand_id", "eval_run.id"]),
+        ForeignKeyConstraint(
+            ["brand_id", "final_asset_id"], ["media_asset.brand_id", "media_asset.id"]
+        ),
+        enum_check("path", EVAL_PATHS, "path"),
+        enum_check("status", EVAL_ITEM_STATUSES, "status"),
+        CheckConstraint(
+            "cost_usd >= 0 AND invalid_outputs >= 0 AND review_rounds >= 0 "
+            "AND (latency_ms IS NULL OR latency_ms >= 0)",
+            name="non_negative_measures",
+        ),
+    )
+
+    id: Mapped[str] = id_column()
+    brand_id: Mapped[str] = brand_fk()
+    run_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    brief_key: Mapped[str] = mapped_column(Text, nullable=False)
+    path: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False)
+    job_id: Mapped[str | None] = mapped_column(String(36))
+    # Texto, alegacoes, layout, componentes e pareceres do pacote final (sem bytes de imagem).
+    revision_snapshot: Mapped[JsonObject | None] = mapped_column(JSONB)
+    final_asset_id: Mapped[str | None] = mapped_column(String(36))
+    cost_usd: Mapped[Decimal] = mapped_column(
+        Money, nullable=False, default=Decimal(0), server_default=text("0")
+    )
+    latency_ms: Mapped[int | None] = mapped_column(Integer)
+    invalid_outputs: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default=text("0")
+    )
+    review_rounds: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default=text("0")
+    )
+    # Motivo curto e fixo da falha; nunca texto do modelo.
+    last_error: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(Timestamp, nullable=False)
+    finished_at: Mapped[datetime | None] = mapped_column(Timestamp)
+
+
+class EvalJudgement(Base):
+    """Resposta do responsavel a um par cego. Imutavel (gatilho); corrige-se com uma linha nova.
+
+    A resposta ativa de um par e a que nenhuma outra substitui (`supersedes_id`).
+    """
+
+    __tablename__ = "eval_judgement"
+    __table_args__ = (
+        UniqueConstraint("brand_id", "id"),
+        UniqueConstraint("supersedes_id"),
+        ForeignKeyConstraint(["brand_id", "run_id"], ["eval_run.brand_id", "eval_run.id"]),
+        ForeignKeyConstraint(
+            ["brand_id", "supersedes_id"], ["eval_judgement.brand_id", "eval_judgement.id"]
+        ),
+        enum_check("side_a_path", EVAL_PATHS, "side_a_path"),
+        enum_check("better", EVAL_BETTER, "better"),
+        enum_check("edit_a", EDIT_MINUTES, "edit_a"),
+        enum_check("edit_b", EDIT_MINUTES, "edit_b"),
+        array_subset_check("errors_a", EVAL_ERROR_KINDS, "errors_a"),
+        array_subset_check("errors_b", EVAL_ERROR_KINDS, "errors_b"),
+        CheckConstraint("seconds_spent BETWEEN 0 AND 3600", name="seconds_spent"),
+        Index(
+            "uq_eval_judgement_first_answer",
+            "run_id",
+            "brief_key",
+            unique=True,
+            postgresql_where=text("supersedes_id IS NULL"),
+        ),
+    )
+
+    id: Mapped[str] = id_column()
+    brand_id: Mapped[str] = brand_fk()
+    run_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    brief_key: Mapped[str] = mapped_column(Text, nullable=False)
+    side_a_path: Mapped[str] = mapped_column(Text, nullable=False)
+    better: Mapped[str] = mapped_column(Text, nullable=False)
+    errors_a: Mapped[list[str]] = mapped_column(ARRAY(Text), nullable=False)
+    errors_b: Mapped[list[str]] = mapped_column(ARRAY(Text), nullable=False)
+    edit_a: Mapped[str] = mapped_column(Text, nullable=False)
+    edit_b: Mapped[str] = mapped_column(Text, nullable=False)
+    note: Mapped[str | None] = mapped_column(Text)
+    seconds_spent: Mapped[int] = mapped_column(Integer, nullable=False)
+    decided_by: Mapped[str] = mapped_column(Text, nullable=False)
+    decided_at: Mapped[datetime] = mapped_column(Timestamp, nullable=False)
+    supersedes_id: Mapped[str | None] = mapped_column(String(36))
+
+
+class RoleDecision(Base):
+    """Decisao do responsavel sobre um papel depois de uma corrida (D35). So se acrescenta."""
+
+    __tablename__ = "role_decision"
+    __table_args__ = (
+        ForeignKeyConstraint(["brand_id", "run_id"], ["eval_run.brand_id", "eval_run.id"]),
+        enum_check("role", DECIDABLE_ROLES, "role"),
+        enum_check("decision", ROLE_DECISIONS, "decision"),
+    )
+
+    id: Mapped[str] = id_column()
+    brand_id: Mapped[str] = brand_fk()
+    run_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    role: Mapped[str] = mapped_column(Text, nullable=False)
+    decision: Mapped[str] = mapped_column(Text, nullable=False)
+    justificacao: Mapped[str] = mapped_column(Text, nullable=False)
+    decided_by: Mapped[str] = mapped_column(Text, nullable=False)
+    decided_at: Mapped[datetime] = mapped_column(Timestamp, nullable=False)
