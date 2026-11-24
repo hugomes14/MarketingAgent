@@ -749,7 +749,7 @@ class EvalRun(Base):
 class EvalItem(Base):
     """Pacote de um brief por um percurso; nunca vira `post` nem `post_revision`.
 
-    Custo, latencia e saidas invalidas derivam dos `agent_run` com `trigger = eval_item:<id>`.
+    Custo, latencia e saidas invalidas derivam dos `agent_run` com `trigger = eval.<passo>:<id>`.
     """
 
     __tablename__ = "eval_item"

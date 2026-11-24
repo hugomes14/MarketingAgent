@@ -192,6 +192,7 @@ def build_eval_rig(
     image_price: str = "0",
     text_price_per_million: str = "0",
     package_max_cost_usd: Decimal = Decimal("1.50"),
+    worker_max_cost_usd: Decimal | None = None,
     evals_dir: Path = FIXTURES,
     pipeline: object | None = None,
 ) -> EvalRig:
@@ -242,7 +243,8 @@ def build_eval_rig(
         EvalHandlerDeps(engine, queue, library, kits, load_content_specs(), load_simple_spec()),
         clock,
         image_quality="medium",
-        package_max_cost_usd=package_max_cost_usd,
+        # O worker pode correr com um `.env` diferente do processo que criou a corrida.
+        package_max_cost_usd=worker_max_cost_usd or package_max_cost_usd,
     )
     worker = Worker(
         queue,
@@ -250,6 +252,7 @@ def build_eval_rig(
         "w1",
         evals=handler,
         reconcile_evals=runs.reconcile,
+        sleep=lambda seconds: None,
     )
     return EvalRig(
         factory, clock, brand_id, llm, generator, runs, handler, queue, worker, kb, feedback,

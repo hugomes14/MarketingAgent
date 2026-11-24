@@ -64,6 +64,10 @@ class RevealBlocked(Exception):
         self.missing = tuple(missing)
 
 
+class NoComparablePairs(Exception):
+    """Todos os briefs tem um pacote falhado: nao ha nada para avaliar nem revelar."""
+
+
 class JudgementInput(BaseModel):
     """Resposta a um par: o melhor lado, os erros e os minutos de edicao por lado e uma nota."""
 
@@ -202,12 +206,17 @@ class JudgingService:
             return row.id
 
     def reveal(self, brand_id: str, run_id: str, actor: str) -> None:
-        """Revela a corrida; `RevealBlocked` com os pares em falta. Idempotente se ja revelada."""
+        """Revela a corrida; `RevealBlocked` com os pares em falta. Idempotente se ja revelada.
+
+        `NoComparablePairs` se nao ha nenhum par: nao ha nada a revelar nem a relatar.
+        """
         with self._session_factory.begin() as session:
             run = _ready_run(session, brand_id, run_id, lock=True)
             if run.status == "revealed":
                 return
             pairs = _pairs(session, run)
+            if not pairs:
+                raise NoComparablePairs
             missing = [
                 ref.index for ref in pairs if _active(session, run_id, ref.brief.key) is None
             ]

@@ -241,3 +241,20 @@ def test_report_page_and_decision_from_the_panel(make_panel: MakePanel, evals: E
     assert "&lt;b&gt;Pouco ganho&lt;/b&gt;" in html and "<b>Pouco ganho</b>" not in html
     bad = rig.post(f"/avaliacao/{run_id}/decisao", {"papel": "designer", "decisao": "talvez"})
     assert bad.status_code == 422
+
+
+def test_non_finite_majorante_from_the_panel_is_422(make_panel: MakePanel, evals: EvalRig) -> None:
+    rig = make_panel([])
+    for value in ("sNaN", "NaN", "Infinity"):
+        bad = rig.post("/avaliacao", {"conjunto": "briefs_teste", "majorante": value})
+        assert bad.status_code == 422, value
+
+
+def test_progress_poll_refreshes_the_page_when_the_run_is_ready(
+    make_panel: MakePanel, evals: EvalRig
+) -> None:
+    run_id = evals.start()
+    rig = make_panel([])
+    assert "hx-refresh" not in rig.get(f"/avaliacao/{run_id}/estado").headers
+    evals.drain()
+    assert rig.get(f"/avaliacao/{run_id}/estado").headers["hx-refresh"] == "true"

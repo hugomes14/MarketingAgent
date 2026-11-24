@@ -18,6 +18,11 @@ def _interval_text(report: EvalReport) -> str:
     )
 
 
+def _inline(text: str) -> str:
+    """Texto livre numa so linha: quebras de linha criariam titulos e itens falsos."""
+    return " ".join(text.split())
+
+
 def _usd(value: Decimal) -> str:
     return f"{value:.4f} USD"
 
@@ -82,11 +87,11 @@ def render_markdown(report: EvalReport, generated_at: str) -> str:
     if report.decisions:
         lines += [
             f"- {d.role}: **{d.decision}** ({d.decided_by}, {d.decided_at:%Y-%m-%d}): "
-            f"{d.justificacao}"
+            f"{_inline(d.justificacao)}"
             for d in report.decisions
         ]
     else:
         lines.append("- Ainda sem decisões registadas.")
     if report.notes:
-        lines += ["", "## Notas do avaliador", "", *(f"- {note}" for note in report.notes)]
+        lines += ["", "## Notas do avaliador", "", *(f"- {_inline(note)}" for note in report.notes)]
     return "\n".join(lines) + "\n"

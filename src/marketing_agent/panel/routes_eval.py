@@ -72,6 +72,8 @@ def start_run(user: CurrentUser, panel: Panel, fields: Fields) -> RedirectRespon
         confirmed = Decimal(fields.get("majorante", ""))
     except InvalidOperation:
         raise InvalidForm("Confirme a estimativa antes de começar.") from None
+    if not confirmed.is_finite():  # NaN, sNaN e Infinity constroem-se mas nao sao valores
+        raise InvalidForm("Confirme a estimativa antes de começar.")
     run_id = panel.evals.runs.start_run(panel.brand_id, set_name, confirmed, user.login)
     return see_other(f"{EVAL_URL}/{run_id}")
 
@@ -86,7 +88,10 @@ def show_run(run_id: RecordId, user: CurrentUser, panel: Panel) -> HTMLResponse:
 def run_status(run_id: RecordId, user: CurrentUser, panel: Panel) -> HTMLResponse:
     """Fragmento do progresso (HTMX); so pede nova atualizacao enquanto a corrida corre."""
     context = _run_context(panel, run_id)
-    return panel.renderer.partial("_eval_progress.html", context)
+    run = panel.evals.runs.run_view(panel.brand_id, run_id)
+    # A secao "Avaliar" so existe na pagina inteira: ao terminar, o HTMX recarrega-a.
+    headers = {"HX-Refresh": "true"} if run is not None and run.status != "running" else None
+    return panel.renderer.partial("_eval_progress.html", context, headers=headers)
 
 
 def _run_context(panel: Panel, run_id: str) -> Context:

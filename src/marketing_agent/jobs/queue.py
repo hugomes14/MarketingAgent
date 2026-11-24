@@ -109,8 +109,9 @@ class JobQueue:
     def claim(self, worker_id: str) -> ClaimedJob | None:
         """Reclama o job `queued` mais antigo com `run_at` vencido; `None` se nao houver.
 
-        Os `eval_package` so sao reclamados quando nao ha outro job pronto: uma corrida de
-        avaliacao nunca atrasa o lote semanal.
+        Os `eval_package` so sao reclamados quando nao ha outro job pronto, por isso um job do
+        lote semanal passa sempre a frente na fila. Nao ha preempcao: se chega a meio de um pacote
+        de avaliacao, espera que esse pacote acabe (o worker faz um job de cada vez).
         """
         now = self._clock.now()
         statement = (

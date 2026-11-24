@@ -24,6 +24,7 @@ from marketing_agent.content.review_errors import (
 )
 from marketing_agent.evals.judging import (
     AlreadyRevealed,
+    NoComparablePairs,
     PairNotFound,
     RevealBlocked,
     RunNotReady,
@@ -153,6 +154,7 @@ _RESPONSES: Final[dict[type[Exception], tuple[int, str]]] = {
     StaleJudgement: (409, f"A resposta deste par mudou entretanto. {RELOAD_HINT}"),
     AlreadyRevealed: (409, "A corrida já foi revelada: as respostas estão fechadas."),
     RevealBlocked: (409, "Faltam pares por responder antes de revelar."),
+    NoComparablePairs: (409, "Nenhum par é comparável: todos os briefs têm um pacote falhado."),
     RevealPending: (409, "O relatório e as decisões só existem depois de revelar a corrida."),
     InvalidDecision: (422, "Escolha o papel e a decisão e escreva uma justificação curta."),
 }

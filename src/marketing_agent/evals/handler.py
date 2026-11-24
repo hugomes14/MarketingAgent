@@ -85,6 +85,7 @@ class _Work:
     path: str
     brief: FixedBrief
     context: EvalContext
+    ceiling_usd: Decimal
 
 
 @dataclass(frozen=True)
@@ -132,7 +133,8 @@ class EvalPackageHandler:
         try:
             payload = EvalJobPayload.model_validate(job.payload)
         except ValidationError as exc:
-            self._deps.queue.fail(job, describe_error(exc), retry=False)
+            # `fail_job` fecha tambem o item, se o payload ainda o identifica.
+            self.fail_job(job, describe_error(exc), retry=False)
             return "failed"
         work = self._begin(job, payload)
         if work is None:
@@ -168,11 +170,26 @@ class EvalPackageHandler:
                 FixedBrief.from_json(raw) for raw in run.briefs if raw["key"] == item.brief_key
             )
             context = EvalContext.from_json(run.context_snapshot)
-            return _Work(item.id, item.brand_id, item.path, brief, context)
+            ceiling = self._confirmed_ceiling(session, run)
+            return _Work(item.id, item.brand_id, item.path, brief, context, ceiling)
+
+    def _confirmed_ceiling(self, session: Session, run: EvalRun) -> Decimal:
+        """Teto por pacote: o MENOR entre o deste processo e o que o responsavel confirmou.
+
+        A corrida nao guarda o teto, mas guarda o majorante (`estimate_usd` = teto x pacotes), por
+        isso o teto confirmado deriva dele. Sem isto, um worker com outro `.env` gastaria acima
+        do que foi mostrado e confirmado.
+        """
+        packages = session.scalar(
+            select(func.count()).select_from(EvalItem).where(EvalItem.run_id == run.id)
+        )
+        if not packages:
+            return self._ceiling
+        return min(self._ceiling, run.estimate_usd / packages)
 
     def _produce(self, work: _Work, media: DesignInputs) -> PackageOutcome:
         guard = PackageCostGuard(
-            self._session_factory, work.brand_id, work.item_id, self._ceiling, "eval"
+            self._session_factory, work.brand_id, work.item_id, work.ceiling_usd, "eval"
         )
         allowance = ImageAllowance(
             remaining_images(self._session_factory, work.brand_id, work.item_id, "eval")

@@ -212,3 +212,23 @@ class Worker:
                 logger.warning(
                     "worker %s: %d job(s) de lease vencida recolocado(s)", self._worker_id, requeued
                 )
+        self._close_dead_evals()
+
+    def _close_dead_evals(self) -> None:
+        """Fecha os itens de avaliacao cujo job ficou `dead` (lease vencida e tentativas gastas).
+
+        Sem isto a corrida ficava `running` ate ao proximo arranque e bloqueava as seguintes.
+        """
+        if self._reconcile_evals is None:
+            return
+        try:
+            closed = self._reconcile_evals()
+        except Exception as exc:
+            logger.error(
+                "worker %s: reconciliar avaliacoes falhou: %s", self._worker_id, type(exc).__name__
+            )
+        else:
+            if closed:
+                logger.warning(
+                    "worker %s: %d item(ns) de avaliacao fechado(s)", self._worker_id, closed
+                )

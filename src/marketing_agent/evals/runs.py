@@ -163,7 +163,11 @@ class EvalRunService:
         """
         eval_set = load_eval_set(set_name, self._evals_dir)
         estimate = self._estimate(brand_id, eval_set)
-        if confirmed_upper_bound_usd != estimate.upper_bound_usd:
+        # `is_finite` primeiro: comparar um sNaN levanta `InvalidOperation`.
+        if (
+            not confirmed_upper_bound_usd.is_finite()
+            or confirmed_upper_bound_usd != estimate.upper_bound_usd
+        ):
             raise EstimateChanged(
                 f"o majorante mudou: confirmado {confirmed_upper_bound_usd}, "
                 f"atual {estimate.upper_bound_usd} USD"
